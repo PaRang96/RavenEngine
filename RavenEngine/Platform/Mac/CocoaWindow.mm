@@ -1,11 +1,12 @@
 #define VK_USE_PLATFORM_METAL_EXT
-#include "Arm64Mac.hpp"
+#include "CocoaWindow.hpp"
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <stdexcept>
 #include <string>
+#include <cstdint>
 
 // Keep native state here so the public header remains usable from C++.
 @interface RavenNativeWindow : NSWindow <NSWindowDelegate>
@@ -67,7 +68,7 @@
 
 namespace Raven
 {
-    Arm64Mac::Arm64Mac(const WindowDesc &desc)
+    CocoaWindow::CocoaWindow(const WindowDesc &desc)
     {
         @autoreleasepool
         {
@@ -108,7 +109,7 @@ namespace Raven
         }
     }
 
-    Arm64Mac::~Arm64Mac()
+    CocoaWindow::~CocoaWindow()
     {
         @autoreleasepool
         {
@@ -119,8 +120,9 @@ namespace Raven
         }
     }
 
-    void Arm64Mac::PollEvents()
+    void CocoaWindow::PollEvents()
     {
+        m_Input.ClearTransientState();
         @autoreleasepool
         {
             NSEvent *event;
@@ -135,24 +137,24 @@ namespace Raven
         }
     }
 
-    bool Arm64Mac::ShouldClose() const
+    bool CocoaWindow::ShouldClose() const
     {
         return ((__bridge RavenNativeWindow *)m_WindowHandle).shouldClose;
     }
 
-    std::uint32_t Arm64Mac::GetWidth() const
+    std::uint32_t CocoaWindow::GetWidth() const
     {
         NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
         return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.width);
     }
 
-    std::uint32_t Arm64Mac::GetHeight() const
+    std::uint32_t CocoaWindow::GetHeight() const
     {
         NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
         return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.height);
     }
 
-    std::vector<const char *> Arm64Mac::GetRequiredVulkanInstanceExtensions() const
+    std::vector<const char *> CocoaWindow::GetRequiredVulkanInstanceExtensions() const
     {
         return {
             VK_KHR_SURFACE_EXTENSION_NAME,
@@ -161,7 +163,7 @@ namespace Raven
         };
     }
 
-    VkSurfaceKHR Arm64Mac::CreateVulkanSurface(VkInstance instance) const
+    VkSurfaceKHR CocoaWindow::CreateVulkanSurface(VkInstance instance) const
     {
         auto createMetalSurface = reinterpret_cast<PFN_vkCreateMetalSurfaceEXT>(
             vkGetInstanceProcAddr(instance, "vkCreateMetalSurfaceEXT"));
@@ -180,13 +182,13 @@ namespace Raven
         return surface;
     }
 
-    bool Arm64Mac::IsKeyDown(Key key) const
+    const InputState& CocoaWindow::GetInputState() const
     {
-        return key == Key::Escape && ((__bridge RavenNativeWindow *)m_WindowHandle).escapeDown;
+        return m_Input;
     }
 
     std::unique_ptr<Window> Window::Create(const WindowDesc &desc)
     {
-        return std::make_unique<Arm64Mac>(desc);
+        return std::make_unique<CocoaWindow>(desc);
     }
 }

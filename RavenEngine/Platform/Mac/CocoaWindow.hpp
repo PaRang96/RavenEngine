@@ -4,14 +4,14 @@
 
 namespace Raven
 {
-    class Arm64Mac : public Window
+    class CocoaWindow : public Window
     {
     public:
-        explicit Arm64Mac(const WindowDesc &desc);
-        ~Arm64Mac() override;
+        explicit CocoaWindow(const WindowDesc &desc);
+        ~CocoaWindow() override;
 
-        Arm64Mac(const Arm64Mac &) = delete;
-        Arm64Mac &operator=(const Arm64Mac &) = delete;
+        CocoaWindow(const CocoaWindow &) = delete;
+        CocoaWindow &operator=(const CocoaWindow &) = delete;
 
         void PollEvents() override;
         bool ShouldClose() const override;
@@ -19,10 +19,11 @@ namespace Raven
         std::uint32_t GetHeight() const override;
         std::vector<const char *> GetRequiredVulkanInstanceExtensions() const override;
         VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;
-        bool IsKeyDown(Key key) const override;
+        const InputState& GetInputState() const override;
 
     private:
         // Cocoa types stay in the Objective-C++ implementation.
         void *m_WindowHandle = nullptr;
+        InputState m_Input{};
     };
 }
