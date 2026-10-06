@@ -52,6 +52,14 @@ elseif(APPLE)
     find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
     target_compile_definitions(RavenEngine PRIVATE _UNICODE)
     target_link_libraries(RavenEngine PRIVATE ${COCOA_LIBRARY} ${QUARTZCORE_LIBRARY})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-xkb)
+    target_sources(RavenEngine PRIVATE
+        "Platform/Linux/XcbWindow.cpp"
+        "Platform/Linux/XcbWindow.hpp"
+    )
+    target_link_libraries(RavenEngine PRIVATE PkgConfig::XCB)
 else()
     message(FATAL_ERROR "A window backend is not implemented for this platform yet")
 endif()

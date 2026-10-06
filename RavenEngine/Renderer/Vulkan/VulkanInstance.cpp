@@ -1,4 +1,5 @@
 #include "VulkanInstance.hpp"
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <cstring>
