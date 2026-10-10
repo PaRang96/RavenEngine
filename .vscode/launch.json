@@ -1,0 +1,17 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "RavenEngine (CMake Debug)",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/out/build/x64-debug/RavenEngine/RavenEngine.exe",
+			"args": [],
+			"stopAtEntry": false,
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "CMake: configure and build x64-debug",
+			"environment": [],
+			"externalConsole": true
+		}
+	]
+}

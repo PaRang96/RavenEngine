@@ -11,11 +11,45 @@ CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
 CMakeUserPresets.json
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+CTestTestfile.cmake
+DartConfiguration.tcl
+/Testing/
 
-# Editor and compiler intermediates
+# Per-user editor settings
 *.user
 *.suo
+*.xcuserstate
+xcuserdata/
+
+# Compiler, linker, and shader output
 *.obj
+*.o
+*.pch
+*.ipch
 *.pdb
 *.ilk
 *.idb
+*.exp
+*.res
+*.lib
+*.a
+*.dll
+*.so
+*.so.*
+*.dylib
+*.exe
+*.dSYM/
+*.spv
+
+# Runtime and build logs
+*.log
+
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
