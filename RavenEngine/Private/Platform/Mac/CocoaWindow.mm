@@ -12,6 +12,11 @@
 @interface RavenNativeWindow : NSWindow <NSWindowDelegate>
 @property(nonatomic) BOOL shouldClose;
 @property(nonatomic) BOOL escapeDown;
+@property(nonatomic) std::uint32_t drawableWidth;
+@property(nonatomic) std::uint32_t drawableHeight;
+@property(nonatomic) std::uint64_t framebufferRevision;
+- (bool)isKeyDown:(NSEvent *)event;
+- (bool)isKeyUp:(NSEvent *)event;
 - (void)updateDrawableSize;
 @end
 
@@ -20,6 +25,7 @@
 {
     self.shouldClose = YES;
     self.escapeDown = NO;
+    [self updateDrawableSize];
     // Keep the native window alive until the Vulkan surface is destroyed.
     return NO;
 }
@@ -28,6 +34,7 @@
 {
     self.shouldClose = YES;
     self.escapeDown = NO;
+    [self updateDrawableSize];
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification
@@ -38,7 +45,7 @@
 - (void)sendEvent:(NSEvent *)event
 {
     constexpr unsigned short EscapeKeyCode = 53;
-    if ((event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp) &&
+    if (([self isKeyDown:event] || [self isKeyUp:event]) &&
         event.keyCode == EscapeKeyCode)
     {
         self.escapeDown = event.type == NSEventTypeKeyDown;
@@ -47,12 +54,32 @@
     [super sendEvent:event];
 }
 
+- (bool)isKeyDown:(NSEvent *)event
+{
+    return event.type == NSEventTypeKeyDown;
+}
+
+- (bool)isKeyUp:(NSEvent *)event
+{
+    return event.type == NSEventTypeKeyUp;
+}
+
 - (void)updateDrawableSize
 {
     NSView *view = self.contentView;
     CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    const NSSize size = (self.miniaturized || self.shouldClose || !view)
+        ? NSZeroSize : [view convertRectToBacking:view.bounds].size;
+    const auto width = static_cast<std::uint32_t>(size.width);
+    const auto height = static_cast<std::uint32_t>(size.height);
+    if (width != self.drawableWidth || height != self.drawableHeight)
+    {
+        self.drawableWidth = width;
+        self.drawableHeight = height;
+        ++self.framebufferRevision;
+    }
     layer.contentsScale = self.backingScaleFactor;
-    layer.drawableSize = [view convertRectToBacking:view.bounds].size;
+    layer.drawableSize = size;
 }
 
 - (void)windowDidResize:(NSNotification *)notification
@@ -61,6 +88,16 @@
 }
 
 - (void)windowDidChangeBackingProperties:(NSNotification *)notification
+{
+    [self updateDrawableSize];
+}
+
+- (void)windowDidMiniaturize:(NSNotification *)notification
+{
+    [self updateDrawableSize];
+}
+
+- (void)windowDidDeminiaturize:(NSNotification *)notification
 {
     [self updateDrawableSize];
 }
@@ -144,14 +181,18 @@ namespace Raven
 
     std::uint32_t CocoaWindow::GetWidth() const
     {
-        NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
-        return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.width);
+        return GetFramebufferState().Width;
     }
 
     std::uint32_t CocoaWindow::GetHeight() const
     {
-        NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
-        return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.height);
+        return GetFramebufferState().Height;
+    }
+
+    FramebufferState CocoaWindow::GetFramebufferState() const
+    {
+        RavenNativeWindow *window = (__bridge RavenNativeWindow *)m_WindowHandle;
+        return {window.drawableWidth, window.drawableHeight, window.framebufferRevision};
     }
 
     std::vector<const char *> CocoaWindow::GetRequiredVulkanInstanceExtensions() const

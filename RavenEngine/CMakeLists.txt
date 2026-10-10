@@ -103,13 +103,15 @@ set_source_files_properties(
 
 find_program(RAVEN_DXC_EXECUTABLE
     NAMES dxc
-    HINTS "$ENV{VULKAN_SDK}/Bin" "${Vulkan_INCLUDE_DIR}/../Bin"
+    HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
+        "${Vulkan_INCLUDE_DIR}/../Bin" "${Vulkan_INCLUDE_DIR}/../bin"
     DOC "DXC compiler with SPIR-V support"
     REQUIRED
 )
 find_program(RAVEN_SPIRV_VALIDATOR_EXECUTABLE
     NAMES spirv-val
-    HINTS "$ENV{VULKAN_SDK}/Bin" "${Vulkan_INCLUDE_DIR}/../Bin"
+    HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
+        "${Vulkan_INCLUDE_DIR}/../Bin" "${Vulkan_INCLUDE_DIR}/../bin"
     DOC "SPIRV-Tools validator"
     REQUIRED
 )
@@ -178,6 +180,7 @@ elseif(APPLE)
         OBJCXX_EXTENSIONS OFF
     )
     target_sources(RavenCore PRIVATE
+        "Private/Platform/Mac/MacPaths.cpp"
         "Private/Platform/Mac/CocoaWindow.mm"
         "Private/Platform/Mac/CocoaWindow.hpp"
     )
