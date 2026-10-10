@@ -44,6 +44,6 @@ cmake --build out/build/x64-debug
 
 ## macOS/Linux 담당자 작업
 
-현재 Windows 구현에 맞춘 담당자별 작업 순서와 검증 기준은 [플랫폼 협업 작업 목록](docs/PlatformHandoff.md)을 참고하세요. macOS preset은 있지만 Cocoa 인터페이스와 실행 파일 경로 구현이 아직 필요합니다. Linux backend와 preset은 추가해야 합니다. 각 OS의 네이티브 실행을 검증한 뒤 지원 완료로 표시합니다.
+현재 Windows 구현에 맞춘 담당자별 작업 순서와 검증 기준은 [플랫폼 협업 작업 목록](docs/PlatformHandoff.md)을 참고하세요. macOS preset은 있지만 Cocoa 인터페이스와 실행 파일 경로 구현이 아직 필요합니다. Linux X11/XCB backend와 Debug/Release preset은 현재 엔진 구조에 맞춰 병합했으며, Linux에서의 빌드와 실행 검증은 아직 필요합니다. 각 OS의 네이티브 실행을 검증한 뒤 지원 완료로 표시합니다.
 
 The `out/` directory contains generated build files and is ignored by Git. The project currently has no automated tests.

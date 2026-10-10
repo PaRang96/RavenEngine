@@ -6,12 +6,12 @@
 
 Windows에서는 C++20 Debug/Release 빌드, 네이티브 창과 입력, Vulkan 초기화와 GPU 선택, swapchain 복구, perspective 카메라, depth testing, mesh와 texture 업로드가 동작합니다. PNG/JPEG 로딩과 실행 파일 기준 Content 경로도 구현되어 있습니다. 최근 인터페이스 검증에서는 구성별 27개 DLL 클라이언트 검증과 8프레임 렌더링을 통과했습니다.
 
-macOS는 기존 Cocoa 구현의 인터페이스가 오래되어 현재 공유 코드와 맞지 않습니다. Linux는 창 backend와 CMake preset이 없습니다. 두 플랫폼의 네이티브 실행은 아직 검증하지 않았습니다.
+macOS는 기존 Cocoa 구현의 인터페이스가 오래되어 현재 공유 코드와 맞지 않습니다. Linux는 기여된 X11/XCB backend와 Debug/Release preset을 현재 Public/Private 구조와 `RavenCore`에 맞춰 병합했습니다. framebuffer 계약과 실행 파일 경로 hook도 연결했지만, Linux의 빌드와 런타임 동작은 아직 검증하지 않았습니다. 두 플랫폼 모두 아래 네이티브 검증이 필요합니다.
 
 | 담당 | 우선 수정할 위치 | 목표 |
 | --- | --- | --- |
 | macOS 담당자 | `RavenEngine/Private/Platform/Mac/` | 기존 Cocoa backend를 현재 창·입력·framebuffer·경로 계약에 맞추기 |
-| Linux 담당자 | `RavenEngine/Private/Platform/Linux/` — 신규 | 선택한 네이티브 창 backend와 실행 파일 경로 구현 |
+| Linux 담당자 | `RavenEngine/Private/Platform/Linux/` | 병합된 XCB backend와 실행 파일 경로 구현의 네이티브 검증 |
 | 두 담당자 조율 | `RavenEngine/CMakeLists.txt`, `CMakePresets.json`, 빌드 문서 | 각 OS의 소스 선택, 의존성, 공유 라이브러리 실행 구성 |
 
 공유 renderer, math, 샘플, 이미지 decoder는 기존 구현을 재사용합니다. 공유 API 수정이 필요하면 이유와 영향을 먼저 정리해 Windows 담당자와 조율합니다. CMake 공통 파일을 수정할 때 다른 담당자의 변경을 덮어쓰지 않습니다.
@@ -98,35 +98,45 @@ cmake --build out/build/macos-release
 
 ## Linux 담당자 — 작업 순서
 
-1. **지원할 창 시스템 결정**
+1. **X11/XCB 대상 환경 확인**
 
-   - [ ] 첫 대상이 X11, Wayland, 또는 둘 모두인지 정하고, 배포판·desktop session·GPU를 기록합니다. 현재 코드와 roadmap에는 선택이 확정되어 있지 않습니다.
-   - [ ] 첫 backend의 네이티브 창/입력/Vulkan surface 의존성을 정리합니다. 다른 창 시스템 지원은 별도 작업으로 기록하고 지원 여부를 명확히 표시합니다.
+   - [ ] 현재 backend는 X11/XCB입니다. 배포판·desktop session·GPU와 X11 또는 XWayland 사용 여부를 기록합니다. 네이티브 Wayland backend는 없습니다.
+   - [ ] `pkg-config`, `xcb`, `xcb-xkb` 개발 의존성을 준비하고 탐색 결과를 확인합니다. 다른 창 시스템 지원은 별도 작업으로 기록합니다.
 
-2. **창 backend 구현**
+2. **병합된 창 backend 검증**
 
-   - [ ] `Private/Platform/Linux/` 아래에 backend 헤더/구현을 추가하고, 위 공유 창 메서드를 모두 구현합니다.
-   - [ ] Linux 전용 `Window::Create(const WindowDesc&)` 정의를 연결합니다. CMake가 선택한 backend의 factory 정의를 정확히 하나만 링크하도록 합니다.
-   - [ ] 창 생성/닫기/이벤트 처리, UTF-8 제목, 입력, drawable pixel 크기, 최소화/복원과 framebuffer revision을 연결합니다.
+   - [ ] `Private/Platform/Linux/XcbWindow.hpp`와 `.cpp`가 현재 공개 헤더로 컴파일되고, 위 공유 창 메서드의 signature와 일치하는지 확인합니다.
+   - [ ] `RavenCore`에 연결된 Linux 전용 `Window::Create(const WindowDesc&)`를 별도 클라이언트에서 호출합니다. factory 정의가 정확히 하나만 링크되는지 확인합니다.
+   - [ ] 창 생성/닫기/이벤트 처리, UTF-8 제목과 입력을 실행 검증합니다. map/unmap과 configure 이벤트로 갱신하는 drawable 크기 및 framebuffer revision이 최소화/복원에서도 계약을 지키는지 확인합니다.
 
-3. **실행 파일 경로 hook 구현**
+3. **실행 파일 경로 hook 검증**
 
-   - [ ] Linux 전용 구현에서 `Raven::GetPlatformExecutablePath()`를 정의합니다. 공유 경로 계산과 파일 reader는 재사용합니다.
+   - [ ] `LinuxPaths.cpp`의 `Raven::GetPlatformExecutablePath()`가 `/proc/self/exe`를 통해 호스트 실행 파일의 절대 경로를 반환하는지 확인합니다. 공유 경로 계산과 파일 reader는 재사용합니다. 경로의 Linux 동작은 [proc_pid_exe(5)](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html)를 참고합니다.
    - [ ] 실행 파일 위치, 다른 작업 디렉터리, 한글·공백 경로, Linux 파일명의 대소문자 구분과 ContentRoot override를 확인합니다.
 
-4. **CMake와 preset 추가**
+4. **CMake와 preset 검증**
 
-   - [ ] 현재 미지원 플랫폼 오류로 끝나는 CMake 분기에 Linux 소스·의존성 선택을 추가합니다. 다른 미지원 OS까지 Linux backend로 선택하지 않도록 합니다.
-   - [ ] Linux Debug/Release preset을 추가하고 실제 preset 이름과 실행 경로를 문서화합니다. Windows의 MSVC 설정이나 macOS의 Cocoa 설정을 공유 코드로 옮기지 않습니다.
-   - [ ] C++20, Vulkan, DXC, `spirv-val`, 선택한 창 시스템의 의존성 탐색을 확인합니다. 샘플과 `RavenCore` 공유 라이브러리의 링크·런타임 검색 경로 및 Content/라이선스 복사를 검증합니다.
+   - [ ] `CMAKE_SYSTEM_NAME`이 Linux일 때만 XCB 소스와 `PkgConfig::XCB`가 `RavenCore`에 연결되는지 확인합니다. 다른 플랫폼의 소스 선택을 유지합니다.
+   - [ ] 병합된 `linux-debug` / `linux-release` preset으로 실제 빌드를 완료합니다. Windows의 MSVC 설정이나 macOS의 Cocoa 설정을 공유 코드로 옮기지 않습니다.
+   - [ ] C++20, Ninja, Vulkan, DXC, `spirv-val`, XCB 의존성 탐색을 확인합니다. 샘플과 `RavenCore` 공유 라이브러리의 링크·런타임 검색 경로 및 Content/라이선스 복사를 검증합니다.
 
 5. **Vulkan 실행 확인**
 
-   - [ ] 선택한 창 시스템에 맞는 instance extension 목록과 `CreateVulkanSurface()`를 구현하고, GPU 선택부터 presentation까지 실행합니다.
+   - [ ] XCB의 instance extension 목록과 `CreateVulkanSurface()`를 확인하고, GPU 선택부터 presentation까지 실행합니다.
    - [ ] 창 크기 변경, drawable 사용 불가 상태, out-of-date/suboptimal 복구가 공유 renderer를 통해 동작하는지 검증합니다.
    - [ ] graphics/present queue family가 다른 환경을 사용할 수 있으면 추가 검증합니다. 사용할 수 없으면 미검증 항목으로 남기고 실제 검증한 GPU/queue 정보를 기록합니다.
 
-Linux preset은 아직 없으므로 완료 시 실제 사용한 configure/build/run 명령을 이 문서에 추가합니다.
+Linux 검증에 사용할 명령은 아래와 같습니다. 의존성을 준비한 뒤 실행하고 실제 결과를 기록합니다. 병합 시 Windows Debug/Release 빌드는 통과했지만, 설치된 WSL 환경에는 Vulkan/XCB 개발 의존성과 DXC, `spirv-val`이 없어 Linux 전체 빌드와 실행은 검증하지 못했습니다.
+
+```sh
+cmake --preset linux-debug
+cmake --build out/build/linux-debug
+./out/build/linux-debug/RavenEngine/RavenEngine
+
+cmake --preset linux-release
+cmake --build out/build/linux-release
+./out/build/linux-release/RavenEngine/RavenEngine
+```
 
 ## 두 플랫폼의 공통 검증 기준
 
