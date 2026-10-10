@@ -1,16 +1,22 @@
 #define VK_USE_PLATFORM_METAL_EXT
-#include "Platform/Mac/Arm64Mac.hpp"
+#include "CocoaWindow.hpp"
+#include "CocoaInput.hpp"
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <stdexcept>
 #include <string>
+#include <cstdint>
 
 // Keep native state here so the public header remains usable from C++.
 @interface RavenNativeWindow : NSWindow <NSWindowDelegate>
 @property(nonatomic) BOOL shouldClose;
-@property(nonatomic) BOOL escapeDown;
+@property(nonatomic, assign) Raven::InputState* inputState;
+@property(nonatomic) std::uint32_t drawableWidth;
+@property(nonatomic) std::uint32_t drawableHeight;
+@property(nonatomic) std::uint64_t framebufferRevision;
+- (void)releaseInput;
 - (void)updateDrawableSize;
 @end
 
@@ -18,7 +24,8 @@
 - (BOOL)windowShouldClose:(NSWindow *)sender
 {
     self.shouldClose = YES;
-    self.escapeDown = NO;
+    [self releaseInput];
+    [self updateDrawableSize];
     // Keep the native window alive until the Vulkan surface is destroyed.
     return NO;
 }
@@ -26,32 +33,45 @@
 - (void)windowWillClose:(NSNotification *)notification
 {
     self.shouldClose = YES;
-    self.escapeDown = NO;
+    [self releaseInput];
+    [self updateDrawableSize];
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification
 {
-    self.escapeDown = NO;
+    [self releaseInput];
 }
 
 - (void)sendEvent:(NSEvent *)event
 {
-    constexpr unsigned short EscapeKeyCode = 53;
-    if ((event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp) &&
-        event.keyCode == EscapeKeyCode)
-    {
-        self.escapeDown = event.type == NSEventTypeKeyDown;
+    if (self.inputState &&
+        Raven::ApplyCocoaInputEvent(*self.inputState, event, self.contentView))
         return;
-    }
     [super sendEvent:event];
+}
+
+- (void)releaseInput
+{
+    if (self.inputState)
+        Raven::ReleaseCocoaInput(*self.inputState);
 }
 
 - (void)updateDrawableSize
 {
     NSView *view = self.contentView;
     CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    const NSSize size = (self.miniaturized || self.shouldClose || !view)
+        ? NSZeroSize : [view convertRectToBacking:view.bounds].size;
+    const auto width = static_cast<std::uint32_t>(size.width);
+    const auto height = static_cast<std::uint32_t>(size.height);
+    if (width != self.drawableWidth || height != self.drawableHeight)
+    {
+        self.drawableWidth = width;
+        self.drawableHeight = height;
+        ++self.framebufferRevision;
+    }
     layer.contentsScale = self.backingScaleFactor;
-    layer.drawableSize = [view convertRectToBacking:view.bounds].size;
+    layer.drawableSize = size;
 }
 
 - (void)windowDidResize:(NSNotification *)notification
@@ -63,11 +83,22 @@
 {
     [self updateDrawableSize];
 }
+
+- (void)windowDidMiniaturize:(NSNotification *)notification
+{
+    [self releaseInput];
+    [self updateDrawableSize];
+}
+
+- (void)windowDidDeminiaturize:(NSNotification *)notification
+{
+    [self updateDrawableSize];
+}
 @end
 
 namespace Raven
 {
-    Arm64Mac::Arm64Mac(const WindowDesc &desc)
+    CocoaWindow::CocoaWindow(const WindowDesc &desc)
     {
         @autoreleasepool
         {
@@ -93,6 +124,8 @@ namespace Raven
                 throw std::runtime_error("Could not create Cocoa window");
 
             window.releasedWhenClosed = NO;
+            window.inputState = &m_Input;
+            window.acceptsMouseMovedEvents = YES;
             window.title = title;
             NSView *view = window.contentView;
             CAMetalLayer *layer = [CAMetalLayer layer];
@@ -108,19 +141,21 @@ namespace Raven
         }
     }
 
-    Arm64Mac::~Arm64Mac()
+    CocoaWindow::~CocoaWindow()
     {
         @autoreleasepool
         {
             RavenNativeWindow *window = (__bridge_transfer RavenNativeWindow *)m_WindowHandle;
             window.delegate = nil;
+            window.inputState = nullptr;
             [window close];
             m_WindowHandle = nullptr;
         }
     }
 
-    void Arm64Mac::PollEvents()
+    void CocoaWindow::PollEvents()
     {
+        m_Input.ClearTransientState();
         @autoreleasepool
         {
             NSEvent *event;
@@ -135,33 +170,38 @@ namespace Raven
         }
     }
 
-    bool Arm64Mac::ShouldClose() const
+    bool CocoaWindow::ShouldClose() const
     {
         return ((__bridge RavenNativeWindow *)m_WindowHandle).shouldClose;
     }
 
-    std::uint32_t Arm64Mac::GetWidth() const
+    std::uint32_t CocoaWindow::GetWidth() const
     {
-        NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
-        return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.width);
+        return GetFramebufferState().Width;
     }
 
-    std::uint32_t Arm64Mac::GetHeight() const
+    std::uint32_t CocoaWindow::GetHeight() const
     {
-        NSView *view = ((__bridge RavenNativeWindow *)m_WindowHandle).contentView;
-        return static_cast<std::uint32_t>([view convertRectToBacking:view.bounds].size.height);
+        return GetFramebufferState().Height;
     }
 
-    std::vector<const char *> Arm64Mac::GetRequiredVulkanInstanceExtensions() const
+    FramebufferState CocoaWindow::GetFramebufferState() const
+    {
+        RavenNativeWindow *window = (__bridge RavenNativeWindow *)m_WindowHandle;
+        return {window.drawableWidth, window.drawableHeight, window.framebufferRevision};
+    }
+
+    std::vector<const char *> CocoaWindow::GetRequiredVulkanInstanceExtensions() const
     {
         return {
             VK_KHR_SURFACE_EXTENSION_NAME,
             VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
             VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
         };
     }
 
-    VkSurfaceKHR Arm64Mac::CreateVulkanSurface(VkInstance instance) const
+    VkSurfaceKHR CocoaWindow::CreateVulkanSurface(VkInstance instance) const
     {
         auto createMetalSurface = reinterpret_cast<PFN_vkCreateMetalSurfaceEXT>(
             vkGetInstanceProcAddr(instance, "vkCreateMetalSurfaceEXT"));
@@ -180,13 +220,13 @@ namespace Raven
         return surface;
     }
 
-    bool Arm64Mac::IsKeyDown(Key key) const
+    const InputState& CocoaWindow::GetInputState() const
     {
-        return key == Key::Escape && ((__bridge RavenNativeWindow *)m_WindowHandle).escapeDown;
+        return m_Input;
     }
 
     std::unique_ptr<Window> Window::Create(const WindowDesc &desc)
     {
-        return std::make_unique<Arm64Mac>(desc);
+        return std::make_unique<CocoaWindow>(desc);
     }
 }
