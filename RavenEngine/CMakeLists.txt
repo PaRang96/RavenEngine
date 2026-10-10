@@ -38,8 +38,8 @@ elseif(APPLE)
         OBJCXX_EXTENSIONS OFF
     )
     target_sources(RavenEngine PRIVATE
-        "Platform/Mac/Arm64Mac.mm"
-        "Platform/Mac/Arm64Mac.hpp"
+        "Platform/Mac/CocoaWindow.mm"
+        "Platform/Mac/CocoaWindow.hpp"
     )
     target_compile_options(RavenEngine PRIVATE
         $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
