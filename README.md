@@ -44,6 +44,6 @@ cmake --build out/build/x64-debug
 
 ## macOS/Linux 담당자 작업
 
-현재 Windows 구현에 맞춘 담당자별 작업 순서와 검증 기준은 [플랫폼 협업 작업 목록](docs/PlatformHandoff.md)을 참고하세요. macOS 빌드 의존성과 명령은 [macOS 빌드 안내](docs/MacOSBuild.md)에 정리되어 있습니다. Cocoa framebuffer 인터페이스와 실행 파일 경로는 구현되어 있으며, 입력 연결과 네이티브 실행 검증은 남아 있습니다. Linux X11/XCB backend와 Debug/Release preset은 현재 엔진 구조에 맞춰 병합했으며, Linux에서의 빌드와 실행 검증은 아직 필요합니다. 각 OS의 네이티브 실행을 검증한 뒤 지원 완료로 표시합니다.
+현재 Windows 구현에 맞춘 담당자별 작업 순서와 검증 기준은 [플랫폼 협업 작업 목록](docs/PlatformHandoff.md)을 참고하세요. macOS 빌드 의존성과 명령은 [macOS 빌드 안내](docs/MacOSBuild.md)에 정리되어 있습니다. Cocoa framebuffer 인터페이스, 실행 파일 경로와 키보드·마우스 입력 연결은 구현되어 있으며, Debug 샘플의 화면 출력과 Space·스크롤·R 조작을 확인했습니다. 나머지 플랫폼 검증은 작업 목록을 따릅니다. Linux X11/XCB backend와 Debug/Release preset은 현재 엔진 구조에 맞춰 병합했으며, Linux에서의 빌드와 실행 검증은 아직 필요합니다. 각 OS의 네이티브 실행을 검증한 뒤 지원 완료로 표시합니다.
 
 The `out/` directory contains generated build files and is ignored by Git. The project currently has no automated tests.

@@ -1,5 +1,6 @@
 #define VK_USE_PLATFORM_METAL_EXT
 #include "CocoaWindow.hpp"
+#include "CocoaInput.hpp"
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -11,12 +12,11 @@
 // Keep native state here so the public header remains usable from C++.
 @interface RavenNativeWindow : NSWindow <NSWindowDelegate>
 @property(nonatomic) BOOL shouldClose;
-@property(nonatomic) BOOL escapeDown;
+@property(nonatomic, assign) Raven::InputState* inputState;
 @property(nonatomic) std::uint32_t drawableWidth;
 @property(nonatomic) std::uint32_t drawableHeight;
 @property(nonatomic) std::uint64_t framebufferRevision;
-- (bool)isKeyDown:(NSEvent *)event;
-- (bool)isKeyUp:(NSEvent *)event;
+- (void)releaseInput;
 - (void)updateDrawableSize;
 @end
 
@@ -24,7 +24,7 @@
 - (BOOL)windowShouldClose:(NSWindow *)sender
 {
     self.shouldClose = YES;
-    self.escapeDown = NO;
+    [self releaseInput];
     [self updateDrawableSize];
     // Keep the native window alive until the Vulkan surface is destroyed.
     return NO;
@@ -33,35 +33,27 @@
 - (void)windowWillClose:(NSNotification *)notification
 {
     self.shouldClose = YES;
-    self.escapeDown = NO;
+    [self releaseInput];
     [self updateDrawableSize];
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification
 {
-    self.escapeDown = NO;
+    [self releaseInput];
 }
 
 - (void)sendEvent:(NSEvent *)event
 {
-    constexpr unsigned short EscapeKeyCode = 53;
-    if (([self isKeyDown:event] || [self isKeyUp:event]) &&
-        event.keyCode == EscapeKeyCode)
-    {
-        self.escapeDown = event.type == NSEventTypeKeyDown;
+    if (self.inputState &&
+        Raven::ApplyCocoaInputEvent(*self.inputState, event, self.contentView))
         return;
-    }
     [super sendEvent:event];
 }
 
-- (bool)isKeyDown:(NSEvent *)event
+- (void)releaseInput
 {
-    return event.type == NSEventTypeKeyDown;
-}
-
-- (bool)isKeyUp:(NSEvent *)event
-{
-    return event.type == NSEventTypeKeyUp;
+    if (self.inputState)
+        Raven::ReleaseCocoaInput(*self.inputState);
 }
 
 - (void)updateDrawableSize
@@ -94,6 +86,7 @@
 
 - (void)windowDidMiniaturize:(NSNotification *)notification
 {
+    [self releaseInput];
     [self updateDrawableSize];
 }
 
@@ -131,6 +124,8 @@ namespace Raven
                 throw std::runtime_error("Could not create Cocoa window");
 
             window.releasedWhenClosed = NO;
+            window.inputState = &m_Input;
+            window.acceptsMouseMovedEvents = YES;
             window.title = title;
             NSView *view = window.contentView;
             CAMetalLayer *layer = [CAMetalLayer layer];
@@ -152,6 +147,7 @@ namespace Raven
         {
             RavenNativeWindow *window = (__bridge_transfer RavenNativeWindow *)m_WindowHandle;
             window.delegate = nil;
+            window.inputState = nullptr;
             [window close];
             m_WindowHandle = nullptr;
         }
@@ -200,6 +196,7 @@ namespace Raven
         return {
             VK_KHR_SURFACE_EXTENSION_NAME,
             VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
             VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
         };
     }

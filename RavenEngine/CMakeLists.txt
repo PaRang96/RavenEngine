@@ -181,6 +181,8 @@ elseif(APPLE)
     )
     target_sources(RavenCore PRIVATE
         "Private/Platform/Mac/MacPaths.cpp"
+        "Private/Platform/Mac/CocoaInput.mm"
+        "Private/Platform/Mac/CocoaInput.hpp"
         "Private/Platform/Mac/CocoaWindow.mm"
         "Private/Platform/Mac/CocoaWindow.hpp"
     )
@@ -191,6 +193,20 @@ elseif(APPLE)
     find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
     target_compile_definitions(RavenCore PRIVATE _UNICODE)
     target_link_libraries(RavenCore PRIVATE ${COCOA_LIBRARY} ${QUARTZCORE_LIBRARY})
+
+    # The loader opens the validation layer dynamically; Homebrew's manifest
+    # names only the dylib, so Debug builds need its directory in the runpath.
+    find_library(RAVEN_VULKAN_VALIDATION_LIBRARY
+        NAMES VkLayer_khronos_validation
+        HINTS "$ENV{VULKAN_SDK}/lib" "${Vulkan_INCLUDE_DIR}/../lib"
+    )
+    if(RAVEN_VULKAN_VALIDATION_LIBRARY)
+        get_filename_component(RAVEN_VULKAN_VALIDATION_LIBRARY_DIRECTORY
+            "${RAVEN_VULKAN_VALIDATION_LIBRARY}" DIRECTORY)
+        set_property(TARGET RavenCore RavenEngine APPEND PROPERTY BUILD_RPATH
+            "$<$<CONFIG:Debug>:${RAVEN_VULKAN_VALIDATION_LIBRARY_DIRECTORY}>"
+        )
+    endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-xkb)

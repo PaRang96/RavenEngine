@@ -41,5 +41,41 @@ cmake --build out/build/macos-debug
 구성이 다시 필요합니다. Release는 `macos-release` preset과 빌드 디렉터리를 사용합니다.
 
 실행 파일은 `out/build/macos-debug/RavenEngine/RavenEngine`에 생성됩니다.
-빌드 완료와 네이티브 입력·Vulkan 실행 검증은 별개이며, 남은 검증은
+
+```sh
+./out/build/macos-debug/RavenEngine/RavenEngine
+```
+
+Debug는 `VK_LAYER_KHRONOS_validation`을 사용합니다. Homebrew의 layer manifest는
+라이브러리 이름만 지정하므로, 목록 열거는 성공해도 dylib 검색이 실패하면
+`vkCreateInstance failed: -6` (`VK_ERROR_LAYER_NOT_PRESENT`)가 발생할 수 있습니다.
+CMake는 설치된 validation dylib를 찾아 Debug 빌드의 `BUILD_RPATH`에 디렉터리를
+추가합니다. 이는 빌드 디렉터리에서의 개발 실행 설정이며, 배포 패키지의 설치
+경로 설정은 별도로 필요합니다.
+
+2026-10-10 Apple M4 Pro에서 환경 변수 없이 Debug 샘플을 실행해 GPU 선택,
+2560 × 1440 swapchain 생성, 첫 perspective 프레임 표시 로그를 확인했습니다.
+해당 시작 로그에는 Vulkan warning/error가 없습니다. macOS의 인스턴스 확장에는
+Vulkan 1.0에서 portability subset의 의존성인
+`VK_KHR_get_physical_device_properties2`도 포함합니다.
+
+키보드·마우스 입력은 `CocoaInput.mm`에서 공통 `InputState`로 변환합니다.
+키는 입력 언어나 IME의 문자열 대신 물리 key code를 사용하고, 반복 key-down은
+새로운 `Pressed`를 만들지 않습니다. 좌우 Shift/Control/Option/Command는 각각
+공통 modifier 키에 연결하며, focus 상실·최소화·닫기 때 눌린 키와 버튼을 해제합니다.
+
+마우스 좌표는 Windows와 같은 content 영역의 왼쪽 위 원점과 실제 픽셀 단위입니다.
+가로 wheel은 오른쪽이 양수, 세로 wheel은 위쪽이 양수이며, macOS의 자연스러운
+스크롤 반전은 이 방향으로 정규화합니다. 정밀 trackpad delta는 10 point를 한
+wheel step으로 변환하고 소수값을 보존합니다. 이는 엔진의 step 단위로 변환하기
+위한 배율이며, AppKit이 제공하는 delta 단위는
+[Apple 문서](https://developer.apple.com/documentation/appkit/nsevent/scrollingdeltay)를
+참고하세요.
+
+47개 임시 입력 변환 검사에서 Space 반복/짧은 tap, 방향키/Home/R, 좌우 modifier,
+wheel 누적·반전, Retina cursor, content 밖 drag/release와 focus 해제를 확인했습니다.
+검사 로그는 `out/validation/cocoa-input-probe.log`입니다. 실제 Debug 샘플 창에서도
+Space로 정지한 두 화면이 동일하고, 스크롤 zoom과 R reset이 반영되는 것을 확인했습니다.
+네이티브 검증에는 `out/validation/RavenInputCheck.app` 임시 bundle을 사용했습니다.
+여러 입력 장치·키보드 배열과 리사이즈·최소화/복원 등 남은 검증은
 [플랫폼 작업 목록](PlatformHandoff.md)을 따릅니다.
