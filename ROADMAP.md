@@ -4,7 +4,7 @@ This checklist defines **v1**: a C++20 engine that can build and run small 2D an
 
 The agreed world convention follows Blender: **right-handed, +X right, +Y reference forward, +Z up, XY ground plane**. Blender is the primary authoring tool, FBX is the primary planned 3D asset format, and a Blender live bridge is a future integration goal. See [the coordinate contract](docs/CoordinateSystem.md) for camera, import, and renderer boundaries and the remaining math decisions.
 
-Rendering targets a **perspective camera first**, with shared model/view/projection math, simple 3D geometry, and depth testing. That initial sample is now implemented. Orthographic projection follows for the 2D sample, using the same world and transform/view conventions. This order supports the Blender/FBX direction; both playable 2D and 3D samples remain v1 goals.
+Rendering targets a **perspective camera first**, with shared model/view/projection math, simple 3D geometry, and depth testing. That initial sample and the following orthographic 2D rendering sample are now implemented using the same world and transform/view conventions. This order supports the Blender/FBX direction; both playable 2D and 3D samples remain v1 goals.
 
 ## Current Status
 
@@ -28,9 +28,13 @@ The engine/sample build boundary is also implemented: `RavenCore.dll` owns reusa
 
 Runtime path/file utilities now replace the absolute build-tree shader lookup with executable-relative `Content/Shaders`, including a startup content-root override. Debug/Release builds, 61 utility checks per configuration, relocated Unicode packages, missing/malformed-file diagnostics, and follow-up buffer/long-file checks pass. See [RuntimeUtilities.md](docs/RuntimeUtilities.md) for the current contract, evidence, and validation limits.
 
-RGBA8 texture ownership/upload is implemented through `VulkanContext::CreateTexture`. Debug/Release verify nine GPU readbacks, 21 injected construction/upload failures, and 36 public-client texture uploads per configuration, with clean Debug core/synchronization validation. This establishes the resource/upload path; descriptors and visible texture sampling remain next asset/rendering work. See [TextureResources.md](docs/TextureResources.md).
+RGBA8 texture ownership/upload is implemented through `VulkanContext::CreateTexture`. Debug/Release verify nine GPU readbacks, 21 injected construction/upload failures, and 36 public-client texture uploads per configuration, with clean Debug core/synchronization validation. The following rendering milestone adds immutable descriptors, separate UV meshes, and opaque HLSL sampling. Both configurations pass 13 public checks with 24 frames and 72 textures, plus 13 GPU pixel checks across nine readbacks and 73 descriptor bindings. UV orientation, tint, SRGB decoding, transforms, and depth occlusion are verified. See [TextureResources.md](docs/TextureResources.md).
 
-Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load`. The pinned decoder is private to RavenCore and its license is staged beside the application. Debug/Release each pass 109 CPU/public-DLL checks, 19 valid fixture cases, 15 failure cases, concurrent decoding, 39 decoded-image uploads, and eight existing perspective frames, with clean Debug core/synchronization validation. See [ImageLoading.md](docs/ImageLoading.md) for the pixel contract, limits, and evidence. The sample still displays colored geometry; descriptors and visible sampling remain pending.
+Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load`. The pinned decoder is private to RavenCore and its license is staged beside the application. Debug/Release each pass 109 CPU/public-DLL checks, 19 valid fixture cases, 15 failure cases, concurrent decoding, 39 decoded-image uploads, and eight existing perspective frames, with clean Debug core/synchronization validation. See [ImageLoading.md](docs/ImageLoading.md) for the pixel contract, limits, and evidence. The current sample loads two staged PNGs and displays opaque and transparent textured quads alongside colored geometry.
+
+Straight-alpha transparency, explicit layer/order, automatic camera-depth sorting, and conservative per-instance frustum culling are implemented. Visibility/ordering prepares a borrowed draw queue before Vulkan recording; meshes cache static local bounds. Debug/Release each pass 42 checks including 13 GPU pixel readbacks and six public-entry-point frames. Debug core/synchronization validation is clean. See [TextureResources.md](docs/TextureResources.md) for responsibilities, limits, and validation evidence. Orthographic projection and the 2D sample subsequently pass 38 focused checks and 13 public frame calls per configuration; see [CoordinateSystem.md](docs/CoordinateSystem.md). Adjacent compatible textured draws now use frame-safe instancing while preserving both pass boundaries and ordering. Five uncompressed GPU captures in each configuration match the previous individual-draw renderer byte for byte.
+
+Common UUIDv4 asset identities, typed persistent references, an immutable in-memory catalog, and ID-based texture reuse are now implemented. Windows Debug/Release each pass 3,417 public-client checks and present 25 frames; seven asset headers compile independently. API tracing verifies repeated requests do not allocate additional textures/descriptors and preserves the 257-opaque/4-transparent two-draw batching path. Both native samples remain valid with clean core/synchronization diagnostics. Existing 24 DLL exports are retained with 12 asset exports added. Persistent metadata, FBX sub-assets, dependency/build outputs and runtime handle/reload contracts remain pending; see [AssetSystem.md](docs/AssetSystem.md).
 
 ## 0. Project Foundation
 
@@ -81,7 +85,7 @@ Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load
 - [x] Add a Vulkan buffer owner with compatible memory selection, one-time upload, and partial-construction cleanup. Verify uploaded bytes and GPU copy/readback in Debug/Release with validation.
 - [x] Move triangle geometry into vertex/index buffers and submit indexed draws with explicit vertex layout and resource lifetime. Verify Debug/Release indexed drawing and cleanup with validation.
 - [x] Add shared model/view/projection math and a perspective camera; validate simple 3D geometry, depth testing, clipping, and resize behavior first.
-- [ ] Add orthographic projection and render textured 2D sprites with a camera and batching.
+- [x] Add orthographic projection and render textured 2D sprites with a camera and batching. Orthographic projection, pan/zoom, transparent sprites, frustum selection, and adjacent compatible draw instancing are implemented and verified.
 - [ ] Extend the perspective/depth path to imported 3D meshes, materials, and basic lighting.
 - [ ] Handle viewport resizing, resource recreation, and graphics errors predictably.
 
@@ -93,7 +97,7 @@ Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load
 
 ## 5. Assets and Reloading
 
-- [ ] Define asset identifiers, paths, dependencies, and import/build steps for textures, meshes, and shaders.
+- [ ] Define asset identifiers, paths, dependencies, and import/build steps for textures, meshes, and shaders. UUIDv4 identity, typed references, runtime paths, the initial in-memory catalog and texture reuse are implemented; persistent metadata, mesh import and dependency/build contracts remain.
 - [ ] Watch source files and reload shaders and assets at a safe frame boundary.
 - [ ] Report import/compile errors while keeping the last valid resource active.
 
@@ -123,4 +127,6 @@ Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load
 
 The current input baseline is sufficient to continue engine development. Keep the remaining key translations and repeat/text-input work tracked. Temporary input diagnostics have been removed from `Application`.
 
-The perspective camera, C++/HLSL matrix contract, reusable mesh submissions, depth-tested 3D sample, and engine/sample DLL boundary are implemented and verified using the agreed Blender world axes. Review the remaining repeatable checks listed in [TODO.md](TODO.md) before starting the asset/2D milestone. Orthographic projection follows for the 2D sample.
+Perspective/orthographic cameras, the C++/HLSL matrix contract, reusable mesh submissions, depth-tested samples, engine/sample DLL boundary, opaque/transparent textured quads, ordering, static frustum selection, and compatible textured draw batching are implemented and verified using the agreed Blender world axes. CTest integration is deferred at the owner's request while rendering is prioritized; see [TODO.md](TODO.md).
+
+The common asset baseline now resolves registered texture IDs into reusable context-owned resources. The catalog is the source of loading metadata, while the renderer retains GPU ownership. This prepares scene references and later FBX imports without marking persistence, dependency tracking or hot reload complete.

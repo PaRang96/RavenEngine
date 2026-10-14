@@ -46,11 +46,27 @@ The perspective sample now supplies 3D vertex positions, object models, and a ca
 - C++ uploads an 80-byte push constant: four clip-from-local columns at byte offsets `0`, `16`, `32`, and `48`, followed by tint at `64`. HLSL declares these columns explicitly and combines them with the vertex coordinates, avoiding implicit matrix packing defaults.
 - Opaque color geometry uses depth clear `1` and comparison `LESS`. Every swapchain framebuffer owns its own depth image, memory, and view; they are recreated with the swapchain extent after GPU work completes.
 
-The math functions reject invalid perspective parameters and degenerate camera directions. Engine distance units for imported assets, general rotation storage/Euler order, and imported camera conversion remain separate future decisions. Orthographic projection remains planned for the 2D sample.
+The math functions reject invalid projection parameters and degenerate camera directions. Engine distance units for imported assets, general rotation storage/Euler order, and imported camera conversion remain separate future decisions.
+
+## Orthographic camera and 2D sample
+
+`OrthographicCamera` provides the same `Position`, `Target`, `Up`, `GetView()` and `GetProjection(aspect)` contract as the perspective camera. Its `VerticalSize` is the full visible height in world units, default `6`; visible width is `VerticalSize * aspect`. Resizing preserves vertical world extent and adjusts horizontal extent, without stretching sprites or promising a fixed pixel size. Zoom changes `VerticalSize`, not camera distance. Near/far are nonnegative forward distances (`0 <= near < far`), default `0.1`/`100`, mapped to Vulkan depth `0`/`1`. Projection Y follows the same positive-height viewport convention as perspective.
+
+The default camera looks from `(0, -10, 0)` toward the origin with +Z up. The side-view sample maps logical 2D `(x, y)` into world `(x, 0, y)` on the XZ plane. World Y can separate sprite depths; it does not become the logical screen-up axis. Camera panning moves both `Position` and `Target`, preserving orientation.
+
+Run `RavenEngine.exe --orthographic`; the default executable or `--perspective` retains the 3D sample. Arrows pan, wheel/PageUp/PageDown zoom, Home resets the camera, and F1 switches the blue-tinted transparent sprite between automatic depth order and explicit order. Two upper sprites at different depths retain equal projected size; a third opaque sprite starts outside the view and enters when the view is widened or panned. Overlapping lower sprites exercise straight-alpha composition. Sprite batching is still pending.
+
+All three `DrawFrame` forms are available for either camera type. Their public declarations/definitions match; existing perspective symbols are preserved. Camera choice uses static dispatch into the same private frame implementation, which obtains matrices using the actual swapchain aspect ratio. The existing draw queue and pipelines receive matrices and do not depend on the projection type. No virtual camera base or OS headers are introduced.
+
+Verified on Windows on 2026-10-11: Debug/Release builds, 38 focused math/frustum/DLL checks and 13 public frame calls per configuration, all three overloads for both cameras, invalid-camera rejection and recovery, Vulkan depth/Y conventions, zoom, portrait aspect, depth-invariant size, all six frustum planes and touching/spanning bounds. Both DLLs retain all 21 previous exports and add three orthographic overloads (24 total). Debug core/synchronization validation is clean. Native Debug computer use verifies equal-sized sprites, pan/zoom, reset, transparent order, offscreen-sprite entry after widening the view, maximize, minimize/restore, and normal shutdown. Portrait aspect is checked mathematically; the native checks use the normal and maximized window sizes. No permanent test source or CTest target is added.
+
+Evidence: `out/validation/orthographic-*.log`, `out/validation/orthographic-exports-*.txt`, and `out/screenshots/ravenengine-orthographic-debug.jpg`.
 
 ## Sample controls and verification
 
 Arrow keys orbit the camera, the wheel changes camera distance, Home or physical R resets the view, and Space pauses/resumes object animation. The sample draws an orange cube, a farther cyan cube, and an XY ground slab through one shared mesh with separate models and tints. The near cube is submitted first to exercise depth rejection of later geometry.
+
+The texture extension adds two opaque PNG quads and two overlapping straight-alpha quads. `F1` or physical `O` toggles the blue-tinted transparent quad's explicit order. Transparent sorting uses the transformed mesh center's view-space depth, independent of the world's +Z-up convention. Visibility selection uses the current camera's Vulkan clip volume; see [TextureResources.md](TextureResources.md).
 
 Verified on Windows on 2026-10-10: Debug/Release builds and HLSL/SPIR-V validation, 59 temporary CPU checks for transforms/projection/clipping/layout/invalid inputs, and computer-use checks of animation, orbit, zoom, Home reset, resize, minimize/restore, and normal shutdown. Debug runs with core and synchronization validation and reports no warnings/errors. Release also runs from a different working directory. The R shortcut was not verified by computer use because synthesized letter input did not reach the existing physical-key mapping.
 

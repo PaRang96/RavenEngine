@@ -1,12 +1,16 @@
 #pragma once
 
 #include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
+#include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Renderer/Vulkan/VulkanMesh.hpp"
 #include "Renderer/Vulkan/VulkanDepthAttachment.hpp"
 #include "Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
+#include "Renderer/Vulkan/VulkanTexturePipeline.hpp"
+#include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 
 #include <array>
 #include <cstdint>
@@ -22,12 +26,13 @@ namespace Raven
 	public:
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
-			std::uint32_t graphicsFamily, const std::filesystem::path& shaderDirectory);
+			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
+			const std::filesystem::path& shaderDirectory);
 		~VulkanClearPass();
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
 		bool Draw(const VulkanSwapchain& swapchain, VkQueue graphics, VkQueue present,
-			const Mat4& viewProjection, std::span<const VulkanDraw> draws);
+			const VulkanDrawQueue& queue);
 
 		VulkanClearPass(const VulkanClearPass&) = delete;
 		VulkanClearPass& operator=(const VulkanClearPass&) = delete;
@@ -38,15 +43,22 @@ namespace Raven
 			VkCommandBuffer Commands = VK_NULL_HANDLE;
 			VkSemaphore ImageAvailable = VK_NULL_HANDLE;
 			VkFence InFlight = VK_NULL_HANDLE;
+			std::unique_ptr<VulkanBuffer> TexturedInstances;
 		};
 
+		void UploadInstances(Frame& frame, std::span<const TexturedInstanceData> instances);
 		void Record(VkCommandBuffer commands, std::uint32_t imageIndex,
-			const Mat4& viewProjection, std::span<const VulkanDraw> draws);
+			const VulkanDrawQueue& queue, VkBuffer instanceBuffer);
 		void Destroy() noexcept;
 
+		// These owners outlive the pass and its per-frame buffers.
+		const VulkanDevice& m_DeviceOwner;
+		const VulkanPhysicalDevice& m_PhysicalDevice;
 		VkDevice m_Device = VK_NULL_HANDLE;
 		VkRenderPass m_RenderPass = VK_NULL_HANDLE;
 		std::optional<VulkanColorPipeline> m_Pipeline;
+		std::optional<VulkanTexturePipeline> m_TexturePipeline;
+		std::optional<VulkanTexturePipeline> m_TransparentPipeline;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
 		VkExtent2D m_Extent{};
 		std::vector<VkFramebuffer> m_Framebuffers;

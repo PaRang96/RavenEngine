@@ -1,6 +1,7 @@
 #include "PerspectiveSample.hpp"
 
 #include "Raven/Core/FrameTime.hpp"
+#include "Raven/Core/Log.hpp"
 #include "Raven/Platform/Input.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
@@ -45,12 +46,39 @@ namespace Raven
 			8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12,
 			16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20
 		};
+
+		// An XZ quad facing the initial camera. Images are top-row first; V=0 is the top edge.
+		constexpr std::array<TexturedVertex, 4> QuadVertices
+		{
+			TexturedVertex{ { -0.5f, 0.0f, -0.5f }, { 0.0f, 1.0f } },
+			TexturedVertex{ { 0.5f, 0.0f, -0.5f }, { 1.0f, 1.0f } },
+			TexturedVertex{ { 0.5f, 0.0f, 0.5f }, { 1.0f, 0.0f } },
+			TexturedVertex{ { -0.5f, 0.0f, 0.5f }, { 0.0f, 0.0f } }
+		};
+		constexpr std::array<std::uint16_t, 6> QuadIndices{ 0, 1, 2, 2, 3, 0 };
+
 	}
 
 	PerspectiveSample::PerspectiveSample(VulkanContext& renderer)
-		: m_Cube(renderer.CreateMesh(CubeVertices, CubeIndices)),
-		  m_Draws{ VulkanDraw{ m_Cube }, VulkanDraw{ m_Cube }, VulkanDraw{ m_Cube } }
+		: m_Assets(renderer),
+		  m_Cube(renderer.CreateMesh(CubeVertices, CubeIndices)),
+		  m_Draws{ VulkanDraw{ m_Cube }, VulkanDraw{ m_Cube }, VulkanDraw{ m_Cube } },
+		  m_Quad(renderer.CreateTexturedMesh(QuadVertices, QuadIndices)),
+		  m_Texture(m_Assets.LoadTexture(SampleAssets::GetUVGrid())),
+		  m_AlternateTexture(m_Assets.LoadTexture(SampleAssets::GetUVGridAlternate())),
+		  m_TexturedDraws{ VulkanTexturedDraw{ m_Quad, m_Texture },
+			  VulkanTexturedDraw{ m_Quad, m_AlternateTexture } },
+		  m_TransparentDraws{ VulkanTransparentDraw{ { m_Quad, m_Texture } },
+			  VulkanTransparentDraw{ { m_Quad, m_AlternateTexture } } }
 	{
+		m_TexturedDraws[0].Model = Translation({ -2.0f, 0.5f, 0.6f }) * Scale({ 1.6f, 1.0f, 1.6f });
+		m_TexturedDraws[1].Model = Translation({ 2.0f, 0.5f, 0.6f }) * Scale({ 1.6f, 1.0f, 1.6f });
+		m_TexturedDraws[1].Tint = { 0.8f, 1.0f, 0.8f, 1.0f };
+		// Overlap in front of the cubes. Orbit changes their relative camera depth.
+		m_TransparentDraws[0].Draw.Model = Translation({ -0.45f, -1.55f, 0.65f }) * Scale({ 1.8f, 1.0f, 1.8f });
+		m_TransparentDraws[0].Draw.Tint = { 1.0f, 0.65f, 0.65f, 0.45f };
+		m_TransparentDraws[1].Draw.Model = Translation({ 0.45f, -1.15f, 0.85f }) * Scale({ 1.8f, 1.0f, 1.8f });
+		m_TransparentDraws[1].Draw.Tint = { 0.65f, 0.8f, 1.0f, 0.65f };
 		ResetCamera();
 		UpdateDraws();
 	}
@@ -59,7 +87,7 @@ namespace Raven
 		const InputState& input, const FrameTime& frameTime)
 	{
 		Update(input, frameTime);
-		renderer.DrawFrame(m_Camera, m_Draws);
+		renderer.DrawFrame(m_Camera, m_Draws, m_TexturedDraws, m_TransparentDraws);
 	}
 
 	void PerspectiveSample::ResetCamera()
@@ -82,6 +110,13 @@ namespace Raven
 			ResetCamera();
 		if (input.WasKeyPressed(Key::Space))
 			m_Animate = !m_Animate;
+		if (input.WasKeyPressed(Key::O) || input.WasKeyPressed(Key::F1))
+		{
+			auto& order = m_TransparentDraws[1].SortOrder;
+			order = order == 0 ? 1 : 0;
+			Log(LogLevel::Info, order == 0 ? "Transparent order: automatic camera depth" :
+				"Transparent order: blue-tinted quad composited last");
+		}
 
 		const float delta = static_cast<float>(std::min(frameTime.DeltaSeconds, 0.1));
 		const auto orbitStep = [&input, delta](Key key)

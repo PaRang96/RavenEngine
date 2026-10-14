@@ -11,6 +11,11 @@ Content/
   Shaders/
     Color.vert.spv
     Color.frag.spv
+    Texture.vert.spv
+    Texture.frag.spv
+  Textures/
+    UVGrid.png
+    UVGridAlternate.png
 ```
 
 `Paths::GetExecutablePath()` returns the host executable's absolute path, even when called inside the engine DLL. `GetExecutableDirectory()` returns its containing directory. Executable discovery uses the private Windows backend and preserves native Unicode paths.
@@ -51,7 +56,7 @@ Shader loading uses `ReadBinary`, checks the SPIR-V minimum header size and word
 
 ## Build and relocation
 
-DXC and `spirv-val` still generate and validate intermediate shaders under the build directory. The `RavenContent` dependency copies validated outputs to `Content/Shaders` beside the sample on every build, using `copy_if_different`. This restores deleted runtime shaders even when no C++ target needs relinking. Runtime code contains no build-tree shader path.
+DXC and `spirv-val` still generate and validate intermediate shaders under the build directory. The `RavenContent` dependency copies all four validated shader stages to `Content/Shaders` and the two sample PNGs from the source `Content/Textures` to runtime `Content/Textures` on every build, using `copy_if_different`. This restores deleted runtime content even when no C++ target needs relinking. Runtime code contains no build-tree shader path.
 
 Copy the executable, matching engine DLL, and `Content` directory together to relocate the sample. The Windows runtime and Vulkan driver requirements still apply. Custom clients using another executable directory must stage their content there or provide an explicit content root.
 

@@ -14,11 +14,17 @@ namespace Raven
 	public:
 		VulkanBuffer(const VulkanDevice& device,
 			const VulkanPhysicalDevice& physicalDevice,
+			VkDeviceSize size, VkBufferUsageFlags usage);
+		VulkanBuffer(const VulkanDevice& device,
+			const VulkanPhysicalDevice& physicalDevice,
 			std::span<const std::byte> data, VkBufferUsageFlags usage);
 		~VulkanBuffer();
 
 		VkBuffer Get() const { return m_Buffer; }
 		VkDeviceSize GetSize() const { return m_Size; }
+
+		// The caller completes all GPU use before overwriting this buffer.
+		void Write(std::span<const std::byte> data);
 
 		VulkanBuffer(const VulkanBuffer&) = delete;
 		VulkanBuffer& operator=(const VulkanBuffer&) = delete;

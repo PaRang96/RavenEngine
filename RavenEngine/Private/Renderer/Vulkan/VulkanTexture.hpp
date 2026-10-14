@@ -15,6 +15,10 @@ namespace Raven
 		~VulkanTexture();
 
 		VkImage GetImage() const { return m_Image; }
+		VkDevice GetDevice() const { return m_Device; }
+		VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
+		// A borrowed immutable binding owned by the context's descriptor pools.
+		void SetDescriptorSet(VkDescriptorSet binding);
 		VkImageView GetView() const { return m_View; }
 		VkSampler GetSampler() const { return m_Sampler; }
 		VkFormat GetFormat() const { return m_Format; }
@@ -32,6 +36,7 @@ namespace Raven
 		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
 		VkImageView m_View = VK_NULL_HANDLE;
 		VkSampler m_Sampler = VK_NULL_HANDLE;
+		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
 		VkFormat m_Format = VK_FORMAT_UNDEFINED;
 		VkExtent2D m_Extent{};
 	};

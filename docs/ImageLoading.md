@@ -29,7 +29,7 @@ const auto& texture = renderer.CreateTexture(description);
 - The format is detected from file contents; `.png`, `.jpg`, and `.jpeg` are conventional names rather than an extension whitelist. Other decoders are disabled.
 - CgBI PNG input is normalized from its BGR/BGRA storage and premultiplied alpha into this same pixel contract. Decoder options and failure state use thread-local storage.
 
-Loading does not apply ICC/gamma color management or EXIF orientation, and animation data is not exposed. Color-space selection remains explicit at texture creation: use `SRGB` for prepared color images and `Linear` for normal, roughness, and other data maps. The existing GPU upload remains a single-mip RGBA8 path; descriptors and visible texture sampling are subsequent rendering work.
+Loading does not apply ICC/gamma color management or EXIF orientation, and animation data is not exposed. Color-space selection remains explicit at texture creation: use `SRGB` for prepared color images and `Linear` for normal, roughness, and other data maps. GPU upload remains a single-mip RGBA8 path. The sample now loads two PNGs for opaque UV rendering; see [TextureResources.md](TextureResources.md) for descriptors and sampling validation.
 
 ## Development diagnostics
 
@@ -67,7 +67,7 @@ At the initial image-loading milestone, Windows Debug and Release builds pass. A
 
 Each configuration passes 109 CPU/public-DLL checks over 19 valid fixture cases and 15 failure cases. PNG comparisons are byte-exact, including transparent RGB values, row orientation, grayscale, palette depths/transparency, interlacing, unchanged gamma-tagged pixels, a `16384 x 1` image, and CgBI normalization. Baseline/progressive/grayscale JPEG comparisons use an independent decoder with a small RGB rounding tolerance and exact opaque alpha. Failure cases cover empty/missing/directory paths, empty/junk/truncated/corrupt inputs, disabled formats, sixteen-bit PNG, and dimension/encoded/decoded-size limits. Unicode paths, relative paths from a different working directory, value ownership, and decoding after failures are checked.
 
-Eight threads complete 128 stress iterations per configuration, containing 384 successful decodes and 128 rejected loads. A public application client uploads 39 decoded images in Linear/SRGB modes, including an upload after a frame is queued, and presents eight frames of the existing perspective sample. Debug core and synchronization validation report no warnings or errors. This verifies decoding/upload integration; the sample still displays colored geometry.
+Eight threads complete 128 stress iterations per configuration, containing 384 successful decodes and 128 rejected loads. A public application client uploads 39 decoded images in Linear/SRGB modes, including an upload after a frame is queued, and presents eight frames of the existing perspective sample. Debug core and synchronization validation report no warnings or errors. This verifies decoding/upload integration; at that milestone the sample displayed colored geometry. Later sampling checks are recorded in [TextureResources.md](TextureResources.md).
 
 Evidence: `out/validation/image-loader-<config>-results.log`, `image-loader-<config>.log`, `image-headers.log`, and `image-exports.log`. Probe sources are compiled from standard input; temporary fixtures, executables, objects, and probe debug symbols are removed. No test framework or tracked test source is added.
 

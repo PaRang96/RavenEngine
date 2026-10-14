@@ -2,6 +2,8 @@
 
 #include <vulkan/vulkan.h>
 #include "Platform/Windows/Win32Window.hpp"
+#include "Platform/Windows/Win32EventPump.hpp"
+#include "Platform/Windows/Win32Input.hpp"
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -46,179 +48,6 @@ namespace Raven
 				throw std::runtime_error("Could not convert window title");
 
 			return result;
-		}
-
-		Key TranslatePhysicalKey(LPARAM lParam)
-		{
-			const UINT flags = HIWORD(lParam);
-			if ((flags & KF_EXTENDED) != 0)
-				return Key::Unknown;
-			
-			switch (LOBYTE(flags))
-			{
-			case 0x10: return Key::Q;
-			case 0x11: return Key::W;
-			case 0x12: return Key::E;
-			case 0x13: return Key::R;
-			case 0x14: return Key::T;
-			case 0x15: return Key::Y;
-			case 0x16: return Key::U;
-			case 0x17: return Key::I;
-			case 0x18: return Key::O;
-			case 0x19: return Key::P;
-			
-			case 0x1E: return Key::A;
-			case 0x1F: return Key::S;
-			case 0x20: return Key::D;
-			case 0x21: return Key::F;
-			case 0x22: return Key::G;
-			case 0x23: return Key::H;
-			case 0x24: return Key::J;
-			case 0x25: return Key::K;
-			case 0x26: return Key::L;
-			
-			case 0x2C: return Key::Z;
-			case 0x2D: return Key::X;
-			case 0x2E: return Key::C;
-			case 0x2F: return Key::V;
-			case 0x30: return Key::B;
-			case 0x31: return Key::N;
-			case 0x32: return Key::M;
-			
-			case 0x02: return Key::Digit1;
-			case 0x03: return Key::Digit2;
-			case 0x04: return Key::Digit3;
-			case 0x05: return Key::Digit4;
-			case 0x06: return Key::Digit5;
-			case 0x07: return Key::Digit6;
-			case 0x08: return Key::Digit7;
-			case 0x09: return Key::Digit8;
-			case 0x0A: return Key::Digit9;
-			case 0x0B: return Key::Digit0;
-
-			case 0x0C: return Key::Minus;
-			case 0x0D: return Key::Equal;
-			case 0x1A: return Key::LeftBracket;
-			case 0x1B: return Key::RightBracket;
-			case 0x27: return Key::Semicolon;
-			case 0x28: return Key::Apostrophe;
-			case 0x29: return Key::Grave;
-			case 0x2B: return Key::Backslash;
-			case 0x33: return Key::Comma;
-			case 0x34: return Key::Period;
-			case 0x35: return Key::Slash;
-
-			default: return Key::Unknown;
-			}
-		}
-
-		Key TranslateKey(WPARAM virtualKey, LPARAM lParam)
-		{
-			const Key physicalKey = TranslatePhysicalKey(lParam);
-			if (physicalKey != Key::Unknown)
-				return physicalKey;
-
-			if (virtualKey == VK_SHIFT)
-			{
-				const UINT scanCode = LOBYTE(HIWORD(lParam));
-				virtualKey = MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX);
-			}
-			else if (virtualKey == VK_CONTROL || virtualKey == VK_MENU)
-			{
-				// Scan-code lookup can produce language keys on Korean layouts.
-				const bool extended = (HIWORD(lParam) & KF_EXTENDED) != 0;
-				if (virtualKey == VK_CONTROL)
-					virtualKey = extended ? VK_RCONTROL : VK_LCONTROL;
-				else
-					virtualKey = extended ? VK_RMENU : VK_LMENU;
-			}
-
-			if (virtualKey >= VK_F1 && virtualKey <= VK_F12)
-			{
-				return static_cast<Key>(
-					static_cast<std::uint16_t>(Key::F1) +
-					static_cast<std::uint16_t>(virtualKey - VK_F1));
-			}
-
-			if (virtualKey >= VK_F13 && virtualKey <= VK_F24)
-			{
-				return static_cast<Key>(
-					static_cast<std::uint16_t>(Key::F13) +
-					static_cast<std::uint16_t>(virtualKey - VK_F13));
-			}
-
-			switch (virtualKey)
-			{
-			case VK_LSHIFT:   return Key::LeftShift;
-			case VK_RSHIFT:   return Key::RightShift;
-			case VK_LCONTROL: return Key::LeftControl;
-			case VK_RCONTROL: return Key::RightControl;
-			case VK_LMENU:    return Key::LeftAlt;
-			case VK_RMENU:    return Key::RightAlt;
-			case VK_LWIN:     return Key::LeftSuper;
-			case VK_RWIN:     return Key::RightSuper;
-			case VK_ESCAPE: return Key::Escape;
-			case VK_RETURN: 
-				return (HIWORD(lParam) & KF_EXTENDED) != 0
-					? Key::NumpadEnter : Key::Enter;
-			case VK_BACK:   return Key::Backspace;
-			case VK_TAB:    return Key::Tab;
-			case VK_SPACE:  return Key::Space;
-			case VK_INSERT: return Key::Insert;
-			case VK_HOME:   return Key::Home;
-			case VK_PRIOR:  return Key::PageUp;
-			case VK_DELETE: return Key::Delete;
-			case VK_END:    return Key::End;
-			case VK_NEXT:   return Key::PageDown;
-			case VK_LEFT:   return Key::Left;
-			case VK_RIGHT:  return Key::Right;
-			case VK_UP:     return Key::Up;
-			case VK_DOWN:   return Key::Down;
-			default:        return Key::Unknown;
-			}
-		}
-
-		void UpdateButton(ButtonState& state, bool down)
-		{
-			if (down)
-			{
-				if (!state.Down)
-					state.Pressed = true;
-			}
-			else if (state.Down)
-			{
-				state.Released = true;
-			}
-
-			state.Down = down;
-		}
-
-		void UpdateMouseButton(
-			HWND handle,
-			InputState& input,
-			MouseButton button,
-			bool down)
-		{
-			const auto index = static_cast<std::size_t>(button);
-			if (index >= input.MouseButtons.size())
-				return;
-
-			UpdateButton(input.MouseButtons[index], down);
-
-			if (down)
-			{
-				SetCapture(handle);
-				return;
-			}
-
-			for (const ButtonState& state : input.MouseButtons)
-			{
-				if (state.Down)
-					return;
-			}
-
-			if (GetCapture() == handle)
-				ReleaseCapture();
 		}
 	}
 
@@ -271,23 +100,14 @@ namespace Raven
 
 	void Win32Window::PollEvents()
 	{
-		m_Input.ClearTransientState();
-
-		MSG message{};
-		while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
-		{
-			if (message.message == WM_QUIT)
-			{
-				m_ShouldClose = true;
-				continue;
-			}
-
-			TranslateMessage(&message);
-			DispatchMessageW(&message);
-		}
+		Win32EventPump::PollEvents();
+		m_Input.Publish();
 	}
 
-	bool Win32Window::ShouldClose() const { return m_ShouldClose; }
+	bool Win32Window::ShouldClose() const
+	{
+		return m_ShouldClose || Win32EventPump::IsQuitRequested();
+	}
 	std::uint32_t Win32Window::GetWidth() const { return m_Width; }
 	std::uint32_t Win32Window::GetHeight() const { return m_Height; }
 
@@ -346,7 +166,26 @@ namespace Raven
 
 	const InputState& Win32Window::GetInputState() const
 	{
-		return m_Input;
+		return m_Input.GetState();
+	}
+
+	void Win32Window::UpdateMouseCapture(HWND handle)
+	{
+		if (m_Input.HasMouseButtonDown())
+		{
+			if (GetCapture() != handle)
+				SetCapture(handle);
+		}
+		else
+		{
+			ReleaseMouseCapture(handle);
+		}
+	}
+
+	void Win32Window::ReleaseMouseCapture(HWND handle)
+	{
+		if (GetCapture() == handle)
+			ReleaseCapture();
 	}
 
 	LRESULT CALLBACK Win32Window::WindowProc(
@@ -391,18 +230,7 @@ namespace Raven
 				const std::int32_t x = GET_X_LPARAM(lParam);
 				const std::int32_t y = GET_Y_LPARAM(lParam);
 
-				if (self->m_Input.HasCursorPosition)
-				{
-					self->m_Input.CursorDeltaX += x - self->m_Input.CursorX;
-					self->m_Input.CursorDeltaY += y - self->m_Input.CursorY;
-				}
-				else
-				{
-					self->m_Input.HasCursorPosition = true;
-				}
-
-				self->m_Input.CursorX = x;
-				self->m_Input.CursorY = y;
+				self->m_Input.SetCursorPosition(x, y);
 				return 0;
 			}
 			case WM_MOUSEWHEEL:
@@ -420,35 +248,36 @@ namespace Raven
 				return 0;
 			}
 			case WM_LBUTTONDOWN:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Left, true);
+				self->m_Input.SetMouseButtonDown(MouseButton::Left, true);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_LBUTTONUP:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Left, false);
+				self->m_Input.SetMouseButtonDown(MouseButton::Left, false);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_RBUTTONDOWN:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Right, true);
+				self->m_Input.SetMouseButtonDown(MouseButton::Right, true);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_RBUTTONUP:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Right, false);
+				self->m_Input.SetMouseButtonDown(MouseButton::Right, false);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_MBUTTONDOWN:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Middle, true);
+				self->m_Input.SetMouseButtonDown(MouseButton::Middle, true);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_MBUTTONUP:
-				UpdateMouseButton(
-					handle, self->m_Input, MouseButton::Middle, false);
+				self->m_Input.SetMouseButtonDown(MouseButton::Middle, false);
+				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_XBUTTONDOWN:
 			{
 				const MouseButton button =
 					GET_XBUTTON_WPARAM(wParam) == XBUTTON1
 					? MouseButton::X1 : MouseButton::X2;
-				UpdateMouseButton(handle, self->m_Input, button, true);
+				self->m_Input.SetMouseButtonDown(button, true);
+				self->UpdateMouseCapture(handle);
 				return TRUE;
 			}
 			case WM_XBUTTONUP:
@@ -456,7 +285,8 @@ namespace Raven
 				const MouseButton button =
 					GET_XBUTTON_WPARAM(wParam) == XBUTTON1
 					? MouseButton::X1 : MouseButton::X2;
-				UpdateMouseButton(handle, self->m_Input, button, false);
+				self->m_Input.SetMouseButtonDown(button, false);
+				self->UpdateMouseCapture(handle);
 				return TRUE;
 			}
 			case WM_KEYDOWN:
@@ -464,7 +294,7 @@ namespace Raven
 			case WM_SYSKEYDOWN:
 			case WM_SYSKEYUP:
 			{
-				const Key key = TranslateKey(wParam, lParam);
+				const Key key = TranslateWin32Key(wParam, lParam);
 				if (key == Key::Unknown)
 					break;
 
@@ -479,17 +309,11 @@ namespace Raven
 				break;
 			}
 			case WM_KILLFOCUS:
-				self->m_Input.ReleaseAllKeys();
-
-				for (ButtonState& state : self->m_Input.MouseButtons)
-					UpdateButton(state, false);
-				if (GetCapture() == handle)
-					ReleaseCapture();
-				self->m_Input.HasCursorPosition = false;
+				self->m_Input.HandleFocusLost();
+				self->ReleaseMouseCapture(handle);
 				return 0;
 			case WM_CAPTURECHANGED:
-				for (ButtonState& state : self->m_Input.MouseButtons)
-					UpdateButton(state, false);
+				self->m_Input.ReleaseAllMouseButtons();
 				return 0;
 			}
 		}

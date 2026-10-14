@@ -22,7 +22,8 @@ namespace Raven
 
 	VulkanMesh::VulkanMesh(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 		std::span<const ColorVertex> vertices, std::span<const std::uint16_t> indices)
-		: m_Vertices(device, physicalDevice, std::as_bytes(ValidateMesh(vertices, indices)),
+		: m_LocalBounds(CalculateMeshBounds(ValidateMesh(vertices, indices), indices)),
+		  m_Vertices(device, physicalDevice, std::as_bytes(vertices),
 			  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
 		  m_Indices(device, physicalDevice, std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
 		  m_IndexCount(static_cast<std::uint32_t>(indices.size()))

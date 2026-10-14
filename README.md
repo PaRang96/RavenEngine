@@ -1,6 +1,6 @@
 # RavenEngine
 
-RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, a perspective camera, reusable meshes, and depth-tested 3D rendering.
+RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, a perspective camera, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, and object frustum culling.
 
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
 
@@ -22,15 +22,22 @@ RavenEngine/
     Samples/          Sample entry point, geometry, animation, and camera controls
   CMakeLists.txt      Explicit engine/sample sources and include visibility
 ThirdParty/stb/       Pinned image decoder, license, and upstream provenance
+Content/Textures/    Original PNG patterns used by the sample
 ```
 
 Clients include headers such as `Raven/Core/Application.hpp` through the `RavenCore` target. Only `Public` is shared as an engine include directory. `VulkanContext` stores its implementation privately, and meshes are borrowed through an opaque reference; public renderer headers do not include internal Vulkan owners. See [EngineModules.md](docs/EngineModules.md) for exports and ownership.
 
+Windows input uses shared state rules and a pending/published buffer owned by each window. The Win32 event pump owns the thread message queue, while key translation and native mouse capture stay in the Windows backend. See [InputProcessing.md](docs/InputProcessing.md) for ownership and snapshot timing.
+
 Developer utilities include `Paths::GetContentPath()`, `GetShaderPath()`, executable paths, and binary/text file readers. Validated shaders are staged in `Content/Shaders` beside the executable; copying the executable, DLL, and `Content` together preserves shader lookup from any working directory. See [RuntimeUtilities.md](docs/RuntimeUtilities.md) for usage and application content-root configuration.
 
-`VulkanContext::CreateTexture()` now owns and synchronously uploads RGBA8 textures in Linear or SRGB mode. The public interface exposes a pixel description and an opaque borrowed texture reference; native image/view/sampler ownership stays private. See [TextureResources.md](docs/TextureResources.md) for the contract and GPU validation.
+`VulkanContext::CreateTexture()` owns and synchronously uploads RGBA8 textures in Linear or SRGB mode. `CreateTexturedMesh()` and the additional `DrawFrame()` overload render UV geometry with a texture, model transform, and RGBA tint. Texture descriptors and native image/view/sampler ownership stay private. The existing color-mesh API remains available. See [TextureResources.md](docs/TextureResources.md) for the contract and GPU validation.
 
-`Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation. Descriptors and visible texture sampling remain pending.
+The four-argument `DrawFrame()` adds straight-alpha draws with explicit layer/order and automatic camera-depth sorting. A private preparation stage performs per-instance frustum selection before Vulkan command recording. The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
+
+Run with `--orthographic` for the 2D sample. `OrthographicCamera::VerticalSize` sets the full visible height in world units; width follows the drawable aspect ratio. The shared frame path handles both camera types with the same depth, transparency, and frustum rules. Arrows pan, wheel/PageUp/PageDown zoom, Home resets the camera, and F1 toggles transparent order. The two upper sprites have equal world/screen sizes despite different depths. See [the coordinate contract](docs/CoordinateSystem.md).
+
+`Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. The sample loads two staged PNGs and displays them alongside the existing cubes and ground slab. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation.
 
 ## Build on Windows
 
@@ -40,6 +47,7 @@ From the **x64 Native Tools Command Prompt for VS 2026** (or another developer s
 cmake --preset x64-debug
 cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --orthographic
 ```
 
 ## macOS/Linux 담당자 작업

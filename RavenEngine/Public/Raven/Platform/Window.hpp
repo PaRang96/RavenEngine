@@ -50,6 +50,7 @@ namespace Raven
 
 		virtual std::vector<const char*> 
 			GetRequiredVulkanInstanceExtensions() const = 0;
+		// Read on the window thread after this window's PollEvents().
 		virtual const InputState& GetInputState() const = 0;
 
 		virtual VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const = 0;

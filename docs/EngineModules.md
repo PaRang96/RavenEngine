@@ -5,9 +5,9 @@ The Windows build separates reusable engine code from sample code:
 | Target | Output | Responsibility |
 | --- | --- | --- |
 | `RavenCore` | `RavenCore.dll` and import library `RavenCore.lib` | Application loop, platform backend, input, logging, and Vulkan resource ownership |
-| `RavenEngine` | `RavenEngine.exe` | Entry point, window description, perspective scene, camera controls, and animation |
+| `RavenEngine` | `RavenEngine.exe` | Entry point, window description, perspective/orthographic samples, camera controls, and animation |
 | `RavenShaders` | Validated SPIR-V under `Shaders/<config>/` | Build dependency of `RavenCore` |
-| `RavenContent` | Runtime copies under `Content/Shaders/` beside the sample | Stages validated shaders before the engine/sample build |
+| `RavenContent` | Runtime copies under `Content/` beside the sample | Stages validated shaders and sample PNGs before the engine/sample build |
 
 The DLL and executable are emitted together under `out/build/x64-debug/RavenEngine/` or `out/build/x64-release/RavenEngine/`. Existing executable paths and launch configurations remain valid. The `.lib` is an import library used when linking the sample; the engine implementation remains in the DLL, which is required at runtime. Shader lookup now uses executable-relative `Content/Shaders`; see [RuntimeUtilities.md](RuntimeUtilities.md) for relocation and content-root overrides.
 
@@ -25,9 +25,17 @@ The image-loading milestone adds `Images::Load`, bringing the total to 15 explic
 
 The development-diagnostic follow-up adds an `Images::Load(path, ImageLoadOptions)` overload and retains the original `Images::Load(path)` export. The one-argument overload delegates using default options. Both signatures are declared and defined consistently, bringing the DLL to 16 explicit exports. `WarnIfNonPowerOfTwo` defaults to `true`, while RavenCore's private development-build definition controls whether it logs a warning.
 
-The signature audit restores the original two-argument `Application::Run` DLL entry point alongside the configured overload and exports the public `Window::Create(const WindowDesc&)` factory. The DLL now has 18 explicit exports and retains all 16 symbols from before this audit. Adding a default argument does not preserve the binary symbol of a shorter overload; keep an existing entry point when extending these APIs.
+The signature audit restores the original two-argument `Application::Run` DLL entry point alongside the configured overload and exports the public `Window::Create(const WindowDesc&)` factory. That audit brought the DLL to 18 explicit exports and retained all 16 prior symbols. Adding a default argument does not preserve the binary symbol of a shorter overload; keep an existing entry point when extending these APIs.
+
+The texture-rendering milestone adds `CreateTexturedMesh` and a three-argument `DrawFrame` overload. Both configurations retain all 18 prior symbols and expose 20 exports in total. The existing color vertex/draw types and APIs are unchanged; UV geometry uses its own opaque mesh type. Texture descriptors remain context-owned private resources. See [TextureResources.md](TextureResources.md) for lifetime rules and Debug/Release rendering evidence.
+
+The transparency milestone adds only a four-argument `DrawFrame` export and `VulkanTransparentDraw` CPU data. Both configurations retain all 20 prior symbols and expose 21 exports in total. The existing color/textured draw layouts and both older overloads are preserved. Visibility selection, draw sorting, mesh bounds, and Vulkan pipelines remain private to the engine. See [TextureResources.md](TextureResources.md) for ordering and culling rules.
+
+The orthographic milestone adds matching two-, three- and four-argument `DrawFrame` overloads for `OrthographicCamera`. Both configurations preserve all 21 prior symbols and expose 24 total exports. The plain camera value stays header-only; a private template shares frame ownership/submission between both camera types, and the matrix-based queue/pipelines remain unchanged. See [CoordinateSystem.md](CoordinateSystem.md) for extent, resizing and validation rules.
 
 Both targets use the dynamic MSVC runtime: `/MDd` in Debug and `/MD` in Release. This is a C++ interface for modules built together with matching architecture, compiler/STL, runtime, and build configuration. Rebuild consumers when shared declarations change. It is not the future versioned game-module ABI or a compiler-independent plugin SDK.
+
+The common asset milestone adds 12 explicit exports: three `AssetId` functions, six `AssetCatalog` functions (constructor/destructor, both registration overloads and both lookup functions), and three `AssetResources` functions. Debug/Release retain all 24 prior exports and expose 36 in total. Typed `AssetRef<T>` and asset metadata remain public values, with the catalog/cache implementation private. Public-DLL clients check exact function/member-pointer signatures and resource lifecycle. No existing application, image-loading or renderer signature changes. See [AssetSystem.md](AssetSystem.md).
 
 ## Public and private source trees
 

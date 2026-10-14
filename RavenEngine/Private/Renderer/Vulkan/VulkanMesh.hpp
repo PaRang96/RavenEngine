@@ -2,6 +2,7 @@
 
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Raven/Renderer/ColorVertex.hpp"
+#include "Renderer/MeshBounds.hpp"
 
 #include <cstdint>
 #include <span>
@@ -17,11 +18,13 @@ namespace Raven
 		const VulkanBuffer& GetVertices() const { return m_Vertices; }
 		const VulkanBuffer& GetIndices() const { return m_Indices; }
 		std::uint32_t GetIndexCount() const { return m_IndexCount; }
+		const MeshBounds& GetLocalBounds() const { return m_LocalBounds; }
 
 		VulkanMesh(const VulkanMesh&) = delete;
 		VulkanMesh& operator=(const VulkanMesh&) = delete;
 
 	private:
+		MeshBounds m_LocalBounds;
 		VulkanBuffer m_Vertices;
 		VulkanBuffer m_Indices;
 		std::uint32_t m_IndexCount;

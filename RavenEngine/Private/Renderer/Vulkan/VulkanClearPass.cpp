@@ -1,8 +1,11 @@
 #include "Renderer/Vulkan/VulkanClearPass.hpp"
+#include "Renderer/Vulkan/VulkanTexturedMesh.hpp"
+#include "Renderer/Vulkan/VulkanTexture.hpp"
 
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace Raven
 {
@@ -27,9 +30,10 @@ namespace Raven
 
 	VulkanClearPass::VulkanClearPass(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
-		std::uint32_t graphicsFamily,
+		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
 		const std::filesystem::path& shaderDirectory)
-		: m_Device(device.Get()), m_Extent(swapchain.GetExtent())
+		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice),
+		  m_Device(device.Get()), m_Extent(swapchain.GetExtent())
 	{
 		if (m_Device == VK_NULL_HANDLE || swapchain.Get() == VK_NULL_HANDLE ||
 			swapchain.GetImageViews().empty() || m_Extent.width == 0 || m_Extent.height == 0)
@@ -88,6 +92,9 @@ namespace Raven
 			CheckClearCreation(vkCreateRenderPass(m_Device, &passInfo, nullptr, &m_RenderPass),
 				m_RenderPass, "vkCreateRenderPass");
 			m_Pipeline.emplace(device, m_RenderPass, shaderDirectory);
+			m_TexturePipeline.emplace(device, m_RenderPass, textureLayout, shaderDirectory);
+			m_TransparentPipeline.emplace(device, m_RenderPass, textureLayout, shaderDirectory,
+				TexturePipelineMode::StraightAlpha);
 
 			m_Framebuffers.resize(swapchain.GetImageViews().size(), VK_NULL_HANDLE);
 			m_DepthAttachments.reserve(m_Framebuffers.size());
@@ -174,6 +181,10 @@ namespace Raven
 		}
 		if (m_CommandPool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
+		for (auto& frame : m_Frames)
+			frame.TexturedInstances.reset();
+		m_TransparentPipeline.reset();
+		m_TexturePipeline.reset();
 		m_Pipeline.reset();
 		for (const auto framebuffer : m_Framebuffers)
 			if (framebuffer != VK_NULL_HANDLE)
@@ -183,8 +194,35 @@ namespace Raven
 			vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
 	}
 
+	void VulkanClearPass::UploadInstances(Frame& frame,
+		std::span<const TexturedInstanceData> instances)
+	{
+		if (instances.empty())
+			return;
+		constexpr VkDeviceSize maxBytes = std::numeric_limits<VkDeviceSize>::max();
+		if (instances.size() > maxBytes / sizeof(TexturedInstanceData))
+			throw std::length_error("Textured instance buffer size exceeds the supported range");
+		const auto bytes = std::as_bytes(instances);
+		const auto required = static_cast<VkDeviceSize>(bytes.size());
+		if (!frame.TexturedInstances || frame.TexturedInstances->GetSize() < required)
+		{
+			VkDeviceSize capacity = frame.TexturedInstances ? frame.TexturedInstances->GetSize() :
+				64 * sizeof(TexturedInstanceData);
+			while (capacity < required)
+				capacity = capacity <= maxBytes / 2 ? capacity * 2 : required;
+			auto replacement = std::make_unique<VulkanBuffer>(m_DeviceOwner, m_PhysicalDevice,
+				capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+			replacement->Write(bytes);
+			frame.TexturedInstances = std::move(replacement);
+		}
+		else
+		{
+			frame.TexturedInstances->Write(bytes);
+		}
+	}
+
 	void VulkanClearPass::Record(VkCommandBuffer commands, std::uint32_t imageIndex,
-		const Mat4& viewProjection, std::span<const VulkanDraw> draws)
+		const VulkanDrawQueue& queue, VkBuffer instanceBuffer)
 	{
 		CheckClearResult(vkResetCommandBuffer(commands, 0), "vkResetCommandBuffer");
 		VkCommandBufferBeginInfo beginInfo{};
@@ -208,9 +246,10 @@ namespace Raven
 		const VkRect2D scissor{ { 0, 0 }, m_Extent };
 		vkCmdSetViewport(commands, 0, 1, &viewport);
 		vkCmdSetScissor(commands, 0, 1, &scissor);
-		for (const auto& draw : draws)
+		for (const auto& prepared : queue.Color)
 		{
-			const ColorPushConstants constants{ viewProjection * draw.Model, draw.Tint };
+			const auto& draw = *prepared.Draw;
+			const ColorPushConstants constants{ prepared.ModelViewProjection, draw.Tint };
 			m_Pipeline->Bind(commands, constants);
 			const VkBuffer vertexBuffer = draw.Mesh.GetVertices().Get();
 			const VkDeviceSize vertexOffset = 0;
@@ -218,17 +257,39 @@ namespace Raven
 			vkCmdBindIndexBuffer(commands, draw.Mesh.GetIndices().Get(), 0, VK_INDEX_TYPE_UINT16);
 			vkCmdDrawIndexed(commands, draw.Mesh.GetIndexCount(), 1, 0, 0, 0);
 		}
+		const auto recordTextures = [commands, instanceBuffer](const VulkanTexturePipeline& pipeline,
+			std::span<const TexturedBatch> batches)
+		{
+			for (const auto& batch : batches)
+			{
+				pipeline.Bind(commands, batch.Texture->GetDescriptorSet());
+				const std::array<VkBuffer, 2> buffers
+				{
+					batch.Mesh->GetVertices().Get(), instanceBuffer
+				};
+				const std::array<VkDeviceSize, 2> offsets{ 0, 0 };
+				vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
+					buffers.data(), offsets.data());
+				vkCmdBindIndexBuffer(commands, batch.Mesh->GetIndices().Get(), 0, VK_INDEX_TYPE_UINT16);
+				vkCmdDrawIndexed(commands, batch.Mesh->GetIndexCount(), batch.InstanceCount,
+					0, 0, batch.FirstInstance);
+			}
+		};
+		recordTextures(*m_TexturePipeline, queue.OpaqueBatches);
+		recordTextures(*m_TransparentPipeline, queue.TransparentBatches);
 		vkCmdEndRenderPass(commands);
 		CheckClearResult(vkEndCommandBuffer(commands), "vkEndCommandBuffer");
 	}
 
 	bool VulkanClearPass::Draw(const VulkanSwapchain& swapchain, VkQueue graphics,
-		VkQueue present, const Mat4& viewProjection, std::span<const VulkanDraw> draws)
+		VkQueue present, const VulkanDrawQueue& queue)
 	{
 		auto& frame = m_Frames[m_FrameIndex];
 		constexpr auto timeout = std::numeric_limits<std::uint64_t>::max();
 		CheckClearResult(vkWaitForFences(m_Device, 1, &frame.InFlight, VK_TRUE, timeout),
 			"vkWaitForFences");
+		// Only overwrite this slot after its GPU work completes; allocation can fail before acquire.
+		UploadInstances(frame, queue.TexturedInstances);
 
 		std::uint32_t imageIndex = 0;
 		const VkResult acquire = vkAcquireNextImageKHR(m_Device, swapchain.Get(), timeout,
@@ -240,7 +301,8 @@ namespace Raven
 		if (imageIndex >= m_Framebuffers.size())
 			throw std::runtime_error("Acquired swapchain image index is out of range");
 
-		Record(frame.Commands, imageIndex, viewProjection, draws);
+		Record(frame.Commands, imageIndex, queue,
+			frame.TexturedInstances ? frame.TexturedInstances->Get() : VK_NULL_HANDLE);
 		// Keep the fence signaled on acquisition/recording failure; reset just before submission.
 		CheckClearResult(vkResetFences(m_Device, 1, &frame.InFlight), "vkResetFences");
 		const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;

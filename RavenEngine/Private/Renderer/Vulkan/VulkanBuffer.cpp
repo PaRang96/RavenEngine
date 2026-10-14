@@ -45,10 +45,17 @@ namespace Raven
 	VulkanBuffer::VulkanBuffer(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice,
 		std::span<const std::byte> data, VkBufferUsageFlags usage)
-		: m_Device(device.Get()), m_Size(static_cast<VkDeviceSize>(data.size()))
+		: VulkanBuffer(device, physicalDevice, static_cast<VkDeviceSize>(data.size()), usage)
+	{
+		Write(data);
+	}
+
+	VulkanBuffer::VulkanBuffer(const VulkanDevice& device,
+		const VulkanPhysicalDevice& physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage)
+		: m_Device(device.Get()), m_Size(size)
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
-			data.empty() || usage == 0)
+			size == 0 || usage == 0)
 			throw std::runtime_error("Invalid Vulkan buffer parameters");
 
 		try
@@ -80,13 +87,6 @@ namespace Raven
 
 			CheckBufferResult(vkBindBufferMemory(m_Device, m_Buffer, m_Memory, 0),
 				"vkBindBufferMemory");
-
-			void* mapped = nullptr;
-			CheckBufferResult(vkMapMemory(m_Device, m_Memory, 0, m_Size, 0, &mapped),
-				"vkMapMemory");
-
-			std::memcpy(mapped, data.data(), data.size());
-			vkUnmapMemory(m_Device, m_Memory);
 		}
 		catch (...)
 		{
@@ -98,6 +98,19 @@ namespace Raven
 	VulkanBuffer::~VulkanBuffer()
 	{
 		Destroy();
+	}
+
+	void VulkanBuffer::Write(std::span<const std::byte> data)
+	{
+		if (data.size() > m_Size)
+			throw std::invalid_argument("Buffer upload exceeds its capacity");
+		if (data.empty())
+			return;
+		void* mapped = nullptr;
+		CheckBufferResult(vkMapMemory(m_Device, m_Memory, 0,
+			static_cast<VkDeviceSize>(data.size()), 0, &mapped), "vkMapMemory");
+		std::memcpy(mapped, data.data(), data.size());
+		vkUnmapMemory(m_Device, m_Memory);
 	}
 
 	void VulkanBuffer::Destroy() noexcept

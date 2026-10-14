@@ -1,24 +1,14 @@
 #pragma once
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
-#include "Raven/Math/Transform.hpp"
+#include "Renderer/Vulkan/VulkanDrawConstants.hpp"
 
 #include <cstddef>
 #include <filesystem>
 
 namespace Raven
 {
-	struct ColorPushConstants
-	{
-		Mat4 ClipFromLocal;
-		Vec4 Tint;
-	};
-
-	static_assert(std::is_standard_layout_v<ColorPushConstants>);
-	static_assert(std::is_trivially_copyable_v<ColorPushConstants>);
-	static_assert(sizeof(ColorPushConstants) == 80);
-	static_assert(offsetof(ColorPushConstants, ClipFromLocal) == 0);
-	static_assert(offsetof(ColorPushConstants, Tint) == 64);
+	using ColorPushConstants = DrawPushConstants;
 
 	class VulkanColorPipeline
 	{

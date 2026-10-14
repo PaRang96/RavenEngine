@@ -1,10 +1,10 @@
 # macOS / Linux 담당자 작업 목록
 
-기준일: 2026-10-10. 목표는 **현재 Windows에서 검증한 엔진과 perspective 샘플을 동일한 공유 인터페이스로 실행하는 것**입니다. 아래 항목은 각 플랫폼 담당자가 구현하고 해당 OS에서 검증할 작업입니다. 체크박스는 검증 결과를 남긴 뒤 완료 처리합니다.
+기준일: 2026-10-11. 목표는 **현재 Windows에서 검증한 엔진과 perspective 샘플을 동일한 공유 인터페이스로 실행하는 것**입니다. 아래 항목은 각 플랫폼 담당자가 구현하고 해당 OS에서 검증할 작업입니다. 체크박스는 검증 결과를 남긴 뒤 완료 처리합니다.
 
 ## 현재 기준과 담당 범위
 
-Windows에서는 C++20 Debug/Release 빌드, 네이티브 창과 입력, Vulkan 초기화와 GPU 선택, swapchain 복구, perspective 카메라, depth testing, mesh와 texture 업로드가 동작합니다. PNG/JPEG 로딩과 실행 파일 기준 Content 경로도 구현되어 있습니다. 최근 인터페이스 검증에서는 구성별 27개 DLL 클라이언트 검증과 8프레임 렌더링을 통과했습니다.
+Windows에서는 C++20 Debug/Release 빌드, 네이티브 창과 입력, Vulkan 초기화와 GPU 선택, swapchain 복구, perspective 카메라, depth testing, mesh와 texture 업로드가 동작합니다. PNG/JPEG 로딩과 실행 파일 기준 Content 경로도 구현되어 있습니다. 현재 샘플은 두 PNG quad와 기존 색상 geometry를 함께 그립니다. 최신 texture 검증에서는 구성별 공개 API 검사 13개와 24프레임, 별도 GPU pixel 검사 13개를 통과했습니다.
 
 macOS는 기존 Cocoa 구현의 인터페이스가 오래되어 현재 공유 코드와 맞지 않습니다. Linux는 기여된 X11/XCB backend와 Debug/Release preset을 현재 Public/Private 구조와 `RavenCore`에 맞춰 병합했습니다. framebuffer 계약과 실행 파일 경로 hook도 연결했지만, Linux의 빌드와 런타임 동작은 아직 검증하지 않았습니다. 두 플랫폼 모두 아래 네이티브 검증이 필요합니다.
 
@@ -33,6 +33,8 @@ VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;
 
 `Window::Create(const WindowDesc&)`는 해당 OS에서 선택한 backend를 생성합니다. 공개 선언의 `RAVEN_API`를 유지하고, backend 구현은 `Window`의 virtual destructor를 통해 정상적으로 해제되어야 합니다. 엔진이 `WindowDesc::Title`의 UTF-8 문자열을 네이티브 제목으로 전달할 수 있어야 합니다.
 
+Windows 입력의 소유와 실행 순서는 [InputProcessing.md](InputProcessing.md)를 기준으로 합니다. 공통 `InputState`에 마우스 버튼·커서·포커스 복구 메서드가 추가되었고, private `InputBuffer`는 창별 pending 입력과 published snapshot을 관리합니다. 다른 창의 이벤트를 처리하더라도 그 창이 자신의 `PollEvents()`를 호출하기 전까지 입력 전환을 보존해야 합니다. Windows는 이 구조로 변경했으며, Linux와 Mac의 native 구현은 담당자가 연결하고 검증합니다. 기존 공개 함수와 virtual 메서드의 signature는 유지했습니다.
+
 [PlatformPaths.hpp](../RavenEngine/Private/Platform/PlatformPaths.hpp)의 필수 경로 hook은 다음과 같습니다.
 
 ```cpp
@@ -52,6 +54,25 @@ namespace Raven
 - `ApplicationClient::OnFrame(VulkanContext&, const InputState&, const FrameTime&)`와 `ApplicationClientFactory`의 create/destroy callback. Destroy callback의 `noexcept`를 유지하고, 객체를 생성한 모듈에서 해제합니다.
 
 계약과 최근 수정 이유는 [EngineModules.md](EngineModules.md), [RuntimeUtilities.md](RuntimeUtilities.md), [ImageLoading.md](ImageLoading.md)를 참고합니다. 각 OS에서도 공개 헤더만 사용하는 별도 클라이언트가 엔진 공유 라이브러리에 링크되어야 합니다. Windows의 export 이름 수를 다른 OS에 그대로 적용하지 말고, 공개 진입점의 링크와 호출 가능 여부를 검증합니다.
+
+## 공통 자산 시스템의 새 플랫폼 연결 지점
+
+UUIDv4 `AssetId`, `AssetRef<T>`, 인메모리 `AssetCatalog`와 ID 기반 텍스처 재사용을 추가했습니다. 공통 생성/파싱/출력 및 자산 코드는 그대로 재사용합니다. Windows에서는 Debug/Release 공개 DLL 호출과 GPU 재사용을 검증했으며 macOS/Linux 난수 구현은 각 담당자가 연결해야 합니다. 공유 자산 헤더에 네이티브 UUID/GUID 타입을 추가하지 않습니다.
+
+[PlatformRandom.hpp](../RavenEngine/Private/Platform/PlatformRandom.hpp)의 정확한 시그니처는 다음과 같습니다.
+
+```cpp
+namespace Raven::Platform
+{
+	void FillRandomBytes(std::span<std::uint8_t> bytes);
+}
+```
+
+전체 버퍼를 운영체제의 안전한 난수로 채우거나 예외를 던집니다. UUID version/variant 비트는 공통 `AssetId.cpp`가 설정하므로 플랫폼 코드에서 다시 설정하거나 native GUID 메모리를 복사하지 않습니다. 실패 시 시간·카운터·고정값으로 대체하지 않습니다.
+
+macOS 담당자는 `SecRandomCopyBytes` 등의 운영체제 공급자를 해당 private 폴더에서 구현하고 CMake APPLE 분기에 소스와 필요한 Security 프레임워크를 연결합니다. Linux 담당자는 `getrandom` 등의 공급자에서 부분 반환·EINTR·실패를 처리하고 Linux 소스 선택에 연결합니다. 현재 Windows만 `Win32Random.cpp`와 `bcrypt`를 연결했으므로 다른 OS에서는 이 hook을 정의해야 링크가 완료됩니다.
+
+자산 ID는 `Generate()`로 새 등록 때 한 번 만들고, 보존된 문자열은 `Parse(std::string_view)`로 읽습니다. 로딩마다 ID를 다시 만들지 않습니다. `AssetCatalog::Register(const AssetRecord&)`와 `Register(const TextureAssetDesc&)`, `GetTexture(AssetRef<TextureAsset>) const`, `AssetResources::LoadTexture(AssetRef<TextureAsset>)`의 타입·값 전달·const를 동일하게 유지합니다. `Parse`는 현재 UUIDv4만 허용하고 `ToString`은 소문자 36자 형식을 사용합니다. 상세 소유·검증 범위는 [AssetSystem.md](AssetSystem.md)에 있습니다.
 
 ## macOS 담당자 — 작업 순서
 
@@ -140,16 +161,16 @@ cmake --build out/build/linux-release
 
 ## 두 플랫폼의 공통 검증 기준
 
-- [ ] **입력:** `PollEvents()` 시작 시 transient 상태를 초기화하고, 실제 이벤트마다 상태를 반영합니다. 같은 poll에서 눌렀다 뗀 입력의 Pressed/Released와 KeyEvents를 모두 보존하고, 반복 key-down을 새 Pressed로 만들지 않습니다.
+- [ ] **입력:** 창별 pending buffer에 실제 이벤트를 누적하고, 해당 창의 `PollEvents()`에서 snapshot을 publish한 뒤 pending transient를 초기화합니다. 다른 창이 먼저 처리한 이벤트도 해당 창의 publish까지 보존합니다. 같은 poll에서 눌렀다 뗀 입력의 Pressed/Released와 KeyEvents를 모두 보존하고, 반복 key-down을 새 Pressed로 만들지 않습니다.
 - [ ] **키와 modifier:** 네이티브 키 번호를 공유 `Key` 값으로 변환합니다. 문자 입력과 physical key를 혼동하지 않습니다. Shift/Control/Alt/Super와 좌우 modifier, 방향키, Home, R, Space를 확인합니다. Text input과 별도 repeat API는 Windows에서도 미완료이므로 새로운 공유 계약이 필요하면 별도 조율합니다.
 - [ ] **마우스:** 버튼 전환, cursor 위치/delta, 가로·세로 wheel 누적, focus 상실 시 눌린 상태 해제를 확인합니다. 첫 cursor 위치나 focus 복귀에서 큰 delta가 발생하지 않도록 합니다. 좌표 단위·원점과 휠 방향은 Windows 동작과 비교해 기록합니다.
 - [ ] **framebuffer:** 크기는 drawable pixel 기준입니다. 최소화/사용 불가 상태는 `0 x 0`으로 보고하고, 크기 변경 시 Revision을 증가시킵니다. getter 호출이 Revision을 소비하거나 초기화하면 안 됩니다. resize, 배율 변경, 최소화/복원, 최소화 중 닫기를 확인합니다.
-- [ ] **시간과 renderer:** 첫 drawable frame과 복원 후 첫 frame의 DeltaSeconds가 0인지 확인합니다. 두 cube와 ground slab, perspective 비율, depth occlusion, orbit/zoom/reset/pause가 Windows 샘플과 같은 방식으로 동작해야 합니다. 공유 Blender 기준 축과 matrix 계약은 [CoordinateSystem.md](CoordinateSystem.md)를 유지합니다.
+- [ ] **시간과 renderer:** 첫 drawable frame과 복원 후 첫 frame의 DeltaSeconds가 0인지 확인합니다. 두 cube, ground slab, 두 PNG quad의 UV/tint, perspective 비율, depth occlusion, orbit/zoom/reset/pause가 Windows 샘플과 같은 방식으로 동작해야 합니다. 공유 Blender 기준 축과 matrix 계약은 [CoordinateSystem.md](CoordinateSystem.md)를 유지합니다.
 - [ ] **파일과 이미지:** 실행 파일 기준 Content/Shader 경로, 상대/절대 ContentRoot override, 잘못된 경로와 누락 파일의 진단을 확인합니다. PNG/JPEG를 RGBA8로 로드해 texture 생성에 전달합니다. non-power-of-two 이미지는 허용하면서 기본 옵션에서 개발 빌드에만 경고하고, 명시적 억제와 Release 무경고를 확인합니다.
 - [ ] **공개 API와 수명:** 공개 헤더의 독립 컴파일, 별도 클라이언트의 링크, Run/Load의 두 overload 호출, Window factory 호출을 확인합니다. client는 자기 모듈에서 해제되고 renderer보다 먼저 파괴되어야 하며, GPU 자원/surface는 네이티브 창보다 먼저 해제되어야 합니다. 정상 종료와 초기화 실패 양쪽을 확인합니다.
 - [ ] **배포와 검증 결과:** Debug/Release와 다른 작업 디렉터리·배포 위치에서 실행합니다. Debug Vulkan core/synchronization validation의 경고·오류를 확인하고 해결합니다. 현재 검증 환경과 미검증 항목을 구분해 남깁니다.
 
-현재 샘플에는 texture descriptor와 화면상의 texture sampling이 없습니다. 이미지 decode/업로드 검증은 별도 간단한 클라이언트로 진행합니다. OS 이식 중 ECS, 물리, 오디오, shader/asset reload, game-module reload를 동시에 새로 구현하지 않습니다. 이들은 기존 [TODO.md](../TODO.md)의 후속 엔진 작업입니다.
+현재 샘플의 texture 경로는 공유 `CreateTexturedMesh`와 3인자 `DrawFrame`을 사용합니다. 기존 color API와 signature는 유지합니다. Set 0 binding 0은 sampled image, binding 1은 sampler이며 descriptor는 context가 생성부터 종료까지 소유합니다. 두 Texture HLSL shader와 `Content/Textures`의 PNG도 배포해야 합니다. UV는 이미지 상단이 V=0이며 현재 경로는 depth를 사용하는 불투명 렌더링입니다. 계약과 검증 결과는 [TextureResources.md](TextureResources.md)를 참고합니다. OS 이식 중 ECS, 물리, 오디오, shader/asset reload, game-module reload를 동시에 새로 구현하지 않습니다. 이들은 기존 [TODO.md](../TODO.md)의 후속 엔진 작업입니다.
 
 ## 완료 보고에 포함할 내용
 

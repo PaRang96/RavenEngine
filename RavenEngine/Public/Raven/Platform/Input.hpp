@@ -162,18 +162,8 @@ namespace Raven
 			if (key == Key::Unknown || index >= Keys.size())
 				return;
 
-			ButtonState& state = Keys[index];
-			if (state.Down == down)
+			if (!UpdateButtonState(Keys[index], down))
 				return;
-
-			state.Down = down;
-
-			// Preserve both transitions if a key is pressed and
-			// released during the same poll.
-			if (down)
-				state.Pressed = true;
-			else
-				state.Released = true;
 
 			// Capture modifiers after applying this transition.
 			KeyEvents.push_back({
@@ -187,12 +177,8 @@ namespace Raven
 		{
 			for (std::size_t i = 0; i < Keys.size(); ++i)
 			{
-				ButtonState& state = Keys[i];
-				if (!state.Down)
+				if (!UpdateButtonState(Keys[i], false))
 					continue;
-
-				state.Down = false;
-				state.Released = true;
 
 				KeyEvents.push_back({
 					static_cast<Key>(i),
@@ -226,6 +212,53 @@ namespace Raven
 			return false;
 		}
 
+		void SetMouseButtonDown(MouseButton button, bool down)
+		{
+			const auto index = static_cast<std::size_t>(button);
+			if (index < MouseButtons.size())
+				UpdateButtonState(MouseButtons[index], down);
+		}
+
+		bool HasMouseButtonDown() const
+		{
+			for (const ButtonState& state : MouseButtons)
+			{
+				if (state.Down)
+					return true;
+			}
+			return false;
+		}
+
+		void ReleaseAllMouseButtons()
+		{
+			for (ButtonState& state : MouseButtons)
+				UpdateButtonState(state, false);
+		}
+
+		void SetCursorPosition(std::int32_t x, std::int32_t y)
+		{
+			if (HasCursorPosition)
+			{
+				CursorDeltaX += x - CursorX;
+				CursorDeltaY += y - CursorY;
+			}
+			HasCursorPosition = true;
+			CursorX = x;
+			CursorY = y;
+		}
+
+		void ResetCursorTracking()
+		{
+			HasCursorPosition = false;
+		}
+
+		void HandleFocusLost()
+		{
+			ReleaseAllKeys();
+			ReleaseAllMouseButtons();
+			ResetCursorTracking();
+		}
+
 		void AddScroll(float x, float y)
 		{
 			ScrollX += x;
@@ -250,6 +283,20 @@ namespace Raven
 			CursorDeltaY = 0;
 			ScrollX = 0.0f;
 			ScrollY = 0.0f;
+		}
+
+	private:
+		static bool UpdateButtonState(ButtonState& state, bool down)
+		{
+			if (state.Down == down)
+				return false;
+			state.Down = down;
+			// Preserve both transitions within the same input snapshot.
+			if (down)
+				state.Pressed = true;
+			else
+				state.Released = true;
+			return true;
 		}
 	};
 }

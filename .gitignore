@@ -1,29 +1,63 @@
-# Local collaboration instructions
-/AGENTS.md
+# Keep engine sources, source assets, docs, shared CMake/VS Code configuration,
+# and vendored dependency sources/licenses available for tracking.
 
-# CMake and Visual Studio build output
+# Local collaboration and machine-specific files
+/AGENTS.md
+/.codex/
+/.agents/
+/.aws/
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Build and validation output (including nested builds)
 out/
-.vs/
-/build/
-/cmake-build-*/
+build/
+cmake-build-*/
 CMakeFiles/
+.cmake/
+Testing/
+_deps/
+_CPack_Packages/
+
+# Generated CMake and Ninja files
 CMakeCache.txt
 cmake_install.cmake
+install_manifest.txt
 compile_commands.json
 CMakeUserPresets.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
 .ninja_deps
 .ninja_log
 build.ninja
 rules.ninja
 CTestTestfile.cmake
 DartConfiguration.tcl
-/Testing/
 
-# Per-user editor settings
+# Per-user IDE settings and caches
+.vs/
+.idea/
+/.vscode/settings.json
+/.vscode/*.local.json
+/.vscode/ipch/
+/*.local.code-workspace
 *.user
 *.suo
+*.sln.docstates
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+*.VC.opendb
+*.sdf
+*.opensdf
+ipch/
+*.tlog/
 *.xcuserstate
 xcuserdata/
+DerivedData/
 
 # Compiler, linker, and shader output
 *.obj
@@ -45,8 +79,20 @@ xcuserdata/
 *.dSYM/
 *.spv
 
-# Runtime and build logs
+# Logs, temporary files, and local caches
 *.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+__pycache__/
+*.pyc
+/.history/
+/tmp/
+/temp/
 
 # Operating-system metadata
 .DS_Store

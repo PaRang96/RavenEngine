@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 #include <type_traits>
@@ -167,6 +168,34 @@ namespace Raven
 		result(2, 1) = -forward.Y;
 		result(2, 2) = -forward.Z;
 		result(2, 3) = Dot(forward, eye);
+		return result;
+	}
+
+	// Symmetric view region: verticalSize is the full visible height in world units.
+	inline Mat4 OrthographicVulkanRH(float verticalSize, float aspect,
+		float nearPlane, float farPlane)
+	{
+		if (!std::isfinite(verticalSize) || !std::isfinite(aspect) ||
+			!std::isfinite(nearPlane) || !std::isfinite(farPlane) ||
+			verticalSize <= 0.0f || aspect <= 0.0f || nearPlane < 0.0f || farPlane <= nearPlane)
+			throw std::invalid_argument("Invalid orthographic size, aspect, or clipping planes");
+
+		// Use double intermediates so large finite dimensions do not overflow before division.
+		const double depthRange = static_cast<double>(farPlane) - nearPlane;
+		const auto toFloat = [](double value)
+		{
+			if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
+				throw std::invalid_argument("Orthographic parameters exceed the supported numeric range");
+			return static_cast<float>(value);
+		};
+		Mat4 result = Mat4::Identity();
+		result(0, 0) = toFloat(2.0 / (static_cast<double>(verticalSize) * aspect));
+		// Match the perspective path's positive-height Vulkan viewport.
+		result(1, 1) = toFloat(-2.0 / verticalSize);
+		result(2, 2) = toFloat(-1.0 / depthRange);
+		result(2, 3) = toFloat(-static_cast<double>(nearPlane) / depthRange);
+		if (result(0, 0) == 0.0f || result(1, 1) == 0.0f || result(2, 2) == 0.0f)
+			throw std::invalid_argument("Orthographic parameters produce a degenerate projection");
 		return result;
 	}
 

@@ -256,6 +256,13 @@ namespace Raven
 		}
 	}
 
+	void VulkanTexture::SetDescriptorSet(VkDescriptorSet binding)
+	{
+		if (binding == VK_NULL_HANDLE || m_DescriptorSet != VK_NULL_HANDLE)
+			throw std::invalid_argument("A texture binding must be valid and assigned only once");
+		m_DescriptorSet = binding;
+	}
+
 	VulkanTexture::~VulkanTexture()
 	{
 		Destroy();

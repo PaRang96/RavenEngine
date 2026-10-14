@@ -2,6 +2,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(RavenCore SHARED
     # Headers shared with engine clients.
+    "Public/Raven/Assets/AssetId.hpp"
+    "Public/Raven/Assets/AssetRef.hpp"
+    "Public/Raven/Assets/AssetRecord.hpp"
+    "Public/Raven/Assets/AssetCatalog.hpp"
+    "Public/Raven/Assets/AssetResources.hpp"
+    "Public/Raven/Assets/TextureAssetDesc.hpp"
     "Public/Raven/Assets/Image.hpp"
     "Public/Raven/Core/Api.hpp"
     "Public/Raven/Core/Application.hpp"
@@ -16,11 +22,18 @@ add_library(RavenCore SHARED
     "Public/Raven/Platform/Window.hpp"
     "Public/Raven/Renderer/ColorVertex.hpp"
     "Public/Raven/Renderer/PerspectiveCamera.hpp"
+    "Public/Raven/Renderer/OrthographicCamera.hpp"
     "Public/Raven/Renderer/TextureDesc.hpp"
+    "Public/Raven/Renderer/TexturedVertex.hpp"
     "Public/Raven/Renderer/Vulkan/VulkanContext.hpp"
     "Public/Raven/Renderer/Vulkan/VulkanDraw.hpp"
+    "Public/Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
+    "Public/Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
     # Engine implementation and internal headers.
+    "Private/Assets/AssetId.cpp"
+    "Private/Assets/AssetCatalog.cpp"
+    "Private/Assets/AssetResources.cpp"
     "Private/Assets/Image.cpp"
     "Private/Core/Application.cpp"
     "Private/Core/Files.cpp"
@@ -29,9 +42,16 @@ add_library(RavenCore SHARED
     "Private/Core/Paths.cpp"
     "Private/Core/Paths.hpp"
     "Private/Core/PathText.hpp"
+    "Private/Platform/InputBuffer.cpp"
+    "Private/Platform/InputBuffer.hpp"
     "Private/Platform/PlatformPaths.hpp"
+    "Private/Platform/PlatformRandom.hpp"
+    "Private/Renderer/MeshBounds.hpp"
+    "Private/Renderer/Visibility.hpp"
     "Private/Renderer/Shaders/Color.frag.hlsl"
     "Private/Renderer/Shaders/Color.vert.hlsl"
+    "Private/Renderer/Shaders/Texture.frag.hlsl"
+    "Private/Renderer/Shaders/Texture.vert.hlsl"
     "Private/Renderer/Vulkan/VulkanBuffer.cpp"
     "Private/Renderer/Vulkan/VulkanBuffer.hpp"
     "Private/Renderer/Vulkan/VulkanClearPass.cpp"
@@ -43,6 +63,9 @@ add_library(RavenCore SHARED
     "Private/Renderer/Vulkan/VulkanDebugMessenger.hpp"
     "Private/Renderer/Vulkan/VulkanDepthAttachment.cpp"
     "Private/Renderer/Vulkan/VulkanDepthAttachment.hpp"
+    "Private/Renderer/Vulkan/VulkanDrawConstants.hpp"
+    "Private/Renderer/Vulkan/VulkanDrawQueue.cpp"
+    "Private/Renderer/Vulkan/VulkanDrawQueue.hpp"
     "Private/Renderer/Vulkan/VulkanDevice.cpp"
     "Private/Renderer/Vulkan/VulkanDevice.hpp"
     "Private/Renderer/Vulkan/VulkanInstance.cpp"
@@ -61,6 +84,12 @@ add_library(RavenCore SHARED
     "Private/Renderer/Vulkan/VulkanSwapchain.hpp"
     "Private/Renderer/Vulkan/VulkanTexture.cpp"
     "Private/Renderer/Vulkan/VulkanTexture.hpp"
+    "Private/Renderer/Vulkan/VulkanTextureDescriptors.cpp"
+    "Private/Renderer/Vulkan/VulkanTextureDescriptors.hpp"
+    "Private/Renderer/Vulkan/VulkanTexturedMesh.cpp"
+    "Private/Renderer/Vulkan/VulkanTexturedMesh.hpp"
+    "Private/Renderer/Vulkan/VulkanTexturePipeline.cpp"
+    "Private/Renderer/Vulkan/VulkanTexturePipeline.hpp"
 )
 
 target_compile_definitions(RavenCore PRIVATE
@@ -79,10 +108,14 @@ target_compile_features(RavenCore PUBLIC cxx_std_20)
 target_link_libraries(RavenCore PRIVATE Vulkan::Vulkan)
 
 add_executable(RavenEngine
+    "Private/Samples/SampleAssets.cpp"
+    "Private/Samples/SampleAssets.hpp"
     "Private/Samples/RavenEngine.cpp"
     "Private/Samples/RavenEngine.h"
     "Private/Samples/PerspectiveSample.cpp"
     "Private/Samples/PerspectiveSample.hpp"
+    "Private/Samples/OrthographicSample.cpp"
+    "Private/Samples/OrthographicSample.hpp"
 )
 target_include_directories(RavenEngine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private/Samples")
 target_link_libraries(RavenEngine PRIVATE RavenCore)
@@ -98,6 +131,8 @@ endif()
 set_source_files_properties(
     "Private/Renderer/Shaders/Color.vert.hlsl"
     "Private/Renderer/Shaders/Color.frag.hlsl"
+    "Private/Renderer/Shaders/Texture.vert.hlsl"
+    "Private/Renderer/Shaders/Texture.frag.hlsl"
     PROPERTIES HEADER_FILE_ONLY TRUE
 )
 
@@ -141,10 +176,14 @@ endfunction()
 
 raven_compile_shader("Color.vert.hlsl" vs_6_0 VSMain "Color.vert.spv")
 raven_compile_shader("Color.frag.hlsl" ps_6_0 PSMain "Color.frag.spv")
+raven_compile_shader("Texture.vert.hlsl" vs_6_0 VSMain "Texture.vert.spv")
+raven_compile_shader("Texture.frag.hlsl" ps_6_0 PSMain "Texture.frag.spv")
 
 add_custom_target(RavenShaders DEPENDS
     "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Color.vert.spv"
     "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Color.frag.spv"
+    "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Texture.vert.spv"
+    "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Texture.frag.spv"
 )
 
 # Run on every build so removed runtime files are restored without relinking the sample.
@@ -153,25 +192,39 @@ add_custom_target(RavenContent
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Color.vert.spv"
         "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Color.frag.spv"
+        "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Texture.vert.spv"
+        "${RAVEN_SHADER_OUTPUT_DIRECTORY}/Texture.frag.spv"
         "$<TARGET_FILE_DIR:RavenEngine>/Content/Shaders"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:RavenEngine>/Content/Textures"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${PROJECT_SOURCE_DIR}/Content/Textures/UVGrid.png"
+        "${PROJECT_SOURCE_DIR}/Content/Textures/UVGridAlternate.png"
+        "$<TARGET_FILE_DIR:RavenEngine>/Content/Textures"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:RavenEngine>/Licenses"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${PROJECT_SOURCE_DIR}/ThirdParty/stb/LICENSE"
         "$<TARGET_FILE_DIR:RavenEngine>/Licenses/stb-LICENSE.txt"
     DEPENDS RavenShaders
-    COMMENT "Stage validated shaders and dependency license"
+        "${PROJECT_SOURCE_DIR}/Content/Textures/UVGrid.png"
+        "${PROJECT_SOURCE_DIR}/Content/Textures/UVGridAlternate.png"
+    COMMENT "Stage validated shaders, sample textures and dependency license"
     VERBATIM
 )
 add_dependencies(RavenCore RavenContent)
 
 if(WIN32)
     target_sources(RavenCore PRIVATE
+        "Private/Platform/Windows/Win32Random.cpp"
         "Private/Platform/Windows/Win32Paths.cpp"
+        "Private/Platform/Windows/Win32EventPump.cpp"
+        "Private/Platform/Windows/Win32EventPump.hpp"
+        "Private/Platform/Windows/Win32Input.cpp"
+        "Private/Platform/Windows/Win32Input.hpp"
         "Private/Platform/Windows/Win32Window.cpp"
         "Private/Platform/Windows/Win32Window.hpp"
     )
     target_compile_definitions(RavenCore PRIVATE UNICODE _UNICODE)
-    target_link_libraries(RavenCore PRIVATE user32)
+    target_link_libraries(RavenCore PRIVATE user32 bcrypt)
 elseif(APPLE)
     enable_language(OBJCXX)
     set_target_properties(RavenCore PROPERTIES
