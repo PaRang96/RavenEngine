@@ -6,9 +6,21 @@ The agreed world convention follows Blender: **right-handed, +X right, +Y refere
 
 Rendering targets a **perspective camera first**, with shared model/view/projection math, simple 3D geometry, and depth testing. That initial sample and the following orthographic 2D rendering sample are now implemented using the same world and transform/view conventions. This order supports the Blender/FBX direction; both playable 2D and 3D samples remain v1 goals.
 
-## Current Status
+## Current Status — 2026-10-14
 
-The Windows `x64-debug` and `x64-release` paths build. The engine creates a native Win32 window and polls keyboard and mouse state. `VulkanContext` owns Vulkan setup, the swapchain, and clear-frame resources, and `Application` calls `DrawFrame()` after event polling. A focused native probe presents 407 real frames in each configuration on an NVIDIA GeForce RTX 3070 Ti Laptop GPU (`graphics=0`, `present=0`). Debug passes with core and synchronization validation enabled and no warning/error diagnostics. Native resize, three minimize/restore cycles, normal/minimized shutdown, injected acquire/present recovery results, and resource-construction rollback are verified. Release also verifies minimized startup and creation after restore. The blue clear color is visually confirmed in the running Debug executable, with a screenshot saved at `out/screenshots/ravenengine-clear-frame.jpg`. Win32 per-monitor v2 DPI awareness is configured through C++; mixed-DPI monitor movement remains unverified. Registered automated test targets have not been implemented. A Cocoa backend exists, but it predates the current input/framebuffer contracts and must be updated before it can be considered buildable or verified.
+RavenEngine has a working Windows rendering foundation and is ready to begin its scene/game framework. `RavenCore.dll` owns reusable engine code; `RavenEngine.exe` contains perspective and orthographic samples. Shared transforms, depth, opaque/transparent textures, draw ordering, frustum culling, compatible textured instancing, relocatable content, UUIDv4 asset references, an in-memory catalog and texture reuse are implemented. ECS, scene persistence/lifecycle, resource release handles, imported meshes, lighting, physics, audio, playable games and runtime reload remain pending.
+
+The current Windows Debug/Release builds were checked successfully on 2026-10-14; CTest reports zero registered tests. Earlier native/GPU validation records below were reviewed, not rerun in that assessment. Most rendering evidence is from an RTX 3070 Ti Laptop GPU. CTest integration remains deferred at the owner's request; revisit it when defining entity/component lifetime checks. Temporary probes under ignored `out/` do not provide a regression suite from a clean checkout.
+
+Cocoa window/input/framebuffer and executable-path implementations, macOS presets and earlier Debug smoke evidence exist. Linux X11/XCB code, executable paths and presets are merged, with native verification pending. Both platforms still need the random-byte hook introduced by the asset system before current shared-code support can be considered complete. See [PlatformHandoff.md](docs/PlatformHandoff.md).
+
+The working order is minimal ECS/renderable scene, persistent asset/scene data and resource lifetime, playable 2D, imported/lit 3D gameplay, shader/asset reload, then game-code reload. Platform contributors can work in parallel. [TODO.md](TODO.md) is the detailed working list; its immediate next task is entity creation/destruction, generation-based identity, slot reuse and stale-reference rejection.
+
+## Historical milestone evidence
+
+The following records describe each milestone when validated. Later milestones supersede earlier triangle implementations, shader paths, sample ownership and export counts; use the current summary and linked subsystem contracts for present behavior.
+
+The Windows Vulkan bootstrap created a native Win32 window and clear-frame path. A focused native probe presented 407 frames per configuration on an NVIDIA GeForce RTX 3070 Ti Laptop GPU (`graphics=0`, `present=0`) with clean Debug core/synchronization validation. Resize, minimize/restore, shutdown, injected acquire/present recovery and construction rollback passed. The first clear frame is recorded at `out/screenshots/ravenengine-clear-frame.jpg`. Per-monitor v2 DPI awareness and DPI-message handling were implemented; mixed-DPI monitor movement remains unverified.
 
 Resize and shutdown currently wait for device idle. Strict presentation-completion fencing remains a future extension-based improvement; unextended Vulkan has no present fence ([Khronos guidance](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html)).
 
@@ -20,7 +32,7 @@ The first triangle is demonstrated in Debug and Release: focused native checks p
 
 The triangle now rotates at 90 degrees per second using frame delta. `VulkanContext` preserves a bounded angle across swapchain recreation; each draw supplies an 8-byte vertex-stage push constant containing angle and aspect ratio. HLSL uses explicit offsets `0`/`4` and corrects landscape/portrait proportions. Debug/Release builds and focused checks each present 243 frames, verify timing, wrapping, minimized skip, zero-delta resume, resize phase preservation, and existing cleanup/recovery paths. Debug has no core or synchronization validation warnings/errors. Computer use confirms changing orientation, maximization resizing, and rendering after minimize/restore in the actual Debug executable. Screenshots are under `out/screenshots/ravenengine-rotation-*.jpg` and diagnostics under `out/validation/animation-<config>.log`.
 
-`VulkanBuffer` now owns a buffer and its host-visible coherent allocation with one-time initial upload and rollback on failure. Debug/Release builds and focused checks verify four payload sizes, two GPU copy/readbacks, invalid parameter rejection, and six injected resource/memory-selection failures on the RTX 3070 Ti Laptop GPU. Buffer-before-memory destruction and absence of leftover mappings are verified, with no Debug core or synchronization validation warnings/errors. Results are saved in `out/validation/buffer-<config>.log`. The subsequent indexed triangle milestone is implemented and verified; see [TODO.md](TODO.md) for its validation evidence and the current perspective-camera priority.
+`VulkanBuffer` now owns a buffer and its host-visible coherent allocation with one-time initial upload and rollback on failure. Debug/Release builds and focused checks verify four payload sizes, two GPU copy/readbacks, invalid parameter rejection, and six injected resource/memory-selection failures on the RTX 3070 Ti Laptop GPU. Buffer-before-memory destruction and absence of leftover mappings are verified, with no Debug core or synchronization validation warnings/errors. Results are saved in `out/validation/buffer-<config>.log`. The subsequent indexed triangle milestone is implemented and verified; see [TODO.md](TODO.md) for its evidence and the current working priorities.
 
 On 2026-10-10, the perspective sample replaces the hardcoded triangle draw path with 3D color vertices, shared matrix/camera math, context-owned meshes, and per-object draw submissions. Two cubes animate independently above an XY ground slab; each swapchain framebuffer has a separate depth attachment. Debug/Release builds and SPIR-V validation pass. A temporary CPU probe passes 59 transform/projection checks, and computer use verifies camera controls, depth occlusion, resize, minimize/restore, and normal shutdown. Debug reports no core/synchronization validation warnings/errors. See [the coordinate contract](docs/CoordinateSystem.md) for math/controls and `out/validation/perspective-*.log` and `out/screenshots/ravenengine-perspective.jpg` for evidence. No test sources or framework were added to the project.
 
@@ -44,7 +56,8 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 - [x] Add repository-local VS Code build and debug configurations.
 - [ ] Verify an `F5` session stops at a breakpoint and document the VS Code workflow.
 - [ ] Refresh the README and document exact CMake, Ninja, MSVC, and Vulkan SDK versions and setup.
-- [ ] Split stable subsystems into CMake targets; add CTest and automated builds. The `RavenCore` shared-library / `RavenEngine` sample split is complete; CTest and automated builds remain pending.
+- [x] Separate reusable engine code into the `RavenCore` shared-library target and sample code into `RavenEngine`.
+- [ ] Add CTest and automated builds; retain the explicit CTest deferral until revisited with the owner.
 - [x] Add basic thread-safe logging and top-level exception reporting.
 - [ ] Verify the assertion path and establish a consistent formatting policy.
 
@@ -53,16 +66,19 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 - [x] Move the shared `Window` contract to [`Window.hpp`](RavenEngine/Public/Raven/Platform/Window.hpp) without exposing Win32 types.
 - [x] Implement native Win32 window creation, close handling, event polling, and framebuffer size. Verify opening, resizing, and closing a window.
 - [x] Add a platform-independent input snapshot with Win32 keyboard transitions, mouse position/delta, mouse buttons, and focus/capture recovery.
-- [ ] Complete the Win32 input contract: populate `KeyEvents` and modifiers, handle vertical/horizontal wheel input, finish key translation, and define key-repeat and text-input behavior.
+- [x] Populate Win32 keyboard events/modifiers and vertical/horizontal wheel state through the shared input snapshot.
+- [ ] Finish remaining key translations and define remaining repeat/text-input behavior as required by the samples.
 - [x] Define drawable framebuffer state through a shared snapshot of pixel dimensions and persistent resize revision. Verify Win32 resize, minimized `0 x 0`, restore, and close while minimized with Vulkan validation enabled.
 - [ ] Complete window state needed by rendering: expose focus state and verify mixed-DPI monitor movement. Per-monitor v2 awareness and DPI-message size handling are implemented in the Win32 backend.
 - [x] Add an engine clock with monotonic elapsed time and frame delta. Verify initial/reset delta, elapsed time during pauses, normal timing after resume, and native minimize/restore behavior.
 - [ ] Replace the fixed 16 ms sleep with explicit frame pacing.
 - [x] Add platform-independent file and path APIs without exposing OS types to `Core/`. Public filesystem-based queries/readers and the Windows executable-path backend are verified; see [RuntimeUtilities.md](docs/RuntimeUtilities.md). Other platform backends remain their own milestone.
-- [ ] Update the existing Cocoa backend to the current `Window`/`InputState`/`FramebufferState` contracts and verify it on macOS.
-- [ ] Choose X11, Wayland, or both; implement and verify the Linux window backend behind the same interfaces.
+- [x] Merge Cocoa implementations of the current window/input/framebuffer and executable-path interfaces, with macOS presets and earlier Debug smoke evidence.
+- [x] Merge the Linux X11/XCB window backend, executable paths and Debug/Release presets.
+- [ ] Implement and connect the asset system's `Platform::FillRandomBytes` hook on macOS and Linux.
+- [ ] Verify both current rendering samples and shared contracts in native Debug/Release on macOS and Linux; merged code and historical smoke checks do not establish current full support.
 
-## 2. Vulkan Bootstrap — current focus
+## 2. Vulkan Bootstrap — implemented baseline
 
 - [x] Create a Vulkan instance with validation and a debug messenger enabled in debug builds.
 - [x] Create and destroy a Win32 Vulkan surface through explicit RAII ownership.
@@ -78,7 +94,8 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 ## 3. Rendering Core
 
 - [x] Define the initial renderer frame boundary through `VulkanContext::DrawFrame()` and keep rendering work out of the platform input layer.
-- [ ] Add command submission, synchronization, GPU memory/resource ownership, descriptors, and pipeline management.
+- [x] Add the current command submission, frame synchronization, GPU buffer/image ownership, immutable texture descriptors and color/texture pipelines.
+- [ ] Add runtime resource handles and a scene-sharing/release policy, including safe GPU retirement before scene switching or resource replacement.
 - [x] Compile the initial HLSL vertex/fragment shaders to SPIR-V using DXC through CMake. Validate Debug/Release binaries and incremental source dependencies for Vulkan 1.0.
 - [x] Load SPIR-V shader modules and create a graphics pipeline for the first triangle. Verify Debug/Release drawing, resize/minimize/restore, resource-creation rollback, and capture the running Debug executable.
 - [x] Animate the triangle using frame delta and vertex-stage push constants. Verify rotation timing, aspect correction, resize phase preservation, and pause/resume with validation and computer use.
@@ -87,17 +104,24 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 - [x] Add shared model/view/projection math and a perspective camera; validate simple 3D geometry, depth testing, clipping, and resize behavior first.
 - [x] Add orthographic projection and render textured 2D sprites with a camera and batching. Orthographic projection, pan/zoom, transparent sprites, frustum selection, and adjacent compatible draw instancing are implemented and verified.
 - [ ] Extend the perspective/depth path to imported 3D meshes, materials, and basic lighting.
-- [ ] Handle viewport resizing, resource recreation, and graphics errors predictably.
+- [x] Handle viewport resizing, swapchain/depth/pipeline recreation, minimized rendering and tested acquire/present recovery.
+- [ ] Review remaining graphics-error/device-loss and presentation-completion behavior, including the device-idle recreation/shutdown approach.
 
-## 4. ECS and Scene Model
+## 4. ECS and Scene Model — current focus
 
-- [ ] Define entity identities with stale-handle detection and component storage rules.
-- [ ] Implement systems, transforms/hierarchy, and scene lifecycle.
-- [ ] Serialize and reload scenes from data files; test entity and component edge cases.
+- [ ] Start with entity identity/lifecycle: invalid values, registry ownership, index/generation identity, creation/destruction, slot reuse and stale-reference rejection.
+- [ ] Define component ownership/invalidation, storage, queries and safe mutation during updates.
+- [ ] Add transforms, camera/sprite components and a minimal scene that generates existing renderer submissions.
+- [ ] Drive the orthographic sample from ECS data and create/move/remove sprites at runtime while preserving texture reuse and ordering.
+- [ ] Add hierarchy and scene switching after defining resource sharing/release and persistent asset metadata in the next phase of [TODO.md](TODO.md).
+- [ ] Serialize/load scenes and explicitly reload them from data files; validate references, failure paths and repeated switching. Automatic source watching belongs to the reload milestone.
 
 ## 5. Assets and Reloading
 
-- [ ] Define asset identifiers, paths, dependencies, and import/build steps for textures, meshes, and shaders. UUIDv4 identity, typed references, runtime paths, the initial in-memory catalog and texture reuse are implemented; persistent metadata, mesh import and dependency/build contracts remain.
+- [x] Define UUIDv4 identities, typed references, runtime paths, the in-memory catalog and ID-based texture reuse.
+- [x] Load PNG/JPEG textures and compile/validate/stage HLSL shaders through the existing build path.
+- [ ] Persist asset metadata and define source/dependency/build-output records, keeping asset identity separate from runtime resource handles.
+- [ ] Import reusable meshes through the planned Blender/FBX path, including sub-asset identity and coordinate conversion.
 - [ ] Watch source files and reload shaders and assets at a safe frame boundary.
 - [ ] Report import/compile errors while keeping the last valid resource active.
 
@@ -110,7 +134,8 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 
 ## 7. Gameplay Services
 
-- [ ] Expose the input snapshot to game code through a stable engine API instead of requiring direct `Window` access.
+- [x] Expose input snapshots and frame timing to game code through `ApplicationClient::OnFrame`.
+- [ ] Expose scene access and runtime resource handles to game code through stable engine APIs.
 - [ ] Add audio and 2D/3D physics behind documented engine APIs.
 - [ ] Connect input, audio, and physics to ECS systems and verify behavior in sample games.
 
@@ -125,8 +150,8 @@ Common UUIDv4 asset identities, typed persistent references, an immutable in-mem
 
 ## Next Review Point
 
-The current input baseline is sufficient to continue engine development. Keep the remaining key translations and repeat/text-input work tracked. Temporary input diagnostics have been removed from `Application`.
+Review the entity identity/lifecycle contract and its first small snippet with the owner. After creation/destruction and stale-reference checks work, proceed to component storage, transform/camera/sprite components, and an ECS-backed orthographic sample. Existing rendering and texture reuse are sufficient to start; persistent metadata, FBX import and broader materials follow later.
 
-Perspective/orthographic cameras, the C++/HLSL matrix contract, reusable mesh submissions, depth-tested samples, engine/sample DLL boundary, opaque/transparent textured quads, ordering, static frustum selection, and compatible textured draw batching are implemented and verified using the agreed Blender world axes. CTest integration is deferred at the owner's request while rendering is prioritized; see [TODO.md](TODO.md).
+Before scene switching, define persistent asset/scene data and runtime resource sharing/release. Current mesh/texture references remain renderer-owned until shutdown, and destroying an asset service does not unload them. Preserve that contract until an explicit replacement is implemented and validated.
 
-The common asset baseline now resolves registered texture IDs into reusable context-owned resources. The catalog is the source of loading metadata, while the renderer retains GPU ownership. This prepares scene references and later FBX imports without marking persistence, dependency tracking or hot reload complete.
+Keep remaining input work, platform hooks and validation debt visible. Revisit the CTest deferral for entity/component lifetime checks; do not mark absent automated checks complete. Follow the small-snippet, owner-typed implementation workflow recorded in [TODO.md](TODO.md).

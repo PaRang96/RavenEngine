@@ -1,24 +1,24 @@
-# macOS / Linux 담당자 작업 목록
+# macOS / Linux contributor handoff
 
-기준일: 2026-10-11. 목표는 **현재 Windows에서 검증한 엔진과 perspective 샘플을 동일한 공유 인터페이스로 실행하는 것**입니다. 아래 항목은 각 플랫폼 담당자가 구현하고 해당 OS에서 검증할 작업입니다. 체크박스는 검증 결과를 남긴 뒤 완료 처리합니다.
+Status as of 2026-10-14. The goal is to **run the engine and perspective/orthographic samples currently verified on Windows through the same shared interfaces**. Each platform contributor implements and verifies the work below on the target OS. Check items only after recording verification results. Platform services and current sample checks can proceed alongside Windows ECS development; gameplay and reload paths receive their final platform checks once those features exist.
 
-## 현재 기준과 담당 범위
+## Current baseline and ownership
 
-Windows에서는 C++20 Debug/Release 빌드, 네이티브 창과 입력, Vulkan 초기화와 GPU 선택, swapchain 복구, perspective 카메라, depth testing, mesh와 texture 업로드가 동작합니다. PNG/JPEG 로딩과 실행 파일 기준 Content 경로도 구현되어 있습니다. 현재 샘플은 두 PNG quad와 기존 색상 geometry를 함께 그립니다. 최신 texture 검증에서는 구성별 공개 API 검사 13개와 24프레임, 별도 GPU pixel 검사 13개를 통과했습니다.
+Windows has C++20 Debug/Release builds, native windows/input, Vulkan initialization and GPU selection, swapchain recovery, perspective/orthographic cameras, depth testing, and mesh/texture uploads. PNG/JPEG loading, executable-relative Content paths, transparent ordering, culling, compatible draw batching, common asset IDs/catalogs, and texture reuse are also implemented. Windows builds were checked on 2026-10-14. Existing GPU evidence is in [TextureResources.md](TextureResources.md) and [AssetSystem.md](AssetSystem.md); those native/GPU checks were not rerun during the documentation assessment.
 
-macOS는 기존 Cocoa 구현의 인터페이스가 오래되어 현재 공유 코드와 맞지 않습니다. Linux는 기여된 X11/XCB backend와 Debug/Release preset을 현재 Public/Private 구조와 `RavenCore`에 맞춰 병합했습니다. framebuffer 계약과 실행 파일 경로 hook도 연결했지만, Linux의 빌드와 런타임 동작은 아직 검증하지 않았습니다. 두 플랫폼 모두 아래 네이티브 검증이 필요합니다.
+macOS has `CocoaWindow`/`CocoaInput` implementations of the current window/input/framebuffer interfaces and `MacPaths.cpp`. Earlier Debug rendering/input checks are recorded in [MacOSBuild.md](MacOSBuild.md). Linux has a merged X11/XCB backend, framebuffer/executable paths, and Debug/Release presets, but still needs native build/runtime verification. Both platforms lack the `Platform::FillRandomBytes` implementation and CMake connection required by the latest asset code. Complete that hook first, then verify the current shared code. Earlier macOS smoke results do not establish current full support.
 
-| 담당 | 우선 수정할 위치 | 목표 |
+| Owner | Main locations | Goal |
 | --- | --- | --- |
-| macOS 담당자 | `RavenEngine/Private/Platform/Mac/` | 기존 Cocoa backend를 현재 창·입력·framebuffer·경로 계약에 맞추기 |
-| Linux 담당자 | `RavenEngine/Private/Platform/Linux/` | 병합된 XCB backend와 실행 파일 경로 구현의 네이티브 검증 |
-| 두 담당자 조율 | `RavenEngine/CMakeLists.txt`, `CMakePresets.json`, 빌드 문서 | 각 OS의 소스 선택, 의존성, 공유 라이브러리 실행 구성 |
+| macOS contributor | `RavenEngine/Private/Platform/Mac/` | Connect the random-byte hook, then verify current Cocoa input/framebuffer/paths and both samples natively |
+| Linux contributor | `RavenEngine/Private/Platform/Linux/` | Connect the random-byte hook, then verify the merged XCB backend, paths, and both samples natively |
+| Both contributors | `RavenEngine/CMakeLists.txt`, `CMakePresets.json`, build documentation | Coordinate per-OS source selection, dependencies, and shared-library runtime configuration |
 
-공유 renderer, math, 샘플, 이미지 decoder는 기존 구현을 재사용합니다. 공유 API 수정이 필요하면 이유와 영향을 먼저 정리해 Windows 담당자와 조율합니다. CMake 공통 파일을 수정할 때 다른 담당자의 변경을 덮어쓰지 않습니다.
+Reuse the shared renderer, math, samples, and image decoder. If a shared API needs to change, explain why and assess the impact with the Windows contributor first. Preserve other contributors' changes to shared CMake files.
 
-## 먼저 확인할 공유 인터페이스
+## Shared interfaces to check first
 
-선언의 기준은 [Window.hpp](../RavenEngine/Public/Raven/Platform/Window.hpp)입니다. 각 backend의 헤더와 구현은 반환형, 인자형, 참조, `const`를 그대로 맞춰야 합니다.
+[Window.hpp](../RavenEngine/Public/Raven/Platform/Window.hpp) is the declaration authority. Backend headers and implementations must match return types, argument types, references, and `const` exactly.
 
 ```cpp
 void PollEvents() override;
@@ -31,11 +31,11 @@ const InputState& GetInputState() const override;
 VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;
 ```
 
-`Window::Create(const WindowDesc&)`는 해당 OS에서 선택한 backend를 생성합니다. 공개 선언의 `RAVEN_API`를 유지하고, backend 구현은 `Window`의 virtual destructor를 통해 정상적으로 해제되어야 합니다. 엔진이 `WindowDesc::Title`의 UTF-8 문자열을 네이티브 제목으로 전달할 수 있어야 합니다.
+`Window::Create(const WindowDesc&)` creates the selected backend on each OS. Keep `RAVEN_API` on its public declaration and ensure backend objects are correctly destroyed through the virtual `Window` destructor. Pass the UTF-8 `WindowDesc::Title` string to the native title.
 
-Windows 입력의 소유와 실행 순서는 [InputProcessing.md](InputProcessing.md)를 기준으로 합니다. 공통 `InputState`에 마우스 버튼·커서·포커스 복구 메서드가 추가되었고, private `InputBuffer`는 창별 pending 입력과 published snapshot을 관리합니다. 다른 창의 이벤트를 처리하더라도 그 창이 자신의 `PollEvents()`를 호출하기 전까지 입력 전환을 보존해야 합니다. Windows는 이 구조로 변경했으며, Linux와 Mac의 native 구현은 담당자가 연결하고 검증합니다. 기존 공개 함수와 virtual 메서드의 signature는 유지했습니다.
+Follow [InputProcessing.md](InputProcessing.md) for Windows input ownership and execution order. Shared `InputState` provides mouse-button, cursor, and focus-recovery methods; private `InputBuffer` manages per-window pending input and published snapshots. Even when another window's poll processes an event, preserve that event's transitions until its own window calls `PollEvents()`. Windows uses this structure; Linux/macOS contributors must connect and verify their native implementations. Existing public and virtual signatures are preserved.
 
-[PlatformPaths.hpp](../RavenEngine/Private/Platform/PlatformPaths.hpp)의 필수 경로 hook은 다음과 같습니다.
+The required path hook in [PlatformPaths.hpp](../RavenEngine/Private/Platform/PlatformPaths.hpp) is:
 
 ```cpp
 namespace Raven
@@ -44,22 +44,22 @@ namespace Raven
 }
 ```
 
-이 함수는 **실행 중인 호스트 실행 파일의 절대 경로**를 반환합니다. 엔진 공유 라이브러리의 위치나 현재 작업 디렉터리를 반환하면 안 됩니다. 나머지 Content/Shader 경로 계산은 공유 [Paths.cpp](../RavenEngine/Private/Core/Paths.cpp)를 사용합니다.
+Return the **absolute path of the running host executable**, rather than the engine shared library or current working directory. Reuse shared [Paths.cpp](../RavenEngine/Private/Core/Paths.cpp) for the remaining Content/Shader path calculations.
 
-다음 공개 진입점도 유지합니다. 기본 인자를 추가하는 방식으로 기존 overload를 없애면 이미 빌드된 클라이언트의 링크가 깨질 수 있습니다.
+Preserve these public entry points. Replacing an existing overload with a longer signature and default arguments can break already-built clients.
 
-- `Application::Run(description, factory)`와 `Application::Run(description, factory, config)`.
-- `Images::Load(path)`와 `Images::Load(path, ImageLoadOptions)`; options는 값으로 전달합니다.
-- `Window::Create(const WindowDesc&)`의 공개 export.
-- `ApplicationClient::OnFrame(VulkanContext&, const InputState&, const FrameTime&)`와 `ApplicationClientFactory`의 create/destroy callback. Destroy callback의 `noexcept`를 유지하고, 객체를 생성한 모듈에서 해제합니다.
+- `Application::Run(description, factory)` and `Application::Run(description, factory, config)`.
+- `Images::Load(path)` and `Images::Load(path, ImageLoadOptions)`; options are passed by value.
+- The public export of `Window::Create(const WindowDesc&)`.
+- `ApplicationClient::OnFrame(VulkanContext&, const InputState&, const FrameTime&)` and the `ApplicationClientFactory` create/destroy callbacks. Keep Destroy `noexcept` and destroy objects in the module that created them.
 
-계약과 최근 수정 이유는 [EngineModules.md](EngineModules.md), [RuntimeUtilities.md](RuntimeUtilities.md), [ImageLoading.md](ImageLoading.md)를 참고합니다. 각 OS에서도 공개 헤더만 사용하는 별도 클라이언트가 엔진 공유 라이브러리에 링크되어야 합니다. Windows의 export 이름 수를 다른 OS에 그대로 적용하지 말고, 공개 진입점의 링크와 호출 가능 여부를 검증합니다.
+See [EngineModules.md](EngineModules.md), [RuntimeUtilities.md](RuntimeUtilities.md), and [ImageLoading.md](ImageLoading.md) for contracts and the reasons for recent fixes. On every OS, a separate client using only public headers must link against the engine shared library. Verify public entry-point linking and calls; do not apply Windows export-name counts directly to other platforms.
 
-## 공통 자산 시스템의 새 플랫폼 연결 지점
+## New platform hook for common assets
 
-UUIDv4 `AssetId`, `AssetRef<T>`, 인메모리 `AssetCatalog`와 ID 기반 텍스처 재사용을 추가했습니다. 공통 생성/파싱/출력 및 자산 코드는 그대로 재사용합니다. Windows에서는 Debug/Release 공개 DLL 호출과 GPU 재사용을 검증했으며 macOS/Linux 난수 구현은 각 담당자가 연결해야 합니다. 공유 자산 헤더에 네이티브 UUID/GUID 타입을 추가하지 않습니다.
+UUIDv4 `AssetId`, `AssetRef<T>`, the in-memory `AssetCatalog`, and ID-based texture reuse are implemented. Reuse the shared generation/parsing/formatting and asset code. Windows Debug/Release public DLL calls and GPU reuse are verified; macOS/Linux contributors must connect their native random providers. Keep native UUID/GUID types out of shared asset headers.
 
-[PlatformRandom.hpp](../RavenEngine/Private/Platform/PlatformRandom.hpp)의 정확한 시그니처는 다음과 같습니다.
+The exact signature in [PlatformRandom.hpp](../RavenEngine/Private/Platform/PlatformRandom.hpp) is:
 
 ```cpp
 namespace Raven::Platform
@@ -68,44 +68,44 @@ namespace Raven::Platform
 }
 ```
 
-전체 버퍼를 운영체제의 안전한 난수로 채우거나 예외를 던집니다. UUID version/variant 비트는 공통 `AssetId.cpp`가 설정하므로 플랫폼 코드에서 다시 설정하거나 native GUID 메모리를 복사하지 않습니다. 실패 시 시간·카운터·고정값으로 대체하지 않습니다.
+Fill the entire buffer with secure operating-system random bytes or throw. Shared `AssetId.cpp` sets UUID version/variant bits; platform code must not set them again or copy native GUID memory. Do not fall back to time, counters, or fixed values on failure.
 
-macOS 담당자는 `SecRandomCopyBytes` 등의 운영체제 공급자를 해당 private 폴더에서 구현하고 CMake APPLE 분기에 소스와 필요한 Security 프레임워크를 연결합니다. Linux 담당자는 `getrandom` 등의 공급자에서 부분 반환·EINTR·실패를 처리하고 Linux 소스 선택에 연결합니다. 현재 Windows만 `Win32Random.cpp`와 `bcrypt`를 연결했으므로 다른 OS에서는 이 hook을 정의해야 링크가 완료됩니다.
+The macOS contributor should implement an OS provider such as `SecRandomCopyBytes` in the private platform directory and connect its source and required Security framework in the CMake APPLE branch. The Linux contributor should handle partial reads, EINTR, and failures from a provider such as `getrandom`, and add the source to Linux selection. Currently only Windows connects `Win32Random.cpp` and `bcrypt`; other platforms need this hook to complete linking.
 
-자산 ID는 `Generate()`로 새 등록 때 한 번 만들고, 보존된 문자열은 `Parse(std::string_view)`로 읽습니다. 로딩마다 ID를 다시 만들지 않습니다. `AssetCatalog::Register(const AssetRecord&)`와 `Register(const TextureAssetDesc&)`, `GetTexture(AssetRef<TextureAsset>) const`, `AssetResources::LoadTexture(AssetRef<TextureAsset>)`의 타입·값 전달·const를 동일하게 유지합니다. `Parse`는 현재 UUIDv4만 허용하고 `ToString`은 소문자 36자 형식을 사용합니다. 상세 소유·검증 범위는 [AssetSystem.md](AssetSystem.md)에 있습니다.
+Generate an asset ID once for a new registration with `Generate()`, and read preserved strings with `Parse(std::string_view)`. Do not regenerate IDs on every load. Preserve types, value passing, and const qualifiers for `AssetCatalog::Register(const AssetRecord&)`, `Register(const TextureAssetDesc&)`, `GetTexture(AssetRef<TextureAsset>) const`, and `AssetResources::LoadTexture(AssetRef<TextureAsset>)`. `Parse` currently accepts UUIDv4 only; `ToString` uses the lowercase 36-character form. See [AssetSystem.md](AssetSystem.md) for ownership and validation scope.
 
-## macOS 담당자 — 작업 순서
+## macOS contributor: work order
 
-1. **창 인터페이스부터 수정**
+1. **Connect the random-byte hook required by current asset code**
 
-   - [ ] `Arm64Mac.hpp`와 `Arm64Mac.mm`의 오래된 `IsKeyDown(Key) const override` 선언/구현을 현재 입력 인터페이스로 교체합니다. `Window`에는 이 virtual 함수가 없습니다.
-   - [ ] `const InputState& GetInputState() const`와 `FramebufferState GetFramebufferState() const`를 선언하고 구현합니다. 헤더에 선언만 추가한 상태를 완료로 처리하지 않습니다.
-   - [ ] 모든 공유 창 메서드에 올바른 `override`가 적용되고, `Arm64Mac`이 abstract class로 남지 않는지 확인합니다. 네이티브 타입은 private 구현에 둡니다.
+   - [ ] Implement `Platform::FillRandomBytes` in a Mac private source and connect the source and required system dependencies in CMake's APPLE branch.
+   - [ ] Call `AssetId::Generate` from a public client to verify linking, UUID version/variant bits, parsing round trips, and random-provider failure propagation.
+   - [ ] Verify that existing `CocoaWindow.hpp` and `.mm` compile against the current public window signatures. `GetInputState` and `GetFramebufferState` already exist; check their compatibility with the latest code.
 
-2. **Cocoa 입력과 drawable 상태 연결**
+2. **Verify Cocoa input and drawable state**
 
-   - [ ] Escape만 저장하는 현재 구현을 공유 `InputState`로 연결하고, 아래 공통 입력 검증에 필요한 키·마우스·휠을 구현합니다.
-   - [ ] Retina 배율, 창 크기 변경, 최소화/복원에 따라 drawable pixel 크기와 지속적인 framebuffer revision을 갱신합니다.
-   - [ ] 이벤트 처리는 창 스레드에서 수행하고, 창 닫기 요청 후 Vulkan surface가 해제되기 전에 네이티브 창을 먼저 파괴하지 않도록 수명을 확인합니다.
+   - [ ] Verify existing `CocoaInput.mm` key/modifier/mouse/wheel conversion against current shared `InputState`. Distinguish the 2026-10-10 input checks from the current snapshot ownership/publication contract.
+   - [ ] Verify drawable pixel dimensions and persistent framebuffer revisions across Retina scaling, resize, minimize, and restore.
+   - [ ] Process events on the window thread and ensure a close request does not destroy the native window before the Vulkan surface is released.
 
-3. **실행 파일 경로 hook 구현**
+3. **Verify the existing executable-path hook**
 
-   - [ ] Mac 전용 경로 구현 파일에서 `Raven::GetPlatformExecutablePath()`를 정의하고 CMake의 APPLE 소스 목록에 포함합니다. 현재 Mac 소스 목록에는 이 구현이 없습니다.
-   - [ ] 한글·공백 경로, 다른 작업 디렉터리에서 실행, ContentRoot override, 배포 위치 변경을 공통 경로 검증으로 확인합니다.
+   - [ ] Verify that `Raven::GetPlatformExecutablePath()` in the already-connected `MacPaths.cpp` returns the absolute host executable path.
+   - [ ] Check Unicode and space-containing paths, different working directories, ContentRoot overrides, and relocation through the shared path checks.
 
-4. **Vulkan / MoltenVK 실행 확인**
+4. **Verify Vulkan / MoltenVK execution**
 
-   - [ ] Metal surface 생성, GPU 열거, graphics/present queue 선택, swapchain 생성과 presentation을 실제 Mac에서 확인합니다.
-   - [ ] 기존 공유 코드의 portability enumeration flag와 portability subset device extension 처리를 확인합니다. 필요한 추가 요구 사항이 발견되면 공유 renderer를 복제하지 않고 Windows 담당자와 조율합니다.
-   - [ ] 현재 HLSL/SPIR-V, depth format, RGBA8 Linear/SRGB texture 업로드가 대상 GPU에서 동작하는지 확인하고, 지원되지 않는 기능의 오류를 기록합니다.
+   - [ ] Verify Metal surface creation, GPU enumeration, graphics/present queue selection, swapchain creation, and presentation on an actual Mac.
+   - [ ] Check existing shared portability enumeration flags and portability subset device-extension handling. Coordinate additional requirements with the Windows contributor rather than duplicating the shared renderer.
+   - [ ] Verify current HLSL/SPIR-V, depth formats, and RGBA8 Linear/SRGB uploads on the target GPU. Record unsupported-capability errors.
 
-5. **빌드와 라이브러리 배치 확인**
+5. **Verify builds and library placement**
 
-   - [ ] 기존 `macos-debug` / `macos-release` preset을 사용해 실제 빌드를 완료합니다. Apple Silicon 대상 아키텍처, C++20/Objective-C++20, ARC와 Cocoa/QuartzCore 연결을 확인합니다.
-   - [ ] DXC, `spirv-val`, Vulkan loader/MoltenVK의 탐색과 실행 설정을 재현 가능하게 문서화합니다. 개발자 개인의 절대 경로를 소스에 넣지 않습니다.
-   - [ ] 샘플이 `RavenCore` 공유 라이브러리와 `Content/Shaders`, `Licenses/stb-LICENSE.txt`를 배포 위치에서 찾도록 확인합니다. 공유 라이브러리의 런타임 검색 경로도 검증합니다.
+   - [ ] Complete native builds with `macos-debug` / `macos-release`. Verify the Apple Silicon target architecture, C++20/Objective-C++20, ARC, and Cocoa/QuartzCore linkage.
+   - [ ] Document reproducible DXC, `spirv-val`, and Vulkan loader/MoltenVK discovery/runtime settings. Keep developer-specific absolute paths out of sources.
+   - [ ] Verify that the relocated sample finds the `RavenCore` shared library, `Content/Shaders`, and `Licenses/stb-LICENSE.txt`. Check shared-library runtime search paths.
 
-완료 후 사용할 빌드/실행 경로는 아래와 같습니다. 현재 backend 수정 전에는 성공이 보장되지 않습니다.
+After connecting the random-byte hook, use these build/run paths and record native results for the latest shared code.
 
 ```sh
 cmake --preset macos-debug
@@ -117,37 +117,38 @@ cmake --build out/build/macos-release
 ./out/build/macos-release/RavenEngine/RavenEngine
 ```
 
-## Linux 담당자 — 작업 순서
+## Linux contributor: work order
 
-1. **X11/XCB 대상 환경 확인**
+1. **Check the X11/XCB target environment**
 
-   - [ ] 현재 backend는 X11/XCB입니다. 배포판·desktop session·GPU와 X11 또는 XWayland 사용 여부를 기록합니다. 네이티브 Wayland backend는 없습니다.
-   - [ ] `pkg-config`, `xcb`, `xcb-xkb` 개발 의존성을 준비하고 탐색 결과를 확인합니다. 다른 창 시스템 지원은 별도 작업으로 기록합니다.
+   - [ ] Record the distribution, desktop session, GPU, and use of X11 or XWayland. The current backend uses X11/XCB; there is no native Wayland backend.
+   - [ ] Prepare and verify discovery of `pkg-config`, `xcb`, and `xcb-xkb` development dependencies. Track other window-system support separately.
+   - [ ] Implement `Platform::FillRandomBytes` in a Linux private source and connect it in the CMake Linux branch. Verify partial reads, EINTR, and failures, plus public-client linking and UUID generation/parsing round trips.
 
-2. **병합된 창 backend 검증**
+2. **Verify the merged window backend**
 
-   - [ ] `Private/Platform/Linux/XcbWindow.hpp`와 `.cpp`가 현재 공개 헤더로 컴파일되고, 위 공유 창 메서드의 signature와 일치하는지 확인합니다.
-   - [ ] `RavenCore`에 연결된 Linux 전용 `Window::Create(const WindowDesc&)`를 별도 클라이언트에서 호출합니다. factory 정의가 정확히 하나만 링크되는지 확인합니다.
-   - [ ] 창 생성/닫기/이벤트 처리, UTF-8 제목과 입력을 실행 검증합니다. map/unmap과 configure 이벤트로 갱신하는 drawable 크기 및 framebuffer revision이 최소화/복원에서도 계약을 지키는지 확인합니다.
+   - [ ] Verify that `Private/Platform/Linux/XcbWindow.hpp` and `.cpp` compile with current public headers and match every shared window signature above.
+   - [ ] Call the Linux `Window::Create(const WindowDesc&)` linked into `RavenCore` from a separate client. Verify that exactly one factory definition is linked.
+   - [ ] Verify window creation/closing/event handling, UTF-8 titles, and input. Check that drawable dimensions and framebuffer revisions updated through map/unmap and configure events satisfy minimize/restore contracts.
 
-3. **실행 파일 경로 hook 검증**
+3. **Verify executable paths**
 
-   - [ ] `LinuxPaths.cpp`의 `Raven::GetPlatformExecutablePath()`가 `/proc/self/exe`를 통해 호스트 실행 파일의 절대 경로를 반환하는지 확인합니다. 공유 경로 계산과 파일 reader는 재사용합니다. 경로의 Linux 동작은 [proc_pid_exe(5)](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html)를 참고합니다.
-   - [ ] 실행 파일 위치, 다른 작업 디렉터리, 한글·공백 경로, Linux 파일명의 대소문자 구분과 ContentRoot override를 확인합니다.
+   - [ ] Verify that `Raven::GetPlatformExecutablePath()` in `LinuxPaths.cpp` returns the absolute host executable path through `/proc/self/exe`. Reuse shared path calculations and file readers. See [proc_pid_exe(5)](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html) for Linux path behavior.
+   - [ ] Check executable location, other working directories, Unicode/space-containing paths, case-sensitive Linux filenames, and ContentRoot overrides.
 
-4. **CMake와 preset 검증**
+4. **Verify CMake and presets**
 
-   - [ ] `CMAKE_SYSTEM_NAME`이 Linux일 때만 XCB 소스와 `PkgConfig::XCB`가 `RavenCore`에 연결되는지 확인합니다. 다른 플랫폼의 소스 선택을 유지합니다.
-   - [ ] 병합된 `linux-debug` / `linux-release` preset으로 실제 빌드를 완료합니다. Windows의 MSVC 설정이나 macOS의 Cocoa 설정을 공유 코드로 옮기지 않습니다.
-   - [ ] C++20, Ninja, Vulkan, DXC, `spirv-val`, XCB 의존성 탐색을 확인합니다. 샘플과 `RavenCore` 공유 라이브러리의 링크·런타임 검색 경로 및 Content/라이선스 복사를 검증합니다.
+   - [ ] Verify that XCB sources and `PkgConfig::XCB` connect to `RavenCore` only when `CMAKE_SYSTEM_NAME` is Linux. Preserve other platforms' source selection.
+   - [ ] Complete actual builds with the merged `linux-debug` / `linux-release` presets. Keep MSVC and Cocoa settings out of shared code.
+   - [ ] Verify discovery of C++20, Ninja, Vulkan, DXC, `spirv-val`, and XCB dependencies. Check sample/shared-library linking and runtime paths, plus Content/license staging.
 
-5. **Vulkan 실행 확인**
+5. **Verify Vulkan execution**
 
-   - [ ] XCB의 instance extension 목록과 `CreateVulkanSurface()`를 확인하고, GPU 선택부터 presentation까지 실행합니다.
-   - [ ] 창 크기 변경, drawable 사용 불가 상태, out-of-date/suboptimal 복구가 공유 renderer를 통해 동작하는지 검증합니다.
-   - [ ] graphics/present queue family가 다른 환경을 사용할 수 있으면 추가 검증합니다. 사용할 수 없으면 미검증 항목으로 남기고 실제 검증한 GPU/queue 정보를 기록합니다.
+   - [ ] Verify XCB instance extensions and `CreateVulkanSurface()`, then exercise GPU selection through presentation.
+   - [ ] Verify resize, unavailable drawable state, and out-of-date/suboptimal recovery through the shared renderer.
+   - [ ] If hardware with separate graphics/present queue families is available, verify it too. Otherwise record it as unverified and report the GPU/queues actually tested.
 
-Linux 검증에 사용할 명령은 아래와 같습니다. 의존성을 준비한 뒤 실행하고 실제 결과를 기록합니다. 병합 시 Windows Debug/Release 빌드는 통과했지만, 설치된 WSL 환경에는 Vulkan/XCB 개발 의존성과 DXC, `spirv-val`이 없어 Linux 전체 빌드와 실행은 검증하지 못했습니다.
+Prepare dependencies and the random-byte hook before running these commands, then record actual results. Windows Debug/Release passed when the backend was merged, but the WSL environment at that time lacked Vulkan/XCB development dependencies, DXC, and `spirv-val`, so full Linux builds and execution were not verified.
 
 ```sh
 cmake --preset linux-debug
@@ -159,24 +160,26 @@ cmake --build out/build/linux-release
 ./out/build/linux-release/RavenEngine/RavenEngine
 ```
 
-## 두 플랫폼의 공통 검증 기준
+## Shared verification criteria
 
-- [ ] **입력:** 창별 pending buffer에 실제 이벤트를 누적하고, 해당 창의 `PollEvents()`에서 snapshot을 publish한 뒤 pending transient를 초기화합니다. 다른 창이 먼저 처리한 이벤트도 해당 창의 publish까지 보존합니다. 같은 poll에서 눌렀다 뗀 입력의 Pressed/Released와 KeyEvents를 모두 보존하고, 반복 key-down을 새 Pressed로 만들지 않습니다.
-- [ ] **키와 modifier:** 네이티브 키 번호를 공유 `Key` 값으로 변환합니다. 문자 입력과 physical key를 혼동하지 않습니다. Shift/Control/Alt/Super와 좌우 modifier, 방향키, Home, R, Space를 확인합니다. Text input과 별도 repeat API는 Windows에서도 미완료이므로 새로운 공유 계약이 필요하면 별도 조율합니다.
-- [ ] **마우스:** 버튼 전환, cursor 위치/delta, 가로·세로 wheel 누적, focus 상실 시 눌린 상태 해제를 확인합니다. 첫 cursor 위치나 focus 복귀에서 큰 delta가 발생하지 않도록 합니다. 좌표 단위·원점과 휠 방향은 Windows 동작과 비교해 기록합니다.
-- [ ] **framebuffer:** 크기는 drawable pixel 기준입니다. 최소화/사용 불가 상태는 `0 x 0`으로 보고하고, 크기 변경 시 Revision을 증가시킵니다. getter 호출이 Revision을 소비하거나 초기화하면 안 됩니다. resize, 배율 변경, 최소화/복원, 최소화 중 닫기를 확인합니다.
-- [ ] **시간과 renderer:** 첫 drawable frame과 복원 후 첫 frame의 DeltaSeconds가 0인지 확인합니다. 두 cube, ground slab, 두 PNG quad의 UV/tint, perspective 비율, depth occlusion, orbit/zoom/reset/pause가 Windows 샘플과 같은 방식으로 동작해야 합니다. 공유 Blender 기준 축과 matrix 계약은 [CoordinateSystem.md](CoordinateSystem.md)를 유지합니다.
-- [ ] **파일과 이미지:** 실행 파일 기준 Content/Shader 경로, 상대/절대 ContentRoot override, 잘못된 경로와 누락 파일의 진단을 확인합니다. PNG/JPEG를 RGBA8로 로드해 texture 생성에 전달합니다. non-power-of-two 이미지는 허용하면서 기본 옵션에서 개발 빌드에만 경고하고, 명시적 억제와 Release 무경고를 확인합니다.
-- [ ] **공개 API와 수명:** 공개 헤더의 독립 컴파일, 별도 클라이언트의 링크, Run/Load의 두 overload 호출, Window factory 호출을 확인합니다. client는 자기 모듈에서 해제되고 renderer보다 먼저 파괴되어야 하며, GPU 자원/surface는 네이티브 창보다 먼저 해제되어야 합니다. 정상 종료와 초기화 실패 양쪽을 확인합니다.
-- [ ] **배포와 검증 결과:** Debug/Release와 다른 작업 디렉터리·배포 위치에서 실행합니다. Debug Vulkan core/synchronization validation의 경고·오류를 확인하고 해결합니다. 현재 검증 환경과 미검증 항목을 구분해 남깁니다.
+- [ ] **Input:** Accumulate native events in each window's pending buffer. Publish its snapshot in that window's `PollEvents()`, then reset pending transient values. Preserve events processed earlier by another window until publication. Preserve both Pressed/Released and KeyEvents for press/release in one poll; repeated key-down must not create a new Pressed transition.
+- [ ] **Keys and modifiers:** Translate native key identifiers to shared `Key` values, separating physical keys from text input. Check Shift/Control/Alt/Super, left/right modifiers, arrows, Home, R, and Space. Text input and a separate repeat API are also unfinished on Windows; coordinate new shared contracts separately.
+- [ ] **Mouse:** Verify button transitions, cursor position/delta, horizontal/vertical wheel accumulation, and held-state release on focus loss. Avoid a large delta from the first cursor position or focus recovery. Compare units, origin, and wheel directions with Windows and record them.
+- [ ] **Framebuffer:** Report drawable pixels and `0 x 0` when minimized/unavailable. Increment Revision on size changes; getters must not consume or reset it. Check resize, scaling changes, minimize/restore, and closing while minimized.
+- [ ] **Timing and renderer:** Verify zero DeltaSeconds on the first drawable frame and first frame after restore. Check the two cubes, ground slab, PNG quad UV/tint, perspective proportions, depth occlusion, and orbit/zoom/reset/pause against Windows. Preserve the shared Blender axes and matrix contract in [CoordinateSystem.md](CoordinateSystem.md).
+- [ ] **2D, transparency, and batching:** Check `--orthographic` pan/zoom, depth-independent sprite size, F1 order switching, and culling. Verify transparent overlap order, compatible instancing, and per-frame buffer reuse after resize in both samples.
+- [ ] **Assets:** Verify UUID generation/parsing, typed references, catalog diagnostics, same-ID texture reuse, and separation between renderer contexts. Preserve the current ownership contract: destroying an asset service does not release GPU textures.
+- [ ] **Files and images:** Check executable-relative Content/Shader paths, relative/absolute ContentRoot overrides, and invalid-path/missing-file diagnostics. Load PNG/JPEG into RGBA8 for texture creation. Accept NPOT images, emit the default warning only in development builds, support explicit suppression, and verify no Release warning.
+- [ ] **Public API and lifetime:** Independently compile public headers, link a separate client, call both Run/Load overloads, and call the Window factory. Destroy clients in their own modules before the renderer, and destroy GPU resources/surfaces before native windows. Check both normal shutdown and initialization failure.
+- [ ] **Packaging and results:** Run Debug/Release from other working directories and relocated packages. Resolve Debug Vulkan core/synchronization warnings/errors. Distinguish tested environments from unverified cases.
 
-현재 샘플의 texture 경로는 공유 `CreateTexturedMesh`와 3인자 `DrawFrame`을 사용합니다. 기존 color API와 signature는 유지합니다. Set 0 binding 0은 sampled image, binding 1은 sampler이며 descriptor는 context가 생성부터 종료까지 소유합니다. 두 Texture HLSL shader와 `Content/Textures`의 PNG도 배포해야 합니다. UV는 이미지 상단이 V=0이며 현재 경로는 depth를 사용하는 불투명 렌더링입니다. 계약과 검증 결과는 [TextureResources.md](TextureResources.md)를 참고합니다. OS 이식 중 ECS, 물리, 오디오, shader/asset reload, game-module reload를 동시에 새로 구현하지 않습니다. 이들은 기존 [TODO.md](../TODO.md)의 후속 엔진 작업입니다.
+Both samples submit opaque/transparent passes with shared `CreateTexturedMesh` and the four-argument `DrawFrame` for their camera type. Preserve the color API and earlier overloads. Set 0 binding 0 is a sampled image and binding 1 a sampler; descriptors remain context-owned from creation through shutdown. Package both Texture HLSL outputs and the PNGs under `Content/Textures`. Image-top UV is V=0; verify opaque depth testing, straight-alpha ordering, and instancing. See [TextureResources.md](TextureResources.md) for contracts and evidence. Keep platform porting separate from implementing ECS, physics, audio, shader/asset reload, and game-module reload; those are shared-engine tasks in [TODO.md](../TODO.md).
 
-## 완료 보고에 포함할 내용
+## Completion report
 
-- [ ] OS/아키텍처, compiler/CMake/Ninja/Vulkan 도구 버전, GPU와 graphics/present queue family를 기록합니다.
-- [ ] Debug/Release의 실제 configure/build/run 명령, 의존성 설정과 공유 라이브러리 배치 방법을 기록합니다.
-- [ ] 위 공통 검증의 통과/실패/미검증 결과, validation log, 샘플 screenshot을 남깁니다. 재현용 생성 파일과 임시 probe는 `out/`에 두고, 검증만을 위한 임시 구현을 엔진에 남기지 않습니다.
-- [ ] 공유 파일 변경이 있으면 Windows preset의 회귀 검증 결과를 남기거나 Windows 담당자에게 필요한 검증을 명시합니다. 완료되지 않은 backend를 지원 완료로 표시하지 않습니다.
+- [ ] Record OS/architecture, compiler/CMake/Ninja/Vulkan tool versions, GPU, and graphics/present queue families.
+- [ ] Record actual Debug/Release configure/build/run commands, dependency settings, and shared-library placement.
+- [ ] Record passed/failed/unverified results for the criteria above, validation logs, and sample screenshots. Keep generated reproduction files and temporary probes in `out/`; do not leave validation-only implementations in the engine.
+- [ ] For shared-file changes, provide Windows preset regression results or identify the checks needed from the Windows contributor. Do not mark unfinished backends fully supported.
 
-현재 Windows 증거는 `out/validation/signature-*.log`와 기존 기능별 validation log에 있습니다. `out/`은 Git에서 제외되므로 다른 담당자에게 전달할 때는 검증 요약과 필요한 log/screenshot을 변경 보고에 함께 첨부합니다.
+Windows evidence is under `out/validation/signature-*.log` and the existing per-feature validation logs. Because `out/` is ignored by Git, include verification summaries and the required logs/screenshots in the change report when handing work to another contributor.

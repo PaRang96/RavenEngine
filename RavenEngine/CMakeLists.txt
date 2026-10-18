@@ -1,4 +1,4 @@
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+﻿set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(RavenCore SHARED
     # Headers shared with engine clients.
@@ -29,6 +29,8 @@ add_library(RavenCore SHARED
     "Public/Raven/Renderer/Vulkan/VulkanDraw.hpp"
     "Public/Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
     "Public/Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
+    "Public/Raven/ECS/Entity.hpp"
+    "Public/Raven/ECS/Registry.hpp"
 
     # Engine implementation and internal headers.
     "Private/Assets/AssetId.cpp"
@@ -90,6 +92,7 @@ add_library(RavenCore SHARED
     "Private/Renderer/Vulkan/VulkanTexturedMesh.hpp"
     "Private/Renderer/Vulkan/VulkanTexturePipeline.cpp"
     "Private/Renderer/Vulkan/VulkanTexturePipeline.hpp"
+    "Private/ECS/Registry.cpp"
 )
 
 target_compile_definitions(RavenCore PRIVATE

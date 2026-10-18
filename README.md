@@ -1,21 +1,23 @@
 # RavenEngine
 
-RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, a perspective camera, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, and object frustum culling.
+RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, perspective/orthographic cameras, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, frustum culling, compatible draw batching, and ID-based texture reuse.
 
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
+
+As of 2026-10-14, the Windows rendering foundation is ready for a minimal scene/game framework. The next task is entity identity and lifecycle, followed by an ECS-backed orthographic sample. Scene persistence, runtime resource release, imported meshes/lighting, physics, audio, playable games and runtime reload remain pending. The samples currently construct objects and asset registrations in C++.
 
 ## Source layout
 
 ```text
 RavenEngine/
   Public/Raven/       Engine headers shared with clients
-    Assets/           Owned CPU images and PNG/JPEG loading
+    Assets/           Asset IDs/references, catalog/cache contracts, and owned CPU images
     Core/             Application/client interface, paths, files, logging, and frame time
     Math/             Shared transform math
     Platform/         Window and input contracts
     Renderer/         Camera, vertices, draw data, and renderer interface
   Private/            Engine implementation and internal headers
-    Assets/           Private image decoder integration
+    Assets/           Asset catalog/cache implementations and private image decoder
     Core/             Application loop, utilities, logging implementation, and frame clock
     Platform/         Native backend implementations
     Renderer/         Vulkan resource owners and HLSL shaders
@@ -39,6 +41,8 @@ Run with `--orthographic` for the 2D sample. `OrthographicCamera::VerticalSize` 
 
 `Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. The sample loads two staged PNGs and displays them alongside the existing cubes and ground slab. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation.
 
+`AssetId`, `AssetRef<T>`, `AssetCatalog` and `AssetResources` provide stable UUIDv4 identity, typed references, in-memory loading metadata and synchronous texture reuse within a renderer context. The renderer owns GPU resources until shutdown; destroying an asset service does not unload textures. Persistent catalog/scene files, resource release handles and reload are future work. See [AssetSystem.md](docs/AssetSystem.md).
+
 ## Build on Windows
 
 From the **x64 Native Tools Command Prompt for VS 2026** (or another developer shell targeting x64):
@@ -50,8 +54,8 @@ cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --orthographic
 ```
 
-## macOS/Linux 담당자 작업
+## macOS/Linux contributor work
 
-현재 Windows 구현에 맞춘 담당자별 작업 순서와 검증 기준은 [플랫폼 협업 작업 목록](docs/PlatformHandoff.md)을 참고하세요. macOS 빌드 의존성과 명령은 [macOS 빌드 안내](docs/MacOSBuild.md)에 정리되어 있습니다. Cocoa framebuffer 인터페이스, 실행 파일 경로와 키보드·마우스 입력 연결은 구현되어 있으며, Debug 샘플의 화면 출력과 Space·스크롤·R 조작을 확인했습니다. 나머지 플랫폼 검증은 작업 목록을 따릅니다. Linux X11/XCB backend와 Debug/Release preset은 현재 엔진 구조에 맞춰 병합했으며, Linux에서의 빌드와 실행 검증은 아직 필요합니다. 각 OS의 네이티브 실행을 검증한 뒤 지원 완료로 표시합니다.
+See the [platform contributor handoff](docs/PlatformHandoff.md) for work order and verification criteria against the current Windows implementation. The [macOS build guide](docs/MacOSBuild.md) documents dependencies and commands. Cocoa framebuffer support, executable paths, and keyboard/mouse input are implemented; earlier Debug checks confirmed rendering and Space/scroll/R controls. The Linux X11/XCB backend and Debug/Release presets are also merged. The current asset system's `Platform::FillRandomBytes` is implemented only on Windows, so macOS/Linux contributors must add that hook and its CMake connection before verifying current Debug/Release builds and both samples. Platform work can proceed alongside Windows ECS development. Mark support complete only after verifying native execution of the current code on each OS.
 
-The `out/` directory contains generated build files and is ignored by Git. The project currently has no automated tests.
+The Windows Debug/Release builds were checked successfully on 2026-10-14; CTest lists zero registered tests. Earlier native/GPU evidence is recorded in the subsystem documents and ignored `out/` artifacts; those checks were not rerun during that assessment. CTest integration remains deferred at the owner's request and will be revisited when defining entity/component lifetime checks. The `out/` probes are not a regression suite available from a clean checkout.

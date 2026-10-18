@@ -49,7 +49,7 @@ Existing public function signatures and DLL exports are retained. The header pat
 
 ## Client lifecycle and ownership
 
-`ApplicationClient` supplies `OnFrame(renderer, input, frameTime)`. The sample implements it through `PerspectiveSample`. `Application` has no dependency on a concrete sample.
+`ApplicationClient` supplies `OnFrame(renderer, input, frameTime)`. The sample implements it through `PerspectiveSample` and `OrthographicSample`. `Application` has no dependency on a concrete sample.
 
 The caller supplies `ApplicationClientFactory` with two function pointers:
 
@@ -63,6 +63,12 @@ Both callbacks are required and are checked before creating a window. A null cli
 Clients borrow the renderer and input during callbacks. `CreateMesh` copies the supplied CPU geometry into resources owned by the renderer and returns a borrowed mesh reference. That reference remains valid until renderer shutdown. Draw submissions are borrowed during frame recording. The sample owns its CPU scene/camera state, while the DLL owns GPU allocations and their destruction.
 
 Frame timing and minimized-window behavior are preserved: event polling precedes `OnFrame`, a nondrawable framebuffer skips it, and the first drawable frame after startup or restore receives zero delta.
+
+## Scene and resource work ahead — 2026-10-14
+
+The next shared-engine work is entity identity/lifecycle and a minimal ECS-backed orthographic scene; see [TODO.md](../TODO.md). Existing input/frame callbacks and the renderer's draw submission path are sufficient to start that work. It does not require the future game-module ABI or an FBX importer.
+
+For the initial scene, share its mesh and the existing asset catalog/cache. Current meshes, textures and immutable descriptors remain owned by the renderer until shutdown. Destroying a client or `AssetResources` service does not individually release those resources. Persistent asset references, runtime entity identity and future resource handles have separate responsibilities. Define sharing/release, stale-handle behavior and safe GPU retirement before implementing repeated scene switching or resource replacement; these are planned contracts, not capabilities of the current DLL.
 
 ## Reload scope
 
@@ -88,4 +94,4 @@ Two additional Windows/shared API defects are reproduced before correction: a cl
 
 Debug and Release builds pass. All 17 public headers and 21 Windows/shared private headers compile independently with `/W4 /WX`; public DLL clients check function/member-pointer types, pass 27 behavior checks, and render eight frames per configuration. Checks include both `Run` overloads, factory validation, direct public window creation, framebuffer/input access, renderer creation/texture upload, client cleanup, and content-root restoration. A separate client built using the original application declaration links and runs in each configuration. Debug Vulkan core/synchronization validation is clean. The DLL has 18 exports and preserves all 16 prior symbols. Evidence is under `out/validation/signature-*.log`; temporary probe binaries and objects are removed, and no tracked test source is added.
 
-The Mac backend remains assigned to the Mac coworker under the owner's scope instruction. Its current header still declares `IsKeyDown(Key) const override`, although the shared `Window` interface has no such virtual method. It also lacks the required `const InputState& GetInputState() const` and `FramebufferState GetFramebufferState() const` overrides, leaving `Arm64Mac` abstract. A C++ header probe reproduces these compiler errors in `out/validation/signature-before-mac-header.log`. The Mac source selection additionally lacks an implementation of the shared `std::filesystem::path GetPlatformExecutablePath()` hook. These Mac findings remain open; the Mac backend is not included in the passing Windows build/header counts and has not been runtime-tested here.
+At the time of the signature audit, the former `Arm64Mac` header had an invalid `IsKeyDown` override, lacked the required input/framebuffer overrides, and had no executable-path implementation. The historical compiler evidence is in `out/validation/signature-before-mac-header.log`; these interface/path findings have since been addressed by `CocoaWindow`, `CocoaInput` and `MacPaths.cpp`. Earlier native macOS Debug evidence is recorded in [MacOSBuild.md](MacOSBuild.md). As of 2026-10-14, macOS/Linux still lack the asset system's `Platform::FillRandomBytes` implementation and CMake hookup, and need current Debug/Release native verification. They are not included in the passing Windows build/header counts. Follow [PlatformHandoff.md](PlatformHandoff.md) for remaining work.
