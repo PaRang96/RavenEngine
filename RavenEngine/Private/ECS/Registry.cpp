@@ -6,6 +6,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <vector>
+#include <map>
+#include <string>
+#include <unordered_map>
 
 namespace Raven::ECS
 {
@@ -40,6 +43,13 @@ namespace Raven::ECS
         const std::uint64_t RegistryId = AllocateRegistryId();
         std::vector<Slot> Slots;
         std::uint32_t FirstFree = NoSlot;
+
+		struct ComponentPool
+		{
+			std::size_t Size = 0;
+			std::unordered_map<std::uint32_t, std::vector<std::byte>> Values;
+		};
+		std::map<std::string, ComponentPool, std::less<>> Components;
     };
 
     Registry::Registry()
@@ -97,6 +107,11 @@ namespace Raven::ECS
         auto &impl = *m_Impl;
         auto &slot = impl.Slots[entity.m_Index];
 
+		for (auto& [name, pool] : impl.Components)
+			pool.Values.erase(entity.m_Index);
+
+        slot.Alive = false;
+
         if (slot.Generation ==
             std::numeric_limits<std::uint32_t>::max())
             return true;
@@ -105,4 +120,77 @@ namespace Raven::ECS
         impl.FirstFree = entity.m_Index;
         return true;
     }
+
+	std::vector<Entity> Registry::GetEntities() const
+	{
+		std::vector<Entity> entities;
+		for (std::size_t index = 0; index < m_Impl->Slots.size(); ++index)
+		{
+			const auto& slot = m_Impl->Slots[index];
+			if (slot.Alive)
+				entities.push_back(Entity(m_Impl->RegistryId, static_cast<std::uint32_t>(index), slot.Generation));
+		}
+		return entities;
+	}
+
+	bool Registry::Add(Entity entity, const Component& component)
+	{
+		if (!IsAlive(entity))
+			return false;
+		const auto name = component.GetTypeName();
+		const auto size = component.GetDataSize();
+		if (name.empty())
+			return false;
+		const auto existing = m_Impl->Components.find(name);
+		if (existing != m_Impl->Components.end() &&
+			(existing->second.Size != size || existing->second.Values.contains(entity.m_Index)))
+			return false;
+		std::vector<std::byte> bytes(size);
+		if (!component.CopyDataTo(bytes))
+			return false;
+		auto entry = m_Impl->Components.try_emplace(std::string(name)).first;
+		auto& pool = entry->second;
+		pool.Size = size;
+		return pool.Values.try_emplace(entity.m_Index, std::move(bytes)).second;
+	}
+
+	bool Registry::Read(Entity entity, Component& component) const noexcept
+	{
+		if (!IsAlive(entity))
+			return false;
+		const auto pool = m_Impl->Components.find(component.GetTypeName());
+		if (pool == m_Impl->Components.end() || pool->second.Size != component.GetDataSize())
+			return false;
+		const auto value = pool->second.Values.find(entity.m_Index);
+		if (value == pool->second.Values.end())
+			return false;
+		return component.CopyDataFrom(value->second);
+	}
+
+	bool Registry::Write(Entity entity, const Component& component) noexcept
+	{
+		if (!IsAlive(entity))
+			return false;
+		const auto pool = m_Impl->Components.find(component.GetTypeName());
+		if (pool == m_Impl->Components.end() || pool->second.Size != component.GetDataSize())
+			return false;
+		const auto value = pool->second.Values.find(entity.m_Index);
+		if (value == pool->second.Values.end())
+			return false;
+		return component.CopyDataTo(value->second);
+	}
+
+	bool Registry::Remove(Entity entity, const Component& component) noexcept
+	{
+		return RemoveComponent(entity, component.GetTypeName(), component.GetDataSize());
+	}
+
+	bool Registry::RemoveComponent(Entity entity, std::string_view name, std::size_t size) noexcept
+	{
+		if (!IsAlive(entity))
+			return false;
+		const auto pool = m_Impl->Components.find(name);
+		return pool != m_Impl->Components.end() && pool->second.Size == size &&
+			pool->second.Values.erase(entity.m_Index) != 0;
+	}
 }

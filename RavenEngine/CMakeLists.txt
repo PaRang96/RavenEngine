@@ -15,12 +15,15 @@ add_library(RavenCore SHARED
     "Public/Raven/Core/Assert.hpp"
     "Public/Raven/Core/Files.hpp"
     "Public/Raven/Core/FrameTime.hpp"
+    "Public/Raven/Core/GameInstance.hpp"
+    "Public/Raven/Core/GameModule.hpp"
     "Public/Raven/Core/Log.hpp"
     "Public/Raven/Core/Paths.hpp"
     "Public/Raven/Math/Transform.hpp"
     "Public/Raven/Platform/Input.hpp"
     "Public/Raven/Platform/Window.hpp"
     "Public/Raven/Renderer/ColorVertex.hpp"
+    "Public/Raven/Renderer/MeshHandle.hpp"
     "Public/Raven/Renderer/PerspectiveCamera.hpp"
     "Public/Raven/Renderer/OrthographicCamera.hpp"
     "Public/Raven/Renderer/TextureDesc.hpp"
@@ -30,6 +33,8 @@ add_library(RavenCore SHARED
     "Public/Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
     "Public/Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
     "Public/Raven/ECS/Entity.hpp"
+    "Public/Raven/ECS/Component.hpp"
+    "Public/Raven/ECS/RenderComponents.hpp"
     "Public/Raven/ECS/Registry.hpp"
 
     # Engine implementation and internal headers.
@@ -40,6 +45,7 @@ add_library(RavenCore SHARED
     "Private/Core/Application.cpp"
     "Private/Core/Files.cpp"
     "Private/Core/FrameClock.hpp"
+    "Private/Core/GameModule.cpp"
     "Private/Core/Log.cpp"
     "Private/Core/Paths.cpp"
     "Private/Core/Paths.hpp"
@@ -48,6 +54,7 @@ add_library(RavenCore SHARED
     "Private/Platform/InputBuffer.hpp"
     "Private/Platform/PlatformPaths.hpp"
     "Private/Platform/PlatformRandom.hpp"
+    "Private/Platform/GameModulePlatform.hpp"
     "Private/Renderer/MeshBounds.hpp"
     "Private/Renderer/Visibility.hpp"
     "Private/Renderer/Shaders/Color.frag.hlsl"
@@ -105,6 +112,7 @@ target_include_directories(RavenCore PUBLIC
     ${Vulkan_INCLUDE_DIRS}
 )
 target_include_directories(RavenCore PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private")
+target_include_directories(RavenCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 target_include_directories(RavenCore SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/ThirdParty/stb")
 
 target_compile_features(RavenCore PUBLIC cxx_std_20)
@@ -121,6 +129,7 @@ add_executable(RavenEngine
     "Private/Samples/OrthographicSample.hpp"
 )
 target_include_directories(RavenEngine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private/Samples")
+target_include_directories(RavenEngine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private")
 target_link_libraries(RavenEngine PRIVATE RavenCore)
 
 # Export only declared RAVEN_API entry points. Both modules use the same dynamic CRT.
@@ -217,6 +226,7 @@ add_dependencies(RavenCore RavenContent)
 
 if(WIN32)
     target_sources(RavenCore PRIVATE
+        "Private/Platform/Windows/Win32GameModule.cpp"
         "Private/Platform/Windows/Win32Random.cpp"
         "Private/Platform/Windows/Win32Paths.cpp"
         "Private/Platform/Windows/Win32EventPump.cpp"
@@ -236,6 +246,7 @@ elseif(APPLE)
         OBJCXX_EXTENSIONS OFF
     )
     target_sources(RavenCore PRIVATE
+        "Private/Platform/UnsupportedGameModule.cpp"
         "Private/Platform/Mac/MacPaths.cpp"
         "Private/Platform/Mac/CocoaInput.mm"
         "Private/Platform/Mac/CocoaInput.hpp"
@@ -267,6 +278,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-xkb)
     target_sources(RavenCore PRIVATE
+        "Private/Platform/UnsupportedGameModule.cpp"
         "Private/Platform/Linux/LinuxPaths.cpp"
         "Private/Platform/Linux/XcbWindow.cpp"
         "Private/Platform/Linux/XcbWindow.hpp"
@@ -274,4 +286,48 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(RavenCore PRIVATE PkgConfig::XCB)
 else()
     message(FATAL_ERROR "A window backend is not implemented for this platform yet")
+endif()
+
+# The standalone child build links a completed import library. Runtime builds cannot
+# traverse a dependency edge back to a loaded RavenCore.dll or host executable.
+set(RAVEN_GAME_DEFAULT OFF)
+if(WIN32 AND MSVC AND CMAKE_GENERATOR STREQUAL "Ninja")
+    set(RAVEN_GAME_DEFAULT ON)
+endif()
+option(RAVEN_BUILD_GAME_MODULE "Build the Windows development game module" ${RAVEN_GAME_DEFAULT})
+set(RAVEN_GAME_ENABLED false)
+set(RAVEN_GAME_CONTRACT "unsupported")
+set(RAVEN_GAME_BUILD_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/GameBuild")
+if(RAVEN_BUILD_GAME_MODULE)
+    if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_GENERATOR STREQUAL "Ninja")
+        message(FATAL_ERROR "Game module builds currently require Windows, MSVC and single-config Ninja")
+    endif()
+    set(RAVEN_GAME_ENABLED true)
+    include("${PROJECT_SOURCE_DIR}/cmake/GameContract.cmake")
+    raven_game_contract("${PROJECT_SOURCE_DIR}" RAVEN_GAME_CONTRACT)
+    add_custom_target(RavenGame ALL
+        COMMAND "${CMAKE_COMMAND}" -S "${CMAKE_CURRENT_SOURCE_DIR}/Private/Game"
+            -B "${RAVEN_GAME_BUILD_DIRECTORY}" -G Ninja
+            "-DRAVEN_ROOT=${PROJECT_SOURCE_DIR}"
+            "-DRAVEN_CORE_LIBRARY=$<TARGET_LINKER_FILE:RavenCore>"
+            "-DRAVEN_GAME_OUTPUT=$<TARGET_FILE_DIR:RavenCore>"
+            "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+            "-DCMAKE_CXX_FLAGS_DEBUG=${CMAKE_CXX_FLAGS_DEBUG}"
+            "-DCMAKE_CXX_FLAGS_RELEASE=${CMAKE_CXX_FLAGS_RELEASE}"
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=${CMAKE_CXX_FLAGS_RELWITHDEBINFO}"
+            "-DCMAKE_CXX_FLAGS_MINSIZEREL=${CMAKE_CXX_FLAGS_MINSIZEREL}"
+        COMMAND "${CMAKE_COMMAND}" --build "${RAVEN_GAME_BUILD_DIRECTORY}" --target RavenGame
+        DEPENDS RavenCore
+        COMMENT "Build standalone reloadable game module"
+        VERBATIM
+    )
+endif()
+configure_file("${PROJECT_SOURCE_DIR}/cmake/GameBuildConfig.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/Generated/GameBuildConfig.hpp" @ONLY)
+if(RAVEN_BUILD_GAME_MODULE)
+    configure_file("${PROJECT_SOURCE_DIR}/cmake/BuildGame.cmake.in"
+        "${RAVEN_GAME_BUILD_DIRECTORY}/BuildGame.cmake" @ONLY)
 endif()

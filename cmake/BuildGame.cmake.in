@@ -1,0 +1,11 @@
+# Configure the standalone game project only; never configure/build the live host.
+execute_process(COMMAND "@CMAKE_COMMAND@" -S "@PROJECT_SOURCE_DIR@/RavenEngine/Private/Game"
+    -B "@RAVEN_GAME_BUILD_DIRECTORY@" RESULT_VARIABLE configured)
+if(NOT configured EQUAL 0)
+    message(FATAL_ERROR "Game module configuration failed: ${configured}")
+endif()
+execute_process(COMMAND "@CMAKE_COMMAND@" --build "@RAVEN_GAME_BUILD_DIRECTORY@"
+    --target RavenGame RESULT_VARIABLE built)
+if(NOT built EQUAL 0)
+    message(FATAL_ERROR "Game module build failed: ${built}")
+endif()

@@ -138,6 +138,18 @@ namespace Raven
 		return result;
 	}
 
+	inline Mat4 RotationY(float radians)
+	{
+		Mat4 result = Mat4::Identity();
+		const float sine = std::sin(radians);
+		const float cosine = std::cos(radians);
+		result(0, 0) = cosine;
+		result(0, 2) = sine;
+		result(2, 0) = -sine;
+		result(2, 2) = cosine;
+		return result;
+	}
+
 	inline Mat4 RotationZ(float radians)
 	{
 		Mat4 result = Mat4::Identity();

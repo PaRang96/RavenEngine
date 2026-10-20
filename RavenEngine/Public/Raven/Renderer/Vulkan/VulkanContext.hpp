@@ -30,6 +30,11 @@ namespace Raven
 		// Meshes remain owned by this context until shutdown, after GPU work completes.
 		RAVEN_API const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
 			std::span<const std::uint16_t> indices);
+		// Value handles can be copied into ECS data; geometry is shared, not copied.
+		RAVEN_API MeshHandle CreateMeshHandle(std::span<const ColorVertex> vertices,
+			std::span<const std::uint16_t> indices);
+		// Null/foreign/expired-context handles resolve to null. Borrow only while this context lives.
+		RAVEN_API const VulkanMesh* ResolveMesh(MeshHandle mesh) const noexcept;
 		// UV meshes use a separate type to enforce the matching vertex/pipeline layout.
 		RAVEN_API const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);

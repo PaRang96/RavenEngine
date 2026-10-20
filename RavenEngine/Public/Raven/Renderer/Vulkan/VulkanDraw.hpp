@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Raven/Math/Transform.hpp"
+#include "Raven/Renderer/MeshHandle.hpp"
 
 namespace Raven
 {

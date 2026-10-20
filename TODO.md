@@ -1,18 +1,18 @@
 # RavenEngine v1 TODO
 
-The goal follows [ROADMAP.md](ROADMAP.md): a C++20 engine that can build and run small 2D and 3D games using Vulkan, ECS, and reloadable game code, shaders, and assets. Author games through code and data files. A visual editor is outside v1. This is the working implementation order; the roadmap summarizes the wider scope. Write and maintain project documentation in English.
+The goal follows [ROADMAP.md](ROADMAP.md): a C++20 engine that can build and run small 2D and 3D games using Vulkan, ECS, and reloadable game code, shaders, and assets. ECS and hot reload are joint design goals. Fast iteration means reducing the time from a developer's edit to observing the result. Games are authored through code and data files in v1; a complete visual editor remains outside v1, but ownership and execution boundaries must accommodate future editor editing and play sessions. This is the working implementation order; the roadmap summarizes the wider scope. Write and maintain project documentation in English.
 
 Work on Windows and shared engine code first. macOS and Linux contributors can complete their backends and native verification in parallel. Final platform completion must exercise the game and reload behavior once it exists. Keep shared contracts independent of operating-system headers.
 
-Perspective and orthographic rendering are implemented using the agreed Blender world axes and shared transform/view math. The current priority is a minimal ECS-backed scene using the existing renderer and texture cache. Blender/FBX remains the planned 3D asset direction.
+Perspective and orthographic rendering use the agreed Blender world axes and shared transform/view math. Entity lifecycle, the narrow joint ECS/game-module reload example, and reusable Transform/StaticMesh/Sprite components are implemented. Perspective colored geometry and Orthographic textured sprites render from GameInstance/Registry with shared resources. CameraComponent is next, followed by migrating game code directly to Transform. The existing DLL remains compatible through a temporary sample-only movement bridge. Scene ownership is deferred at the owner's request. Preserve the renderer/cache and retained-state boundary before selecting general query/storage optimizations. Blender/FBX remains the planned 3D asset direction.
 
-For engine implementation, propose small, reviewable snippets and explain each change. The owner reviews and types implementation changes by hand unless explicitly asking the assistant to edit them. Check an item only after its completion criteria are demonstrated. Approval of this plan or documentation updates does not authorize implementation of every item.
+The usual implementation workflow is small, reviewable snippets typed by the owner. On 2026-10-19 the owner explicitly authorized the assistant to create/edit implementation files until further instruction. That authorization covers the current joint ECS/reload work; revert to snippet approval when withdrawn. Check an item only after its completion criteria are demonstrated.
 
-## Evaluation as of 2026-10-14
+## Evaluation and agreed direction as of 2026-10-19
 
-The codebase has a working Windows rendering foundation sufficient to begin a small game framework. `RavenCore.dll` owns reusable engine code; `RavenEngine.exe` contains perspective and orthographic rendering samples behind an application client interface. Shared math, depth testing, opaque/transparent textures, explicit ordering, frustum culling, and adjacent compatible draw instancing are implemented. Runtime content paths are relocatable. UUIDv4 asset identities, typed references, an immutable in-memory catalog, image loading, and ID-based texture reuse are implemented; persistent metadata, mesh import, dependency/build rules, and runtime resource handles remain pending. There is no ECS, scene lifecycle/serialization, physics, audio, playable game, or runtime reload yet.
+The Windows rendering and common asset/cache foundations remain implemented. The joint ECS/reload example now adds a host-owned GameInstance, minimal copied component values, a standalone RavenGame DLL, execution-copy replacement, conservative generated compatibility checks, source-content polling and background builds. Compatible logic changes retain Registry/Entity identity and component values; build/validation failures preserve the active code. General ECS queries/systems, scene ownership/persistence, runtime resource handles, imported meshes/lighting, physics, audio and playable games remain pending. The one moving ECS-backed sprite is a boundary demonstration, not the complete scene milestone.
 
-On 2026-10-14, the current Windows Debug and Release builds pass and CTest lists zero registered tests. Existing native/GPU validation records below were reviewed, not rerun in that assessment. The rendering samples are demonstrations, not playable games. CTest integration remains deferred at the owner's request; revisit the deferral when defining entity/component lifetime checks. Temporary probes under ignored `out/` are historical evidence, not a regression suite available from a clean checkout.
+Current Windows Debug/Release builds and joint ECS/reload evidence are recorded in [EngineModules.md](docs/EngineModules.md), separately from the historical renderer checks below. There are no registered CTest tests; the owner's deferral remains in force. Focused probes under ignored `out/validation/game-reload/` are evidence, not a tracked regression suite available from a clean checkout. These samples are demonstrations, not playable games.
 
 The indexed triangle milestone is implemented and verified. Debug and Release each passed 243 indexed draws and presentations, including resize, minimize/restore, animation, and construction-failure cleanup. Debug reported no core or synchronization validation warnings/errors. Evidence: `out/validation/indexed-debug.log`, `indexed-release.log`, and `out/screenshots/ravenengine-indexed-triangle.jpg`.
 
@@ -22,15 +22,26 @@ Perspective validation: Debug/Release builds and shader validation pass; a tempo
 
 Later rendering and asset validation is recorded in [TextureResources.md](docs/TextureResources.md), [CoordinateSystem.md](docs/CoordinateSystem.md), and [AssetSystem.md](docs/AssetSystem.md). The asset milestone records 3,417 public-client checks and 25 frames per Windows configuration; batching records matching GPU captures and preserved ordering. Those records do not establish current macOS/Linux support.
 
-## Immediate next step: entity identity and lifecycle
+## Joint ECS and game-code reload baseline
 
-- [ ] Agree a small `Entity` value and registry contract: invalid values, index/generation identity, registry ownership, and generation exhaustion behavior.
-- [ ] Add creation, destruction, liveness checks, and slot reuse; a destroyed entity must never become valid again when its slot is reused.
-- [ ] Verify default/invalid entities, multiple live entities, stale references after reuse, repeated destruction, and registry lifetime boundaries.
+Status: implemented for the narrow Windows development example. See [EngineModules.md](docs/EngineModules.md) for exact supported contracts, commands, evidence and limits.
 
-Propose the identity contract and a small first snippet before component storage. Keep asset UUIDs separate from runtime entity identity. The first visible milestone is the orthographic sample driven by ECS transforms and sprites, with runtime creation/removal while texture reuse, transparency, culling, and batching remain valid.
+Component.hpp supplies the abstract Component parent, virtual type/size access and synchronous field copying through `RAVEN_COMPONENT(FullyQualifiedType, Fields...);`. Registry accepts Component references and retains only approved copied values, excluding virtual-table pointers and borrowed views. Custom value structs require an explicit ComponentValue declaration; empty/tag components are supported. Transform, StaticMesh, Sprite, Position and Velocity inherit this parent without handwritten name strings or payload wrappers. Cameras and animation/input bookkeeping remain local sample members; F1 edits Sprite ordering in Registry. OrthographicSample owns five Transform/Sprite entities and gathers matching runtime entities; PerspectiveSample owns three Transform/StaticMesh entities. General scenes and queries remain pending.
 
-Working order: minimal ECS/renderable scene (3.1), persistent asset/scene data and resource lifetime (3.2), playable 2D game (4), imported/lit 3D gameplay (5), shader/asset reload (6), then game-code reload (7). Platform work proceeds in parallel. Persistent asset metadata, FBX import, and broader materials are not prerequisites for starting 3.1.
+1. [x] Retain host-owned GameInstance/Registry data across game-code replacement, without a singleton. Scene ownership is a later extension.
+2. [x] Build, load, validate and replace a separate Windows game DLL using execution copies while keeping RavenCore, Registry and Entity handles alive. Replacement occurs between synchronous game calls.
+3. [x] Connect minimal component add/read/write/remove and destruction cleanup. Repeated replacements preserve values while changed code updates them. General query/storage design remains open.
+4. [x] Add source-content polling and background builds for the supported sample dependencies. Apply successful stable builds; retain active code on build/contract failure. Generated contracts require a host rebuild/restart for shared-definition/build changes, without manual layout counters. Extending the dependency set requires extending these checks.
+
+First end-to-end completion: replace gameplay code during one running session, preserve Registry/Entity identity and existing component values, observe the new update behavior, and keep the previous game active on build or pre-activation validation failure. A DLL with an exported empty function alone does not satisfy this criterion. Step 4 then automates that demonstrated behavior.
+
+Initial state preservation covers compatible logic edits. Generated shared-definition/build fingerprints conservatively reject unsupported contracts until a host rebuild/restart; there is no automatic state reset or C++ layout migration. Watcher events, source extensions and equal `sizeof` are not compatibility proofs. New code can still contain execution errors, so retaining old code on a failed build does not guarantee recovery from a native crash after activation.
+
+Reuse the existing application loop, host-side client, public input/frame data, renderer, and asset cache. Keep persistent storage and its cleanup independent of unloaded game-module code. Preserve renderer/cache initialization across code swaps instead of recreating sample clients and GPU resources for every reload. Extend existing files where responsibilities remain cohesive; separate host module management from reloadable game implementation and put native loading/watching behind platform backends. Balance responsibilities and lifetimes rather than targeting a particular file count.
+
+Verification after removing the sample-only component layer is complete: Debug/Release builds, 137 component/reload checks, 50 frames of each sample and 100 changed-DLL rendering frames pass per configuration. See [EngineModules.md](docs/EngineModules.md) for evidence and coverage limits.
+
+Current component milestone: SpriteComponent and component-driven Orthographic rendering are implemented on the common virtual parent. Runtime creation, transform/fade/texture/blend/order edits, component/entity removal, slot reuse and shared resources pass focused Debug/Release GPU checks. The existing DLL still drives visible movement through a temporary Position-delta bridge, including after compatible replacement. Registry retains values rather than live objects; entity removal does not invoke a component destructor. CameraComponent and direct game-code migration to Transform remain next. See [EngineModules.md](docs/EngineModules.md) for evidence and limits. Scene ownership is not an immediate dependency. Later work includes 3.2, playable 2D (4), imported/lit 3D gameplay (5), shader/asset reload (6), and broader game-code reload coverage (7). Platform work proceeds in parallel.
 
 ## Verified foundation
 
@@ -75,17 +86,53 @@ Completion: render the orthographic sample using file-loaded textures, overlappi
 
 ## 3. ECS and scenes — current focus
 
-### 3.1 Minimal ECS and a renderable scene
+### 3.1 Minimal ECS and component-driven rendering
 
-- [ ] Complete the entity identity/lifecycle contract and registry described in the immediate next step.
-- [ ] Define component ownership, reference invalidation, and cleanup when entities are destroyed.
-- [ ] Implement component storage, queries, and safe entity/component changes during system updates.
-- [ ] Add transform, camera, and sprite components; retain typed asset references and resolve resources through the existing shared catalog/cache.
-- [ ] Add a minimal scene owner and build existing renderer submissions from its components.
-- [ ] Drive the orthographic sample from ECS data and demonstrate runtime entity creation, movement and removal.
+- [x] Implement the entity identity/lifecycle baseline: registry ownership, index/generation handles, creation, destruction, liveness checks, and slot reuse. Existing temporary checks are not a tracked regression suite.
+- [x] Complete the narrow Windows joint ECS/game-module reload example before expanding the general component storage/query design.
+- [x] Define initial component ownership and destruction cleanup: engine-owned copied values; no borrowed component pointers escape. Extend this contract before introducing reference-returning or owning component APIs.
+- [x] Define an abstract Component parent with virtual destruction/type access; derive all existing components from it and use `RAVEN_COMPONENT(FullyQualifiedType, Fields...);` for generated names and field-only storage.
+- [x] Make the parent usable through Registry add/read/write/remove, reject borrowed/unreviewed fields, support empty tags and separate MeshHandle from Vulkan draw submissions. See the component assessment and verification in EngineModules.md.
+- [x] Add reusable Transform/StaticMesh components with value mesh handles and direct per-entity transform/tint fields.
+- [x] Generate Perspective colored-mesh submissions directly from GameInstance/Registry, sharing geometry and handling runtime additions/removals and invalid handles in focused GPU checks.
+- [x] Add SpriteComponent with a typed texture reference, tint, opaque/alpha selection and transparent layer/order fields.
+- [x] Generate sprite submissions from Transform/Sprite data while preserving one shared quad and cached textures.
+- [x] Drive the orthographic sample from ECS data and demonstrate runtime creation, movement, fading, texture/blend/order changes and removal.
+- [ ] Add CameraComponent with explicit active-camera selection and one authoritative pose.
+- [ ] Define safe entity/component changes during updates using the existing snapshot/copy API; expand storage/queries only when the concrete rendering path requires it.
 - [ ] Validate entity/component lifetime and iteration behavior with focused checks; revisit the CTest deferral before deciding how these checks are retained.
+- [ ] Add a minimal scene owner when grouping and lifetime requirements justify it. Deferred; it does not block component integration.
 
-Completion: the orthographic sample renders through a scene, rejects stale entity references, and creates/removes sprites while preserving the existing rendering behavior. Reuse a scene-shared mesh and the existing catalog/cache for this milestone; per-entity GPU allocation is unnecessary. File-based scene authoring, hierarchy, scene switching and resource release follow in 3.2.
+Completion of the component/rendering work: the orthographic sample renders from Registry components using an explicitly selected CameraComponent, rejects stale camera/entity references, and creates/removes sprites while preserving texture reuse, ordering and compatible game-code replacement. Game movement updates Transform directly after the planned migration. Reuse one shared quad and the existing catalog/cache; per-entity GPU allocation is unnecessary. Scene ownership remains deferred. File-based scene authoring, hierarchy, scene switching and resource release follow in 3.2.
+
+#### Implemented StaticMesh milestone and remaining component plan
+
+TransformComponent and StaticMeshComponent now live in `Public/Raven/ECS/RenderComponents.hpp`. PerspectiveSample owns three mesh entities, shares one GPU mesh and assembles existing draw submissions from Registry copies. MeshHandle identifies its renderer and unrecycled slot; deleting an entity does not delete shared geometry. Static geometry can have animated transforms. This first path supports unlit colored meshes, not imported/textured mesh materials. See [EngineModules.md](docs/EngineModules.md) for validation and resource-lifetime limits.
+
+The component foundation uses a virtual parent with generated type/size/copy boilerplate and an explicit retained-value policy. SpriteComponent now extends that pattern in the same shared header. OrthographicSample owns five entities and dynamically gathers every matching Transform/Sprite pair using its retained quad/catalog/cache. Transform provides pose/scale; Sprite provides appearance and transparent ordering. Invalid/null texture references and unknown blend modes are skipped; non-null unregistered references and load failures use the asset service's exception path. Removing a component/entity removes its draw. Cleanup and constructor rollback affect only the sample's own entity handles, including after slot reuse.
+
+The remaining component plan is:
+
+1. Add CameraComponent to the existing shared header, initially wrapping OrthographicCamera. Select the active camera explicitly and keep one source for its pose.
+2. Write input-driven camera edits to that component and render using its retained values. Keep input bookkeeping local.
+3. When game-code integration resumes, replace Position with Transform.Position in game updates and retain Velocity. Remove legacy Position initialization, SyncLegacyMovement and its previous-position bookkeeping. Until then the bridge applies only legacy movement deltas, preserving direct Transform edits and the existing --game behavior.
+4. Reuse GetEntities snapshots/Read copies, checked mutations and stale-handle rejection. A missing/stale active camera should report an error through the sample's existing exception path. Add general queries only when this path needs them.
+5. Extend the existing temporary probes only for the changed behavior. CTest integration remains deferred unless separately agreed.
+
+#### Next implementation target: CameraComponent
+
+Status: planned; SpriteComponent is implemented and verified. CameraComponent moves authoritative camera state into the same Registry workflow as sprites, enabling camera edits and explicit camera switching while preparing for future editor/play sessions.
+
+- Add CameraComponent beside the existing render components, initially holding the existing OrthographicCamera value. Review its self-contained members and explicitly approve that value through ComponentValue; use the shared component macro.
+- Keep position/target/up, zoom and clipping settings in that one camera value. Do not duplicate pose in a Transform or retain a second authoritative camera in OrthographicSample.
+- Keep an explicit active-camera Entity handle in the sample. Select the camera by handle; avoid a global camera or competing per-camera active flags.
+- Read/modify/write the selected component for pan, zoom and Home reset; read a fresh copy for drawing. Preserve the existing input behavior, sprites, shared quad and texture cache.
+- Track ownership separately from selection. The sample cleans up the camera it creates; selecting another caller's camera does not transfer ownership. Roll back owned entities if initialization fails.
+- Reject a missing Camera component or null/foreign/stale active handle through the existing exception path. Never silently substitute a local camera or select a recycled entity slot.
+
+Completion: Registry camera edits change the rendered view; explicit switching between two valid camera entities works; controls retain their behavior; stale selection fails clearly; cleanup preserves caller-owned cameras. Use focused component/native checks for this behavior. CameraComponent remains unchecked until implemented and demonstrated.
+
+After this task, migrate existing game movement directly to Transform and remove the temporary sprite movement bridge. Perspective camera integration, particle/VFX systems, general queries and Scene ownership remain separate work.
 
 ### 3.2 Persistent assets, scene files, and resource lifetime
 
@@ -133,12 +180,14 @@ Completion: edit a shader and texture while a sample runs, observe the changes w
 
 ## 7. Runtime game-code reload
 
-- [ ] Define a versioned engine/game module API, state ownership, allocation/free responsibilities, and ABI/toolchain constraints.
-- [ ] Build game code as a separate module and add loading/unloading through platform backends.
-- [ ] Define module initialization/update/shutdown and remove callbacks or references before unloading code.
-- [ ] Detect/build changed game code and reload it while preserving compatible game state.
-- [ ] Reject failed builds, invalid modules, or incompatible versions while keeping the running game usable.
-- [ ] Define state migration/reset behavior for incompatible changes and test repeated reload/shutdown.
+Initial module build/load/replacement and minimal ECS state preservation begin in the immediate joint milestone, before the full scene/game framework. This section also tracks the remaining reload scope and final validation.
+
+- [x] Establish the initial engine/game update contract, retained ownership, matching-toolchain constraints and generated compatibility rejection. Direct implementation was authorized by the owner on 2026-10-19.
+- [x] Build a standalone Windows game DLL and native loading/unloading backend; other OS backends remain in platform completion.
+- [x] Define an update-only module lifecycle with host-owned initialization/cleanup and no retained module callbacks, objects or threads.
+- [x] Poll/build changed game code and reload it while preserving compatible minimal component state on Windows.
+- [x] Reject failed builds, invalid modules, or incompatible contracts while retaining the active game code on Windows.
+- [ ] Extend the current rejection/manual-restart policy when supporting broader game state or migration. Initial repeated replacement and shutdown are already verified; arbitrary C++ migration is outside this baseline.
 
 Completion: change gameplay code during a running sample and observe the new behavior without restarting the host. Compatible state persists; failed builds and incompatible modules produce clear diagnostics and a defined recovery path.
 
@@ -183,4 +232,4 @@ Completion: a documented release package runs the 2D and 3D games on supported p
 - [ ] Automated tests/builds and native validation evidence are recorded.
 - [ ] Relocatable packages and documentation let another developer build, run, and modify a game.
 
-Perspective/orthographic cameras, transform math, depth-tested samples, engine/sample DLL boundary, textured rendering, ordering, frustum culling, compatible draw batching and the common asset/cache baseline are implemented and verified on Windows. The next work is entity identity/lifecycle, then a minimal ECS-backed orthographic scene. CTest remains deferred; revisit that decision for entity/component lifetime checks.
+The joint ECS/reload boundary and Transform/StaticMesh/Sprite rendering are implemented alongside the renderer, asset/cache and entity-lifecycle foundations. CameraComponent is next, followed by direct game-code migration to Transform and removal of the legacy movement bridge. The mesh path's reload integration remains pending, and Scene ownership is deferred. Keep the proven retained-state boundary while evaluating query/storage choices. CTest integration remains deferred; choose a retained regression-check approach with the owner rather than silently adding a test framework.

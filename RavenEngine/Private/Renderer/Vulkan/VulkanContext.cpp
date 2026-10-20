@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <algorithm>
 #include <filesystem>
+#include <limits>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -29,6 +31,19 @@
 
 namespace Raven
 {
+	namespace
+	{
+		std::uint64_t AllocateMeshContextId()
+		{
+			static std::mutex mutex;
+			static std::uint64_t lastId = 0;
+			const std::scoped_lock lock(mutex);
+			if (lastId == std::numeric_limits<std::uint64_t>::max())
+				throw std::overflow_error("Mesh context identity exhausted");
+			return ++lastId;
+		}
+	}
+
 	struct VulkanContext::Impl
 	{
 		explicit Impl(const Window& window);
@@ -46,6 +61,7 @@ namespace Raven
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws);
 
+		const std::uint64_t m_MeshContextId = AllocateMeshContextId();
 		const Window& m_Window;
 		const std::filesystem::path m_ShaderDirectory;
 
@@ -242,6 +258,20 @@ namespace Raven
 		std::span<const std::uint16_t> indices)
 	{
 		return m_Impl->CreateMesh(vertices, indices);
+	}
+
+	MeshHandle VulkanContext::CreateMeshHandle(std::span<const ColorVertex> vertices,
+		std::span<const std::uint16_t> indices)
+	{
+		m_Impl->CreateMesh(vertices, indices);
+		return MeshHandle(m_Impl->m_MeshContextId, m_Impl->m_Meshes.size() - 1);
+	}
+
+	const VulkanMesh* VulkanContext::ResolveMesh(MeshHandle mesh) const noexcept
+	{
+		if (mesh.m_Context != m_Impl->m_MeshContextId || mesh.m_Index >= m_Impl->m_Meshes.size())
+			return nullptr;
+		return m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)].get();
 	}
 
 	const VulkanTexture& VulkanContext::CreateTexture(const TextureDesc& description)

@@ -13,6 +13,9 @@ namespace Raven
 	{
 		// Empty uses Content beside the executable. Relative roots use that same directory.
 		std::filesystem::path ContentRoot;
+		// Empty disables development game-module loading. Paths must name trusted local code.
+		std::filesystem::path GameModulePath;
+		bool AutoBuildGame = false;
 	};
 
 	class Application

@@ -4,7 +4,11 @@ RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, V
 
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
 
-As of 2026-10-14, the Windows rendering foundation is ready for a minimal scene/game framework. The next task is entity identity and lifecycle, followed by an ECS-backed orthographic sample. Scene persistence, runtime resource release, imported meshes/lighting, physics, audio, playable games and runtime reload remain pending. The samples currently construct objects and asset registrations in C++.
+As of 2026-10-19, Windows also has a joint ECS/game-code reload example: a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. General ECS queries, scene ownership/persistence, runtime resource release, imported meshes/lighting, physics, audio and playable games remain pending. The samples still construct objects and asset registrations in C++.
+
+ECS and hot reload are joint goals. Transform/StaticMesh components drive Perspective colored geometry; Transform/Sprite components drive Orthographic textured sprites through GameInstance/Registry. Sprites share a quad and cached textures and support tint, opaque/alpha blending and transparent ordering. [CameraComponent is next](TODO.md#next-implementation-target-cameracomponent): move authoritative camera state into Registry and select the active camera explicitly. Direct game-code migration to Transform follows it, while Scene ownership remains deferred. The design accommodates future editor editing and play sessions without adding a complete visual editor to v1. Fast iteration refers to the developer edit/build/observe cycle.
+
+All components derive from the abstract `ECS::Component` parent, which supplies virtual destruction, type/size access and synchronous data copying. Registry add/read/write/remove operations accept `Component&` references and retain only copied values, never the object or its virtual-table pointer. Inside each derived type, `RAVEN_COMPONENT(FullyQualifiedType, Field1, Field2, ...);` generates its name and declares its retained fields; omit the fields for a tag component. Scalars, approved engine values/IDs and arrays of approved values are supported. Custom value structs require an explicit ComponentValue declaration; borrowed views and owning types are rejected. The parent contains no rendering or gameplay data. `RenderComponents.hpp` defines TransformComponent, StaticMeshComponent and SpriteComponent, with MeshHandle declared separately from Vulkan draw submissions. Both samples clean up their own entities. See [EngineModules.md](docs/EngineModules.md) for the architecture assessment and remaining limits.
 
 ## Source layout
 
@@ -12,13 +16,16 @@ As of 2026-10-14, the Windows rendering foundation is ready for a minimal scene/
 RavenEngine/
   Public/Raven/       Engine headers shared with clients
     Assets/           Asset IDs/references, catalog/cache contracts, and owned CPU images
-    Core/             Application/client interface, paths, files, logging, and frame time
+    Core/             Application, retained GameInstance, GameModule, and utilities
+    ECS/              Abstract Component parent, field copying, render components and Registry
     Math/             Shared transform math
     Platform/         Window and input contracts
     Renderer/         Camera, vertices, draw data, and renderer interface
   Private/            Engine implementation and internal headers
     Assets/           Asset catalog/cache implementations and private image decoder
     Core/             Application loop, utilities, logging implementation, and frame clock
+    ECS/              Registry identity, entity slots, generations, and lifecycle
+    Game/             Reloadable game logic and shared sample component definitions
     Platform/         Native backend implementations
     Renderer/         Vulkan resource owners and HLSL shaders
     Samples/          Sample entry point, geometry, animation, and camera controls
@@ -52,10 +59,15 @@ cmake --preset x64-debug
 cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --orthographic
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game
 ```
+
+In `--watch-game`, edit `RavenEngine/Private/Game/RavenGame.cpp` (for example, `MovementScale`). The game DLL rebuilds in the background and changes the moving sprite's behavior while retaining its position. `--game` loads the same example without source-build automation; F5 explicitly reloads the built DLL. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/BuildGame.cmake`. Use this standalone build script while the engine runs; a full engine build can try to overwrite loaded engine files.
+
+This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Shared-header or build-contract changes are rejected until the host is rebuilt and restarted. Component layout versions are generated automatically; arbitrary C++ migration, module-owned persistent objects and untrusted plugins are outside this example. The watcher needs the developer-shell environment inherited by the sample. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
 
 ## macOS/Linux contributor work
 
 See the [platform contributor handoff](docs/PlatformHandoff.md) for work order and verification criteria against the current Windows implementation. The [macOS build guide](docs/MacOSBuild.md) documents dependencies and commands. Cocoa framebuffer support, executable paths, and keyboard/mouse input are implemented; earlier Debug checks confirmed rendering and Space/scroll/R controls. The Linux X11/XCB backend and Debug/Release presets are also merged. The current asset system's `Platform::FillRandomBytes` is implemented only on Windows, so macOS/Linux contributors must add that hook and its CMake connection before verifying current Debug/Release builds and both samples. Platform work can proceed alongside Windows ECS development. Mark support complete only after verifying native execution of the current code on each OS.
 
-The Windows Debug/Release builds were checked successfully on 2026-10-14; CTest lists zero registered tests. Earlier native/GPU evidence is recorded in the subsystem documents and ignored `out/` artifacts; those checks were not rerun during that assessment. CTest integration remains deferred at the owner's request and will be revisited when defining entity/component lifetime checks. The `out/` probes are not a regression suite available from a clean checkout.
+Windows Debug/Release builds and focused ECS/reload validation are recorded in [EngineModules.md](docs/EngineModules.md). There are no registered CTest tests; integration remains deferred at the owner's request. Temporary checks under ignored `out/` are validation evidence, not a regression suite available from a clean checkout. Earlier renderer evidence remains in the subsystem documents.

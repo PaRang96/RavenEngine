@@ -3,6 +3,7 @@
 #include "SampleAssets.hpp"
 
 #include "Raven/Core/ApplicationClient.hpp"
+#include "Raven/ECS/Entity.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
 #include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
@@ -10,6 +11,7 @@
 
 #include <array>
 #include <span>
+#include <vector>
 
 namespace Raven
 {
@@ -20,7 +22,8 @@ namespace Raven
 	class PerspectiveSample final : public ApplicationClient
 	{
 	public:
-		explicit PerspectiveSample(VulkanContext& renderer);
+		PerspectiveSample(VulkanContext& renderer, GameInstance& instance);
+		~PerspectiveSample() override;
 		void OnFrame(VulkanContext& renderer,
 			const InputState& input, const FrameTime& frameTime) override;
 		void Update(const InputState& input, const FrameTime& frameTime);
@@ -34,9 +37,12 @@ namespace Raven
 		void ResetCamera();
 		void UpdateDraws();
 
+		VulkanContext& m_Renderer;
+		GameInstance& m_Game;
 		SampleAssets m_Assets;
-		const VulkanMesh& m_Cube;
-		std::array<VulkanDraw, 3> m_Draws;
+		const MeshHandle m_Cube;
+		std::array<ECS::Entity, 3> m_MeshEntities{};
+		std::vector<VulkanDraw> m_Draws;
 		const VulkanTexturedMesh& m_Quad;
 		const VulkanTexture& m_Texture;
 		const VulkanTexture& m_AlternateTexture;
