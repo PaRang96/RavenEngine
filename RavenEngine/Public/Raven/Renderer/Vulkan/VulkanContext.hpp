@@ -10,7 +10,10 @@
 #include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
+#include "Raven/Renderer/CameraView.hpp"
 
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -27,35 +30,51 @@ namespace Raven
 		RAVEN_API ~VulkanContext();
 
 		RAVEN_API void PrepareSwapchain();
+
 		// Meshes remain owned by this context until shutdown, after GPU work completes.
 		RAVEN_API const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
 			std::span<const std::uint16_t> indices);
+
 		// Value handles can be copied into ECS data; geometry is shared, not copied.
 		RAVEN_API MeshHandle CreateMeshHandle(std::span<const ColorVertex> vertices,
 			std::span<const std::uint16_t> indices);
+
 		// Null/foreign/expired-context handles resolve to null. Borrow only while this context lives.
 		RAVEN_API const VulkanMesh* ResolveMesh(MeshHandle mesh) const noexcept;
+
 		// UV meshes use a separate type to enforce the matching vertex/pipeline layout.
 		RAVEN_API const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);
+
 		// Upload completes before return. Textures remain owned here until shutdown.
 		RAVEN_API const VulkanTexture& CreateTexture(const TextureDesc& description);
+
+		using CameraViewBuilder = std::function<std::optional<CameraView>(
+			std::uint32_t width, std::uint32_t height)>;
+		
 		RAVEN_API void DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> draws);
+		
 		// Opaque color draws precede opaque textured draws; depth resolves visibility.
 		// All submitted resources must belong to this context.
 		RAVEN_API void DrawFrame(const PerspectiveCamera& camera,
 			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> texturedDraws);
+		
 		// Visible opaque draws precede transparent draws. Transparent order is ascending
 		// layer/order, then far-to-near camera depth, with submission order breaking ties.
 		RAVEN_API void DrawFrame(const PerspectiveCamera& camera,
 			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws);
+		
 		// Orthographic rendering shares the same resource, depth, visibility and ordering rules.
 		RAVEN_API void DrawFrame(const OrthographicCamera& camera, std::span<const VulkanDraw> draws);
 		RAVEN_API void DrawFrame(const OrthographicCamera& camera,
 			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> texturedDraws);
 		RAVEN_API void DrawFrame(const OrthographicCamera& camera,
 			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
+			std::span<const VulkanTransparentDraw> transparentDraws);
+		RAVEN_API void DrawFrame(const CameraViewBuilder& buildView,
+			std::span<const VulkanDraw> draws,
+			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws);
 
 		VulkanContext(const VulkanContext&) = delete;

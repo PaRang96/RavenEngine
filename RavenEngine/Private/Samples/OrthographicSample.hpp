@@ -4,7 +4,7 @@
 
 #include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/ECS/Entity.hpp"
-#include "Raven/Renderer/OrthographicCamera.hpp"
+#include "Raven/Math/Transform.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
@@ -42,6 +42,7 @@ namespace Raven
 		const VulkanTexturedMesh& m_Quad;
 		std::vector<VulkanTexturedDraw> m_OpaqueDraws;
 		std::vector<VulkanTransparentDraw> m_TransparentDraws;
-		OrthographicCamera m_Camera;
+		ECS::Entity m_CameraEntity{};
+		bool m_CameraViewUnavailable = false;
 	};
 }

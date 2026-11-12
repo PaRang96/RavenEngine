@@ -1,0 +1,11 @@
+set(output_directory [==[$<TARGET_FILE_DIR:RavenEngine>]==])
+set(sources [==[@RAVEN_CONTENT_SOURCES@]==])
+set(destinations [==[@RAVEN_CONTENT_DESTINATIONS@]==])
+
+# Registration generates both lists together; this script contains no asset names.
+foreach(source destination IN ZIP_LISTS sources destinations)
+    set(output "${output_directory}/${destination}")
+    get_filename_component(directory "${output}" DIRECTORY)
+    file(MAKE_DIRECTORY "${directory}")
+    file(COPY_FILE "${source}" "${output}" ONLY_IF_DIFFERENT)
+endforeach()

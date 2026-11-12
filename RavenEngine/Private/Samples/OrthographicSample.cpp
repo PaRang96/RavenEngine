@@ -3,17 +3,33 @@
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/GameInstance.hpp"
-#include "Raven/ECS/RenderComponents.hpp"
+#include "Raven/Components/CameraComponent.hpp"
+#include "Raven/Components/SpriteComponent.hpp"
+#include "Raven/Components/TransformComponent.hpp"
 #include "Game/GameComponents.hpp"
 #include "Raven/Platform/Input.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 namespace Raven
 {
+	namespace
+	{
+		void ResetOrthographicCamera(ECS::TransformComponent& transform, ECS::CameraComponent& camera)
+		{
+			transform = ECS::TransformComponent{};
+			transform.Position = { 0.0f, -1.0f, 0.0f };
+			camera = ECS::CameraComponent{};
+			camera.ProjectionMode = ECS::CameraProjectionMode::Orthographic;
+		}
+	}
+
 	OrthographicSample::OrthographicSample(VulkanContext& renderer, GameInstance& instance)
 		: m_Game(instance),
 		  m_Assets(renderer),
@@ -57,18 +73,30 @@ namespace Raven
 				if (!registry.Add(entity, transform) || !registry.Add(entity, sprite))
 					throw std::logic_error("Cannot initialize sprite entity");
 			}
+			
 			// Preserve the existing DLL until its planned migration to Transform.
 			SampleGame::Position position;
 			position.Location = positions.front();
 			m_PreviousGamePosition = position.Location;
 			SampleGame::Velocity velocity;
 			velocity.Linear = { 0.75f, 0.0f, 0.0f };
+			
 			if (!registry.Add(m_SpriteEntities.front(), position) || !registry.Add(m_SpriteEntities.front(), velocity))
 				throw std::logic_error("Cannot initialize the moving sprite");
+			
+			m_CameraEntity = registry.Create();
+			ECS::TransformComponent cameraTransform;
+			ECS::CameraComponent camera;
+			ResetOrthographicCamera(cameraTransform, camera);
+			
+			if (!registry.Add(m_CameraEntity, cameraTransform) || !registry.Add(m_CameraEntity, camera))
+				throw std::logic_error("Cannot initialize the orthographic camera");
+
 			UpdateDraws();
 		}
 		catch (...)
 		{
+			registry.Destroy(m_CameraEntity);
 			for (const auto entity : m_SpriteEntities) registry.Destroy(entity);
 			throw;
 		}
@@ -76,7 +104,10 @@ namespace Raven
 
 	OrthographicSample::~OrthographicSample()
 	{
-		for (const auto entity : m_SpriteEntities) m_Game.GetRegistry().Destroy(entity);
+		auto& registry = m_Game.GetRegistry();
+		registry.Destroy(m_CameraEntity);
+		for (const auto entity : m_SpriteEntities)
+			registry.Destroy(entity);
 	}
 
 	void OrthographicSample::OnFrame(VulkanContext& renderer,
@@ -85,16 +116,44 @@ namespace Raven
 		Update(input, frameTime);
 		SyncLegacyMovement();
 		UpdateDraws();
-		renderer.DrawFrame(m_Camera, {}, m_OpaqueDraws, m_TransparentDraws);
+		
+		renderer.DrawFrame([this](std::uint32_t width, std::uint32_t height)
+		-> std::optional<CameraView>
+		{
+			const auto skipView = [this](std::string_view reason) -> std::optional<CameraView>
+			{
+				if (!m_CameraViewUnavailable)
+					Log(LogLevel::Warning, reason);
+				m_CameraViewUnavailable = true;
+				return std::nullopt;
+			};
+
+			const auto& registry = m_Game.GetRegistry();
+			ECS::TransformComponent transform;
+			ECS::CameraComponent camera;
+
+			if (!registry.Read(m_CameraEntity, transform) || !registry.Read(m_CameraEntity, camera))
+				return skipView("Orthographic camera is missing or has been destroyed");
+			
+			try
+			{
+				const float aspect = static_cast<float>(width) / static_cast<float>(height);
+				const CameraView view = ECS::GetCameraView(transform, camera, aspect);
+				m_CameraViewUnavailable = false;
+				return view;
+			}
+			catch (const std::invalid_argument& error)
+			{
+				return skipView(error.what());
+			}
+		}, {}, m_OpaqueDraws, m_TransparentDraws);
 	}
 
 	void OrthographicSample::Update(const InputState& input, const FrameTime& frameTime)
 	{
-		if (input.WasKeyPressed(Key::Home))
-			m_Camera = OrthographicCamera{};
+		auto& registry = m_Game.GetRegistry();
 		if (input.WasKeyPressed(Key::F1))
 		{
-			auto& registry = m_Game.GetRegistry();
 			ECS::SpriteComponent sprite;
 			if (registry.Read(m_SpriteEntities.back(), sprite))
 			{
@@ -110,14 +169,40 @@ namespace Raven
 		{
 			return (input.WasKeyPressed(key) ? 0.05f : 0.0f) + (input.IsKeyDown(key) ? delta : 0.0f);
 		};
+		
+		const bool reset = input.WasKeyPressed(Key::Home);
 		const float zoom = input.ScrollY * 0.12f + step(Key::PageUp) - step(Key::PageDown);
-		m_Camera.VerticalSize = std::clamp(m_Camera.VerticalSize * std::exp(-zoom), 1.0f, 24.0f);
-		const float panSpeed = m_Camera.VerticalSize * 0.6f;
-		const Vec3 movement{ (step(Key::Right) - step(Key::Left)) * panSpeed, 0.0f,
-			(step(Key::Up) - step(Key::Down)) * panSpeed };
-		m_Camera.Position = m_Camera.Position + movement;
-		m_Camera.Target = m_Camera.Target + movement;
-	}
+		const float horizontal = step(Key::Right) - step(Key::Left);
+		const float vertical = step(Key::Up) - step(Key::Down);
+		const bool pan = horizontal != 0.0f || vertical != 0.0f;
+		if (!reset && !pan && zoom == 0.0f)
+			return;
+
+		ECS::TransformComponent transform;
+		ECS::CameraComponent camera;
+		if (!registry.Read(m_CameraEntity, transform) || !registry.Read(m_CameraEntity, camera))
+			return;
+
+		if (reset)
+			ResetOrthographicCamera(transform, camera);
+
+		if (!std::isfinite(camera.OrthographicHeight) || camera.OrthographicHeight <= 0.0f)
+			return;
+
+		if (zoom != 0.0f)
+			camera.OrthographicHeight = std::clamp(camera.OrthographicHeight * std::exp(-zoom), 1.0f, 24.0f);
+
+		if (pan)
+		{
+			const float panSpeed = camera.OrthographicHeight * 0.6f;
+			transform.Position = transform.Position + Vec3{ horizontal * panSpeed, 0.0f, vertical * panSpeed };
+		}
+
+		if ((reset || pan) && !registry.Write(m_CameraEntity, transform))
+			Log(LogLevel::Warning, "Cannot update orthographic camera transform");
+		if ((reset || zoom != 0.0f) && !registry.Write(m_CameraEntity, camera))
+			Log(LogLevel::Warning, "Cannot update orthographic camera projection");
+ 	}
 
 	void OrthographicSample::SyncLegacyMovement()
 	{

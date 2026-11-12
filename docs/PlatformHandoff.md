@@ -6,13 +6,13 @@ Status as of 2026-10-14. The goal is to **run the engine and perspective/orthogr
 
 Windows has C++20 Debug/Release builds, native windows/input, Vulkan initialization and GPU selection, swapchain recovery, perspective/orthographic cameras, depth testing, and mesh/texture uploads. PNG/JPEG loading, executable-relative Content paths, transparent ordering, culling, compatible draw batching, common asset IDs/catalogs, and texture reuse are also implemented. Windows builds were checked on 2026-10-14. Existing GPU evidence is in [TextureResources.md](TextureResources.md) and [AssetSystem.md](AssetSystem.md); those native/GPU checks were not rerun during the documentation assessment.
 
-macOS has `CocoaWindow`/`CocoaInput` implementations of the current window/input/framebuffer interfaces and `MacPaths.cpp`. Earlier Debug rendering/input checks are recorded in [MacOSBuild.md](MacOSBuild.md). Linux has a merged X11/XCB backend, framebuffer/executable paths, and Debug/Release presets, but still needs native build/runtime verification. Both platforms lack the `Platform::FillRandomBytes` implementation and CMake connection required by the latest asset code. Complete that hook first, then verify the current shared code. Earlier macOS smoke results do not establish current full support.
+macOS has `CocoaWindow`/`CocoaInput` implementations of the current window/input/framebuffer interfaces and `MacPaths.cpp`. Earlier Debug rendering/input checks are recorded in [MacOSBuild.md](MacOSBuild.md). Linux has a merged X11/XCB backend, framebuffer/executable paths, and Debug/Release presets, but still needs native build/runtime verification. Both platforms lack the `Platform::FillRandomBytes` implementation required by the latest asset code. Add the implementation under the selected native folder; CMake now discovers that folder automatically. Complete that hook first, then verify the current shared code. Earlier macOS smoke results do not establish current full support.
 
 | Owner | Main locations | Goal |
 | --- | --- | --- |
 | macOS contributor | `RavenEngine/Private/Platform/Mac/` | Connect the random-byte hook, then verify current Cocoa input/framebuffer/paths and both samples natively |
 | Linux contributor | `RavenEngine/Private/Platform/Linux/` | Connect the random-byte hook, then verify the merged XCB backend, paths, and both samples natively |
-| Both contributors | `RavenEngine/CMakeLists.txt`, `CMakePresets.json`, build documentation | Coordinate per-OS source selection, dependencies, and shared-library runtime configuration |
+| Both contributors | `cmake/RavenPlatform.cmake`, `cmake/RavenBuildSettings.cmake`, `CMakePresets.json`, build documentation | Place native sources in the selected platform folder; configure dependencies in RavenPlatform and shared language/runtime/PCH settings in RavenBuildSettings |
 
 Reuse the shared renderer, math, samples, and image decoder. If a shared API needs to change, explain why and assess the impact with the Windows contributor first. Preserve other contributors' changes to shared CMake files.
 
@@ -101,7 +101,7 @@ Generate an asset ID once for a new registration with `Generate()`, and read pre
 
 5. **Verify builds and library placement**
 
-   - [ ] Complete native builds with `macos-debug` / `macos-release`. Verify the Apple Silicon target architecture, C++20/Objective-C++20, ARC, and Cocoa/QuartzCore linkage.
+   - [ ] Complete native builds with `macos-debug` / `macos-release`. Verify the Apple Silicon target architecture, C++23/Objective-C++23, ARC, and Cocoa/QuartzCore linkage.
    - [ ] Document reproducible DXC, `spirv-val`, and Vulkan loader/MoltenVK discovery/runtime settings. Keep developer-specific absolute paths out of sources.
    - [ ] Verify that the relocated sample finds the `RavenCore` shared library, `Content/Shaders`, and `Licenses/stb-LICENSE.txt`. Check shared-library runtime search paths.
 
@@ -140,7 +140,7 @@ cmake --build out/build/macos-release
 
    - [ ] Verify that XCB sources and `PkgConfig::XCB` connect to `RavenCore` only when `CMAKE_SYSTEM_NAME` is Linux. Preserve other platforms' source selection.
    - [ ] Complete actual builds with the merged `linux-debug` / `linux-release` presets. Keep MSVC and Cocoa settings out of shared code.
-   - [ ] Verify discovery of C++20, Ninja, Vulkan, DXC, `spirv-val`, and XCB dependencies. Check sample/shared-library linking and runtime paths, plus Content/license staging.
+   - [ ] Verify C++23 compiler and library support and discovery of Ninja, Vulkan, DXC, `spirv-val`, and XCB dependencies. Check sample/shared-library linking and runtime paths, plus Content/license staging.
 
 5. **Verify Vulkan execution**
 

@@ -2,24 +2,16 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "CMake: configure and build x64-debug",
-			"type": "shell",
-			"command": "call \"${env:ProgramFiles}\\Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch=x64 && cmake --preset x64-debug && cmake --build out\\build\\x64-debug",
-			"options": {
-				"cwd": "${workspaceFolder}",
-				"shell": {
-					"executable": "C:\\Windows\\System32\\cmd.exe",
-					"args": [
-						"/d",
-						"/c"
-					]
-				}
-			},
-			"problemMatcher": "$msCompile",
+			"label": "CMake: build",
+			"type": "cmake",
+			"command": "build",
+			"preset": "${command:cmake.activeBuildPresetName}",
+			"problemMatcher": [],
 			"group": {
 				"kind": "build",
 				"isDefault": true
-			}
+			},
+			"detail": "Build the active CMake preset; configure only when needed."
 		}
 	]
 }

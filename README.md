@@ -1,14 +1,14 @@
 # RavenEngine
 
-RavenEngine is a work-in-progress C++20 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, perspective/orthographic cameras, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, frustum culling, compatible draw batching, and ID-based texture reuse.
+RavenEngine is a work-in-progress C++23 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, perspective/orthographic cameras, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, frustum culling, compatible draw batching, and ID-based texture reuse.
 
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
 
 As of 2026-10-19, Windows also has a joint ECS/game-code reload example: a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. General ECS queries, scene ownership/persistence, runtime resource release, imported meshes/lighting, physics, audio and playable games remain pending. The samples still construct objects and asset registrations in C++.
 
-ECS and hot reload are joint goals. Transform/StaticMesh components drive Perspective colored geometry; Transform/Sprite components drive Orthographic textured sprites through GameInstance/Registry. Sprites share a quad and cached textures and support tint, opaque/alpha blending and transparent ordering. [CameraComponent is next](TODO.md#next-implementation-target-cameracomponent): move authoritative camera state into Registry and select the active camera explicitly. Direct game-code migration to Transform follows it, while Scene ownership remains deferred. The design accommodates future editor editing and play sessions without adding a complete visual editor to v1. Fast iteration refers to the developer edit/build/observe cycle.
+ECS and hot reload are joint goals. Transform/StaticMesh components drive Perspective colored geometry; Transform/Sprite components drive Orthographic textured sprites through GameInstance/Registry. Sprites share a quad and cached textures and support tint, opaque/alpha blending and transparent ordering. CameraComponent projection settings and the renderer handoff are implemented. The [next step is an ECS camera for OrthographicSample](TODO.md#next-implementation-target-cameracomponent), followed by Perspective and direct game-code migration to Transform. Scene ownership remains deferred. The design accommodates future editor editing and play sessions without adding a complete visual editor to v1. Fast iteration refers to the developer edit/build/observe cycle.
 
-All components derive from the abstract `ECS::Component` parent, which supplies virtual destruction, type/size access and synchronous data copying. Registry add/read/write/remove operations accept `Component&` references and retain only copied values, never the object or its virtual-table pointer. Inside each derived type, `RAVEN_COMPONENT(FullyQualifiedType, Field1, Field2, ...);` generates its name and declares its retained fields; omit the fields for a tag component. Scalars, approved engine values/IDs and arrays of approved values are supported. Custom value structs require an explicit ComponentValue declaration; borrowed views and owning types are rejected. The parent contains no rendering or gameplay data. `RenderComponents.hpp` defines TransformComponent, StaticMeshComponent and SpriteComponent, with MeshHandle declared separately from Vulkan draw submissions. Both samples clean up their own entities. See [EngineModules.md](docs/EngineModules.md) for the architecture assessment and remaining limits.
+All components derive from the abstract `ECS::Component` parent, which supplies virtual destruction, type/size access and synchronous data copying. Registry add/read/write/remove operations accept `Component&` references and retain only copied values, never the object or its virtual-table pointer. Inside each derived type, `RAVEN_COMPONENT(FullyQualifiedType, Field1, Field2, ...);` generates its name and declares its retained fields; omit the fields for a tag component. Scalars, approved engine values/IDs and arrays of approved values are supported. Custom value structs require an explicit ComponentValue declaration; borrowed views and owning types are rejected. The parent contains no rendering or gameplay data. Reusable components have separate headers under `Public/Raven/Components/`, with MeshHandle declared separately from Vulkan draw submissions. Both samples clean up their own entities. See [EngineModules.md](docs/EngineModules.md) for the architecture assessment and remaining limits.
 
 ## Source layout
 
@@ -17,7 +17,8 @@ RavenEngine/
   Public/Raven/       Engine headers shared with clients
     Assets/           Asset IDs/references, catalog/cache contracts, and owned CPU images
     Core/             Application, retained GameInstance, GameModule, and utilities
-    ECS/              Abstract Component parent, field copying, render components and Registry
+    Components/       Reusable Transform, StaticMesh, Sprite and Camera components
+    ECS/              Abstract Component parent, field copying, Entity and Registry
     Math/             Shared transform math
     Platform/         Window and input contracts
     Renderer/         Camera, vertices, draw data, and renderer interface
@@ -29,7 +30,8 @@ RavenEngine/
     Platform/         Native backend implementations
     Renderer/         Vulkan resource owners and HLSL shaders
     Samples/          Sample entry point, geometry, animation, and camera controls
-  CMakeLists.txt      Explicit engine/sample sources and include visibility
+  CMakeLists.txt      Engine/sample targets, include visibility and build helper ordering
+cmake/               Automatic source discovery, shared defaults, content and game builds
 ThirdParty/stb/       Pinned image decoder, license, and upstream provenance
 Content/Textures/    Original PNG patterns used by the sample
 ```
@@ -52,7 +54,7 @@ Run with `--orthographic` for the 2D sample. `OrthographicCamera::VerticalSize` 
 
 ## Build on Windows
 
-From the **x64 Native Tools Command Prompt for VS 2026** (or another developer shell targeting x64):
+Use MSVC with C++23 support (Visual Studio 2022 17.13 or newer). Configure and build through VS Code CMake Tools or a Visual Studio developer shell targeting x64:
 
 ```powershell
 cmake --preset x64-debug
@@ -64,10 +66,10 @@ cmake --build out/build/x64-debug
 
 In `--watch-game`, edit `RavenEngine/Private/Game/RavenGame.cpp` (for example, `MovementScale`). The game DLL rebuilds in the background and changes the moving sprite's behavior while retaining its position. `--game` loads the same example without source-build automation; F5 explicitly reloads the built DLL. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/BuildGame.cmake`. Use this standalone build script while the engine runs; a full engine build can try to overwrite loaded engine files.
 
-This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Shared-header or build-contract changes are rejected until the host is rebuilt and restarted. Component layout versions are generated automatically; arbitrary C++ migration, module-owned persistent objects and untrusted plugins are outside this example. The watcher needs the developer-shell environment inherited by the sample. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
+This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Shared-header or build-contract changes are rejected until the host is rebuilt and restarted. Component layout versions are generated automatically; arbitrary C++ migration, module-owned persistent objects and untrusted plugins are outside this example. Game-only builds reuse the compiler/SDK environment captured during host configuration; runtime watching does not require a developer shell. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
 
 ## macOS/Linux contributor work
 
 See the [platform contributor handoff](docs/PlatformHandoff.md) for work order and verification criteria against the current Windows implementation. The [macOS build guide](docs/MacOSBuild.md) documents dependencies and commands. Cocoa framebuffer support, executable paths, and keyboard/mouse input are implemented; earlier Debug checks confirmed rendering and Space/scroll/R controls. The Linux X11/XCB backend and Debug/Release presets are also merged. The current asset system's `Platform::FillRandomBytes` is implemented only on Windows, so macOS/Linux contributors must add that hook and its CMake connection before verifying current Debug/Release builds and both samples. Platform work can proceed alongside Windows ECS development. Mark support complete only after verifying native execution of the current code on each OS.
 
-Windows Debug/Release builds and focused ECS/reload validation are recorded in [EngineModules.md](docs/EngineModules.md). There are no registered CTest tests; integration remains deferred at the owner's request. Temporary checks under ignored `out/` are validation evidence, not a regression suite available from a clean checkout. Earlier renderer evidence remains in the subsystem documents.
+Windows Debug/Release builds and focused ECS/reload validation are recorded in [EngineModules.md](docs/EngineModules.md). There are no registered CTest tests; integration remains deferred at the owner's request. Historical logs and result summaries under ignored `out/validation/` are local evidence, not a regression suite available from a clean checkout. Temporary source snapshots, probe projects and generated validation builds are removed after use. Earlier renderer evidence remains in the subsystem documents.

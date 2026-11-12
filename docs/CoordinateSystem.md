@@ -13,7 +13,7 @@ RavenEngine uses Blender's right-handed, Z-up world convention.
 | Up | +Z |
 | Ground plane | XY |
 
-The basis satisfies `X cross Y = Z`. Positive rotations follow the right-hand rule; a positive quarter-turn around +Z turns +X toward +Y. Euler angle order and rotation storage are separate decisions.
+The basis satisfies `X cross Y = Z`. Positive rotations follow the right-hand rule; a positive quarter-turn around +Z turns +X toward +Y. ECS Transform rotation storage and order are specified below; imported rotation conversion remains a separate boundary.
 
 Reference forward gives engine APIs and samples a common direction. It does not require every model or camera to face +Y in its local space.
 
@@ -21,7 +21,7 @@ Reference forward gives engine APIs and samples a common direction. It does not 
 
 The first camera implementation targets perspective projection and simple 3D geometry to support the Blender/FBX direction. Orthographic projection follows for the 2D sample. Both use the same world axes, object transforms, and camera view math; the projection defines how the view maps into clip space.
 
-A reference camera at `(0, -distance, 0)` can look toward +Y with +Z as its up direction. Camera-local axes are a separate contract; imported Blender cameras must retain their intended orientation.
+A reference camera at `(0, -distance, 0)` can look toward +Y with +Z as its up direction. ECS pose cameras use local +Y forward and +Z up; imported Blender cameras must be converted to retain their intended orientation.
 
 For a side-view 2D sample, logical `(x, y)` maps to world `(x, 0, y)` on the XZ plane. A top-down sample uses the XY ground plane. These mappings keep ordinary 2D controls independent of the world-axis labels.
 
@@ -41,12 +41,20 @@ The perspective sample now supplies 3D vertex positions, object models, and a ca
 
 - C++ `Mat4` stores four contiguous columns and multiplies column vectors. `clip = projection * view * model * local`; the rightmost transform applies first. A model composed as `Translation * Rotation * Scale` scales, rotates, then translates.
 - `LookAtRH` maps the camera's forward direction to view-space -Z. The default world up is +Z; world right maps to view right.
-- The perspective camera uses vertical field of view in radians. Defaults are 60 degrees, near plane `0.1`, and far plane `100`, in engine distance units. The renderer derives aspect ratio from the actual swapchain extent on each draw.
+- The perspective camera uses vertical field of view in radians. Defaults are 60 degrees, near plane `0.1`, and far plane `100`, in engine distance units. The renderer supplies the actual swapchain extent to the camera builder for each draw.
 - The projection maps near/far depth to `0`/`1`, matching [Vulkan depth conventions](https://docs.vulkan.org/guide/latest/depth.html). It negates projected Y for the existing positive-height viewport, keeping world/camera up toward the screen top.
 - C++ uploads an 80-byte push constant: four clip-from-local columns at byte offsets `0`, `16`, `32`, and `48`, followed by tint at `64`. HLSL declares these columns explicitly and combines them with the vertex coordinates, avoiding implicit matrix packing defaults.
 - Opaque color geometry uses depth clear `1` and comparison `LESS`. Every swapchain framebuffer owns its own depth image, memory, and view; they are recreated with the swapchain extent after GPU work completes.
 
-The math functions reject invalid projection parameters and degenerate camera directions. Engine distance units for imported assets, general rotation storage/Euler order, and imported camera conversion remain separate future decisions.
+The math functions reject invalid projection parameters and degenerate camera directions. ECS Transform stores XYZ radians and applies local X, then Y, then Z rotation (Rz * Ry * Rx with column vectors). Engine distance units for imported assets and imported camera conversion remain separate future decisions.
+
+## ECS camera pose foundation
+
+`ViewFromPoseRH(position, rotation)` converts a Transform pose to view space. At zero rotation, local +Y maps to view -Z and local +Z maps to view +Y. It reads position and rotation only, so zero, negative or nonuniform Transform scale does not change the camera view. Orientation is evaluated at the origin and followed by negative-position translation.
+
+CameraComponent retains projection mode, vertical FOV in radians, full orthographic height and shared clipping distances. `GetCameraView(transform, camera, aspect)` combines the Transform pose with the active projection. `CameraView` contains `View` and `Projection`. The renderer computes `Projection * View` for culling and drawing and uses `View` for transparent depth sorting.
+
+VulkanContext supplies the prepared swapchain width and height to the camera builder. Both samples currently supply their existing camera values through adapters. The [next sample step](../TODO.md#next-implementation-target-cameracomponent) is to read the selected Orthographic camera from Registry. See the [renderer handoff and validation](EngineModules.md#camera-pose-projection-and-renderer-handoff).
 
 ## Orthographic camera and 2D sample
 

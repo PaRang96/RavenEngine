@@ -1,0 +1,26 @@
+# Discover each ownership folder once per CMake invocation. CONFIGURE_DEPENDS
+# notices additions/removals on the next build; scripts scan fresh on each request.
+include_guard(GLOBAL)
+
+function(raven_collect_files output)
+    set(options)
+    if(NOT CMAKE_SCRIPT_MODE_FILE)
+        list(APPEND options CONFIGURE_DEPENDS)
+    endif()
+    set(files)
+    foreach(directory IN LISTS ARGN)
+        cmake_path(ABSOLUTE_PATH directory NORMALIZE)
+        string(SHA256 key "${directory}")
+        get_property(known GLOBAL PROPERTY "RAVEN_DISCOVERED_${key}" SET)
+        if(NOT known)
+            file(GLOB_RECURSE discovered ${options} LIST_DIRECTORIES false
+                "${directory}/*")
+            set_property(GLOBAL PROPERTY "RAVEN_DISCOVERED_${key}" "${discovered}")
+        endif()
+        get_property(discovered GLOBAL PROPERTY "RAVEN_DISCOVERED_${key}")
+        list(APPEND files ${discovered})
+    endforeach()
+    list(SORT files)
+    list(REMOVE_DUPLICATES files)
+    set(${output} "${files}" PARENT_SCOPE)
+endfunction()

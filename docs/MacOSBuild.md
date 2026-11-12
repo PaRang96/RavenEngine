@@ -4,7 +4,7 @@ Status as of 2026-10-14: Cocoa window/input/framebuffer support, executable path
 
 ## Dependencies and configuration
 
-Install Xcode Command Line Tools, CMake 3.24 or newer, Ninja, Vulkan development libraries, DXC with SPIR-V support (`dxc`), and SPIRV-Tools (`spirv-val`).
+Install Xcode Command Line Tools with C++23 support for both C++ and Objective-C++, CMake 3.24 or newer, Ninja, Vulkan development libraries, DXC with SPIR-V support (`dxc`), and SPIRV-Tools (`spirv-val`).
 
 The [official macOS Vulkan SDK](https://vulkan.lunarg.com/doc/view/latest/mac/getting_started.html) includes DXC. Homebrew's `shaderc`/`glslang` alone do not provide the DXC command used by this project.
 

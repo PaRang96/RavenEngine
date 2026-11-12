@@ -3,7 +3,8 @@
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/Log.hpp"
-#include "Raven/ECS/RenderComponents.hpp"
+#include "Raven/Components/StaticMeshComponent.hpp"
+#include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Platform/Input.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 

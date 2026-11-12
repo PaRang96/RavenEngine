@@ -183,6 +183,33 @@ namespace Raven
 		return result;
 	}
 
+	inline Mat4 ViewFromPoseRH(Vec3 position, Vec3 rotation)
+	{
+		if (!std::isfinite(position.X) || !std::isfinite(position.Y) || !std::isfinite(position.Z) ||
+			!std::isfinite(rotation.X) || !std::isfinite(rotation.Y) || !std::isfinite(rotation.Z))
+			throw std::invalid_argument("Invalid camera position or rotation");
+		
+		const Mat4 orientation = RotationZ(rotation.Z) * RotationY(rotation.Y) * RotationX(rotation.X);
+
+		const Vec3 forward{
+			orientation(0, 1), orientation(1, 1), orientation(2, 1)
+		};
+
+		const Vec3 up {
+			orientation(0, 2), orientation(1, 2), orientation(2, 2)
+		};
+
+		const Mat4 view = LookAtRH({}, forward, up) *
+			Translation({ -position.X, -position.Y, -position.Z });
+
+		for (const auto& column : view.Columns)
+			for (const float value : column)
+				if (!std::isfinite(value))
+					throw std::invalid_argument("Camera pose exceeds the supported numeric range");
+
+		return view;
+	}
+
 	// Symmetric view region: verticalSize is the full visible height in world units.
 	inline Mat4 OrthographicVulkanRH(float verticalSize, float aspect,
 		float nearPlane, float farPlane)

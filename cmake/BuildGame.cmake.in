@@ -1,11 +1,124 @@
-# Configure the standalone game project only; never configure/build the live host.
-execute_process(COMMAND "@CMAKE_COMMAND@" -S "@PROJECT_SOURCE_DIR@/RavenEngine/Private/Game"
-    -B "@RAVEN_GAME_BUILD_DIRECTORY@" RESULT_VARIABLE configured)
+# This script configures/builds only the standalone child, never the live host.
+set(root [==[@PROJECT_SOURCE_DIR@]==])
+set(build_directory [==[@RAVEN_GAME_BUILD_DIRECTORY@]==])
+set(environment_file [==[@RAVEN_GAME_ENVIRONMENT_FILE@]==])
+set(stamp "${build_directory}/BuildInputs.sha256")
+set(cache "${build_directory}/CMakeCache.txt")
+set(outputs_file "${build_directory}/GameOutputs.txt")
+
+# Watchers, editor builds and manual requests share one child directory.
+# Acquire before reading inputs/stamps so a waiting request sees committed results.
+file(MAKE_DIRECTORY "${build_directory}")
+file(LOCK "${build_directory}/Build.lock" GUARD PROCESS TIMEOUT 120
+    RESULT_VARIABLE locked)
+if(NOT locked STREQUAL "0")
+    message(FATAL_ERROR "Could not acquire game-build lock: ${locked}")
+endif()
+
+include("${root}/cmake/GameContract.cmake")
+raven_game_contract_inputs("${root}" inputs)
+include("${root}/cmake/RavenGameSources.cmake")
+if(NOT EXISTS "${environment_file}")
+    message(FATAL_ERROR "Game build environment is missing; reconfigure the host.")
+endif()
+list(APPEND inputs ${RAVEN_GAME_SOURCES} "${environment_file}"
+    [==[@RAVEN_GAME_CORE_LIBRARY@]==])
+
+# Hash contents so equal/coarse timestamps still detect edits.
+file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" recipe_digest)
+set(data "${recipe_digest}")
+foreach(input IN LISTS inputs)
+    file(SHA256 "${input}" digest)
+    string(APPEND data "\n${input}:${digest}")
+endforeach()
+string(SHA256 input_digest "${data}")
+set(cache_digest "")
+if(EXISTS "${cache}")
+    file(SHA256 "${cache}" cache_digest)
+endif()
+
+function(raven_game_output_digest output)
+    set(value "")
+    if(EXISTS "${outputs_file}")
+        file(SHA256 "${outputs_file}" manifest_digest)
+        file(STRINGS "${outputs_file}" outputs ENCODING UTF-8)
+        if(outputs)
+            set(data "${manifest_digest}")
+            foreach(path IN LISTS outputs)
+                if(NOT EXISTS "${path}" OR IS_DIRECTORY "${path}")
+                    set(${output} "" PARENT_SCOPE)
+                    return()
+                endif()
+                file(SHA256 "${path}" digest)
+                string(APPEND data "\n${path}:${digest}")
+            endforeach()
+            string(SHA256 value "${data}")
+        endif()
+    endif()
+    set(${output} "${value}" PARENT_SCOPE)
+endfunction()
+
+raven_game_output_digest(output_digest)
+set(repair_outputs true)
+if(EXISTS "${stamp}")
+    file(READ "${stamp}" previous)
+    string(REPLACE "|" ";" fields "${previous}")
+    list(LENGTH fields field_count)
+    if(field_count EQUAL 3 AND output_digest)
+        list(GET fields 2 previous_output_digest)
+        if(previous_output_digest STREQUAL output_digest)
+            set(repair_outputs false)
+        endif()
+    endif()
+    if(NOT RAVEN_GAME_FORCE_REBUILD AND output_digest AND
+        EXISTS "${cache}" AND EXISTS "${build_directory}/build.ninja" AND
+        previous STREQUAL "${input_digest}|${cache_digest}|${output_digest}")
+        return()
+    endif()
+endif()
+if(RAVEN_GAME_FORCE_REBUILD)
+    set(repair_outputs true)
+endif()
+
+# Keep the last completed build record until a new build succeeds. It can
+# only be reused when inputs, cache and all output hashes still match; this
+# preserves cheap recovery after a compile failure without certifying it.
+# Restore the selected toolchain only for real work; fast checks stay cheap.
+include("${environment_file}")
+execute_process(
+    COMMAND [==[@CMAKE_COMMAND@]==] -S "${root}/RavenEngine/Private/Game"
+        -B "${build_directory}" -G Ninja
+        [==[-DRAVEN_ROOT=@PROJECT_SOURCE_DIR@]==]
+        [==[-DRAVEN_CORE_LIBRARY=@RAVEN_GAME_CORE_LIBRARY@]==]
+        [==[-DRAVEN_GAME_OUTPUT=@RAVEN_GAME_OUTPUT_DIRECTORY@]==]
+        [==[-DCMAKE_BUILD_TYPE=@CMAKE_BUILD_TYPE@]==]
+        [==[-DCMAKE_CXX_COMPILER=@CMAKE_CXX_COMPILER@]==]
+        [==[-DCMAKE_MAKE_PROGRAM=@CMAKE_MAKE_PROGRAM@]==]
+        [==[-DCMAKE_CXX_FLAGS=@CMAKE_CXX_FLAGS@]==]
+        [==[-DCMAKE_CXX_FLAGS_DEBUG=@CMAKE_CXX_FLAGS_DEBUG@]==]
+        [==[-DCMAKE_CXX_FLAGS_RELEASE=@CMAKE_CXX_FLAGS_RELEASE@]==]
+        [==[-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=@CMAKE_CXX_FLAGS_RELWITHDEBINFO@]==]
+        [==[-DCMAKE_CXX_FLAGS_MINSIZEREL=@CMAKE_CXX_FLAGS_MINSIZEREL@]==]
+    RESULT_VARIABLE configured)
 if(NOT configured EQUAL 0)
     message(FATAL_ERROR "Game module configuration failed: ${configured}")
 endif()
-execute_process(COMMAND "@CMAKE_COMMAND@" --build "@RAVEN_GAME_BUILD_DIRECTORY@"
-    --target RavenGame RESULT_VARIABLE built)
+set(build_arguments --build "${build_directory}" --target RavenGame)
+if(repair_outputs)
+    # Reconfigure first, then clean only this child project. Its imported host
+    # library has no build/clean edge, so loaded host files remain untouched.
+    list(APPEND build_arguments --clean-first)
+endif()
+execute_process(
+    COMMAND [==[@CMAKE_COMMAND@]==] ${build_arguments}
+    RESULT_VARIABLE built)
 if(NOT built EQUAL 0)
     message(FATAL_ERROR "Game module build failed: ${built}")
 endif()
+raven_game_output_digest(output_digest)
+if(NOT output_digest)
+    message(FATAL_ERROR "Game build did not produce all expected runtime artifacts.")
+endif()
+file(SHA256 "${cache}" cache_digest)
+file(WRITE "${stamp}.tmp" "${input_digest}|${cache_digest}|${output_digest}")
+file(RENAME "${stamp}.tmp" "${stamp}")

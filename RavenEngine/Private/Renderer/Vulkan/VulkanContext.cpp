@@ -16,6 +16,7 @@
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/Paths.hpp"
 #include "Raven/Platform/Window.hpp"
+#include "Raven/Renderer/CameraView.hpp"
 
 #include <cstdint>
 #include <algorithm>
@@ -57,7 +58,13 @@ namespace Raven
 			std::span<const std::uint16_t> indices);
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
 		template<typename Camera>
+
 		void DrawFrame(const Camera& camera, std::span<const VulkanDraw> draws,
+			std::span<const VulkanTexturedDraw> texturedDraws,
+			std::span<const VulkanTransparentDraw> transparentDraws);
+
+		void DrawFrameWithView(const CameraViewBuilder& buildView,
+			std::span<const VulkanDraw> draws,
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws);
 
@@ -184,9 +191,25 @@ namespace Raven
 		return *m_TexturedMeshes.back();
 	}
 
-	// Camera types provide view/projection values; frame and GPU ownership remain here.
 	template<typename Camera>
-	void VulkanContext::Impl::DrawFrame(const Camera& camera, std::span<const VulkanDraw> draws,
+	void VulkanContext::Impl::DrawFrame(const Camera& camera,
+		std::span<const VulkanDraw> draws,
+		std::span<const VulkanTexturedDraw> texturedDraws,
+		std::span<const VulkanTransparentDraw> transparentDraws)
+	{
+		const CameraViewBuilder buildView = [&camera](std::uint32_t width, std::uint32_t height)
+		{
+			const float aspect = static_cast<float>(width) / static_cast<float>(height);
+			return CameraView{
+				.View = camera.GetView(),
+				.Projection = camera.GetProjection(aspect)
+			};
+		};
+		DrawFrameWithView(buildView, draws, texturedDraws, transparentDraws);
+	}
+
+	void VulkanContext::Impl::DrawFrameWithView(const CameraViewBuilder& buildView,
+		std::span<const VulkanDraw> draws,
 		std::span<const VulkanTexturedDraw> texturedDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws)
 	{
@@ -212,11 +235,20 @@ namespace Raven
 			return;
 
 		const auto extent = m_Swapchain->GetExtent();
-		const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-		const Mat4 view = camera.GetView();
-		const Mat4 viewProjection = camera.GetProjection(aspect) * view;
+		if (!buildView)
+			return;
+
+		const auto cameraView = buildView(extent.width, extent.height);
+		if (!cameraView)
+			return;
+
+		const Mat4& view = cameraView->View;
+		const Mat4 viewProjection = cameraView->Projection * view;
+
 		// Visibility and ordering complete before acquisition or command recording.
-		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, draws, texturedDraws, transparentDraws);
+		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection,
+			draws, texturedDraws, transparentDraws);
+			
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
 			m_DrawQueue))
@@ -283,6 +315,14 @@ namespace Raven
 		std::span<const std::uint16_t> indices)
 	{
 		return m_Impl->CreateTexturedMesh(vertices, indices);
+	}
+
+	void VulkanContext::DrawFrame(const CameraViewBuilder& buildView,
+			std::span<const VulkanDraw> draws,
+			std::span<const VulkanTexturedDraw> texturedDraws,
+			std::span<const VulkanTransparentDraw> transparentDraws)
+	{
+		m_Impl->DrawFrameWithView(buildView, draws, texturedDraws, transparentDraws);
 	}
 
 	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> draws)
