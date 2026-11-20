@@ -1,199 +1,146 @@
 # RavenEngine Roadmap
 
-This checklist defines **v1**: a C++23 engine that can build and run small 2D and 3D games on Windows, Linux, and macOS using Vulkan, ECS, and reloadable game code, shaders, and assets. ECS and hot reload are joint design goals; fast iteration means shortening the developer edit/build/observe cycle. Games are authored with code and data files in v1. A complete visual editor remains outside v1, but the architecture must accommodate future editor editing and play sessions with explicit ownership. Check an item only when its behavior is demonstrated in a sample or focused test.
+## Goal
 
-The agreed world convention follows Blender: **right-handed, +X right, +Y reference forward, +Z up, XY ground plane**. Blender is the primary authoring tool, FBX is the primary planned 3D asset format, and a Blender live bridge is a future integration goal. See [the coordinate contract](docs/CoordinateSystem.md) for camera, import, and renderer boundaries and the remaining math decisions.
+RavenEngine v1 is a **cross-platform C++23 game engine on Vulkan** with:
 
-Rendering targets a **perspective camera first**, with shared model/view/projection math, simple 3D geometry, and depth testing. That initial sample and the following orthographic 2D rendering sample are now implemented using the same world and transform/view conventions. This order supports the Blender/FBX direction; both playable 2D and 3D samples remain v1 goals.
+1. **Cross-platform runtime:** Windows, Linux and macOS run the same scenes, assets and game code through shared interfaces.
+2. **ECS:** game state lives in a data-oriented entity/component registry that game systems iterate efficiently.
+3. **Hot reload:** game code, shaders and assets reload during play, keep compatible state, and recover from failed edits.
+4. **High performance at scale:** a GPU-driven renderer draws tens of thousands of dynamic objects at interactive frame rates.
 
-## Current Status — 2026-11-12
+ECS and hot reload are joint design goals. Component values are retained by the host as plain bytes, so reloadable game code can be replaced without losing the world. Fast iteration means shortening the edit → build → observe loop. Games are authored with code and data files in v1. A full visual editor is outside v1, but ownership boundaries must allow future editor and play sessions.
 
-Planning follows the [shared Windows assessment and camera implementation record](https://chatgpt.com/share/6ae34d47-0d78-83e8-914c-7070fe80712d). CameraComponent and the renderer handoff are implemented and verified in focused Windows Debug checks. Sample camera selection and direct game-module integration remain open. macOS/Linux remain assigned to other contributors.
+Fixed conventions: right-handed world, +X right, +Y forward, +Z up (Blender). Blender/FBX is the primary 3D authoring path. See [CoordinateSystem.md](docs/CoordinateSystem.md). 3D is the primary development target; the 2D path stays supported but secondary.
 
-RavenEngine has a working Windows rendering/asset foundation and a minimal joint ECS/game-code reload example. Host-owned GameInstance/Registry data, entity identity/lifecycle, copied component values, a separate game DLL, validated execution-copy replacement, source-content polling and background game builds are implemented. Compatible logic edits preserve existing values; failed builds and incompatible contracts retain active code. General ECS queries/systems, scene ownership/persistence, resource release handles, imported meshes, lighting, physics, audio and playable games remain pending.
+Check an item only when its behavior is shown in a sample, a tracked test, or a recorded measurement. Detailed evidence for completed work is in the subsystem docs under `docs/` and in [MilestoneHistory.md](docs/MilestoneHistory.md).
 
-The 2026-10-14 assessment recorded successful Windows Debug/Release builds and zero registered CTest tests. Earlier native/GPU validation records below were reviewed, not rerun in that assessment. Most rendering evidence is from an RTX 3070 Ti Laptop GPU. CTest integration remains deferred at the owner's request; revisit it when defining entity/component lifetime checks. Temporary probes under ignored `out/` do not provide a regression suite from a clean checkout.
+## Agreed technical direction (2026-11-20)
 
-Cocoa window/input/framebuffer and executable-path implementations, macOS presets and earlier Debug smoke evidence exist. Linux X11/XCB code, executable paths and presets are merged, with native verification pending. Both platforms still need the random-byte hook introduced by the asset system before current shared-code support can be considered complete. See [PlatformHandoff.md](docs/PlatformHandoff.md).
+| Topic | Decision |
+| --- | --- |
+| Performance target | GPU-driven rendering for 50k+ objects: GPU-resident instance data, compute culling, indirect draws, bindless materials. |
+| ECS access | Dense, typed component storage. Systems may borrow component spans/views that are valid only during one synchronous update call. The copy-based Read/Write API stays for one-off access. Retained storage stays plain bytes, so DLL reload keeps working. |
+| Vulkan baseline | Vulkan 1.2 core (descriptor indexing, timeline semaphores, buffer device address where useful) plus dynamic rendering and synchronization2 as extensions. Add the portability path for MoltenVK. Every feature needs a documented fallback or a clear unsupported-device error. |
+| Testing | Start CTest and a Windows CI build now, before the ECS and renderer rewrites. Keep tests minimal: add a tracked test only for behavior an upcoming change rewrites. Rendering and reload stay covered by the existing smoke and benchmark scripts. |
+| Minimum spec | The test laptop (Intel Core i7-12700H, NVIDIA GeForce RTX 3070 Ti Laptop GPU) is both the test machine and the minimum supported spec. Every performance target must be met on it. Faster hardware is not a substitute for meeting a target here. Its Intel iGPU is not part of the minimum spec. |
 
-Transform/StaticMesh components drive Perspective colored geometry; Transform/Sprite components now drive Orthographic textured sprites through GameInstance/Registry. SpriteComponent uses a typed texture reference, tint, opaque/alpha selection and transparent ordering while sharing one quad and cached textures. Transform-based view math is present. Concrete components now have separate headers under Public/Raven/Components, with Component/Entity/Registry retained under ECS. CameraComponent stores the active projection mode, FOV, orthographic height and clipping distances. VulkanContext can request a CameraView at the prepared swapchain extent. Both samples still use their local cameras. The existing DLL remains compatible through a temporary sample-only movement bridge until its replacement works. Scene ownership is deferred at the owner's request. Persistent asset/scene data, playable 2D, imported/lit 3D gameplay, shader/asset reload and broader reload coverage follow. Platform contributors can work in parallel. [TODO.md](TODO.md) defines the remaining component plan and completion criteria. Engine implementation now uses assistant-suggested, owner-applied snippets; a specific engine edit requires an explicit request.
+## Where the engine stands (2026-11-20)
 
-Current Windows Debug/Release build and joint ECS/reload evidence is recorded in [EngineModules.md](docs/EngineModules.md), including repeated replacement, retained component state and build-failure recovery. Retained data and cleanup remain in RavenCore; GameInstance does not require a process-wide singleton. Temporary probes remain distinct from a tracked regression suite.
+Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (earlier presentation checks also used its Intel iGPU):
 
-The component assessment identified and corrected three foundation gaps: Registry operations now accept the abstract Component parent, borrowed/unreviewed field types are rejected, and empty tag components are supported. Component supplies virtual type/size access and synchronous data copying; its macro generates the common implementation. Registry retains names/bytes without retaining polymorphic objects, callbacks or virtual-table pointers. Transform, StaticMesh, Sprite, Position and Velocity inherit this parent. MeshHandle is declared independently of Vulkan draw submissions. The parent has no rendering/gameplay data or per-frame behavior. General queries, component enumeration/factories, owning fields, property reflection and further mesh/game-DLL integration remain future work. Current evidence and architectural limits are recorded in [EngineModules.md](docs/EngineModules.md).
+- **Platform:** Win32 window, input, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch, XAudio2 one-shots. macOS (Cocoa) and Linux (XCB) windows/input are merged. They have no random-byte hook, game-module loader, native watcher or audio backend yet, and no current native verification.
+- **Vulkan:** a 1.0 renderer with an explicit-lifetime device/swapchain, resize/minimize recovery, depth, color/textured/lit pipelines, managed mesh/texture handles with fence retirement, sprite instancing and CPU frustum culling. Lit meshes use one draw call per object, so 4,000 meshes = 4,004 draws. See [Benchmark3D.md](docs/Benchmark3D.md).
+- **ECS:** generation-checked entities, the reviewed `Component`/`RAVEN_COMPONENT` value contract, and Transform, StaticMesh, Sprite, Camera, Material, Lighting and interaction components. Storage is a string-keyed map of per-entity heap blocks. Queries scan every scene entity, and there is no system scheduling yet.
+- **Scenes and assets:** a versioned project catalog, a binary 3D scene codec with hierarchy and atomic saves, SceneSession switching, AssetStore leases, PNG/JPEG, static single-object FBX and PCM WAV. See [SceneWorkflow.md](docs/SceneWorkflow.md) and [AssetSystem.md](docs/AssetSystem.md).
+- **Hot reload:** the game DLL (Windows), scene/project files, PNG, FBX and lit/textured fragment shaders reload with last-good recovery. Save-to-present for a DLL edit is about 3.4–3.6 s. Changing shared component definitions requires a host rebuild and restart. See [EngineModules.md](docs/EngineModules.md) and [DevelopmentReload.md](docs/DevelopmentReload.md).
+- **Samples:** Perspective, Gallery, Assemblies, Puzzle and Collection (3D), Courtyard (2D), benchmark scenes with 100–4,000 meshes, and a Windows player build ([PlayerBuild.md](docs/PlayerBuild.md)).
+- **Quality:** no tracked tests, no CI, and no warning/sanitizer policy. Validation so far has used ignored local probes under `out/`.
 
-## Next Windows milestone
+## Milestones
 
-**ECS camera rendering with perspective/orthographic support and retained state across compatible game-code reload.** The [six-step implementation plan](TODO.md#next-implementation-target-cameracomponent) delivers camera math/projection/ray helpers, CameraComponent projection settings with pose in Transform, explicit render-view selection, migration of both samples, direct game-module integration and one free-fly perspective controller. Start by migrating OrthographicSample to one sample-owned camera entity. Keep its pan, zoom and reset controls working through the same Transform and CameraComponent that drive rendering.
+The milestones are ordered by dependency. M1 and M2 can proceed in parallel after M0. M4 platform work runs in parallel with M1–M3 by platform contributors and closes after M3 and M5. [TODO.md](TODO.md) holds the actionable task list for the current milestones.
 
-Completion: both samples consume selected ECS cameras, support runtime camera/settings changes and defined invalid-selection/zero-viewport behavior, and preserve shared renderer/cache resources. Reloadable gameplay directly controls mesh/sprite transforms and camera settings. Repeated compatible reload preserves entity identity, retained values and camera selection; failed builds/rejected replacements keep active code. Focused repeatable checks and native Windows Debug/Release evidence must cover the integration. Measure edit-to-visible-change time and document reloadable edits versus host rebuild/restart requirements. Existing narrow DLL checks alone do not complete this milestone.
+### M0 — Safety net and baseline · *current*
 
-Each entity has at most one Transform. Mesh, Sprite and Camera are sibling components that use it; an entity with both mesh and camera shares that same pose. CameraComponent retains only projection mode, vertical FOV in radians, full orthographic height and shared clipping distances. Keeping both size controls preserves mode-switch settings. It contains no Transform/position/target/up copy, aspect ratio, active flag, matrices or controller behavior. An unrotated camera looks along local +Y with +Z up, using the existing Transform rotation order; camera views use position/rotation and ignore Scale.
+Make the existing behavior repeatable before the ECS and renderer change underneath it.
 
-Use one camera-preparation path from Registry copies and the render target's actual drawable viewport to a temporary camera snapshot. Share that snapshot across culling, ordering, drawing and world/screen/ray helpers; keep ECS lookup outside the Vulkan backend. Existing camera APIs may remain one-way compatibility adapters into common math/submission code, while migrated samples retire their authoritative local camera copies. Start with a small host Registry/camera selection binding and the existing full-window viewport, without a view manager or multi-view framework. Selection never transfers entity ownership.
+- [ ] Commit the outstanding working tree as reviewed, logically grouped commits.
+- [ ] Add CTest with a minimal set of CPU tests that guard the M1 rewrite: Registry entity/component behavior and hierarchy world transforms. Other areas get tests only when a milestone changes them.
+- [ ] Add a Windows CI workflow: configure plus Debug/Release builds plus CPU tests.
+- [ ] Make the 3D benchmark and smoke scripts a tracked, documented baseline, with results recorded on the minimum-spec machine.
+- [ ] Set a compiler warning level for engine targets and fix actionable warnings.
 
-Give controlled entities one designated movement/controller update before read-only camera preparation/draw gathering. The current PerspectiveSample::UpdateDraws writes mesh rotations, and host OnFrame follows game-module Update: move animation out of gathering and disable/replace host writers for module-controlled entities. Controllers must not restore stale local pose after external edits, switching or reload. Route the intended camera handle explicitly to synchronous game updates rather than adding a competing active flag or module-static selection. Validate active projection settings and pose before projection; invalid/missing selection skips world rendering with a diagnostic, while a zero viewport skips until drawable. Initialize defaults separately from updates. Shared component/update-binding changes still require a host rebuild/restart.
+**Exit:** `ctest --test-dir out/build/x64-debug` passes locally and in CI. The benchmark baseline for 500/2,000/4,000 meshes is recorded in the repository.
 
-Follow this foundation with reusable orbit/follow controllers, smoothing, shake and transitions/blending as gameplay requires them. Visibility layers, simultaneous views and render-to-texture follow renderer support; physical lens, exposure, depth of field and jitter follow their consuming systems. Scene ownership remains deferred until a concrete reset/session/world-isolation requirement. A full editor, arbitrary C++ migration, generalized plugin loading, broad query optimization and extensive new rendering work remain outside this milestone. Shader/asset runtime reload keeps its separate completion gate.
+### M1 — Data-oriented ECS
 
-## Historical milestone evidence
+Replace per-entity heap storage with dense typed pools and real systems while keeping the reload contract. Design: [ECSDesign.md](docs/ECSDesign.md) (approved 2026-11-20).
 
-The following records describe each milestone when validated. Later milestones supersede earlier triangle implementations, shader paths, sample ownership and export counts; use the current summary and linked subsystem contracts for present behavior.
+- [ ] Give each component a stable compile-time type ID derived from `TypeName`, so lookups no longer use strings.
+- [ ] Store each component type in dense byte pools (sparse set or archetype; choose with a benchmark). Pools stay host-owned and reload-safe.
+- [ ] Add views/queries over one or more component types that yield borrowed spans, valid only during the current synchronous update. Iteration cost scales with matching entities, not total entities.
+- [ ] Add deferred structural changes (create/destroy/add/remove) through a command buffer applied at defined sync points.
+- [ ] Add a host-owned system schedule with update phases. The game DLL registers its systems on each load, and they are cleared before unload, so no callback outlives the module.
+- [ ] Store world transforms as a cached component updated by a hierarchy system with change tracking. Rendering and picking read it instead of walking ancestors.
+- [ ] Optional: migrate components by field name when layouts change, so routine component edits no longer need a host restart.
 
-The Windows Vulkan bootstrap created a native Win32 window and clear-frame path. A focused native probe presented 407 frames per configuration on an NVIDIA GeForce RTX 3070 Ti Laptop GPU (`graphics=0`, `present=0`) with clean Debug core/synchronization validation. Resize, minimize/restore, shutdown, injected acquire/present recovery and construction rollback passed. The first clear frame is recorded at `out/screenshots/ravenengine-clear-frame.jpg`. Per-monitor v2 DPI awareness and DPI-message handling were implemented; mixed-DPI monitor movement remains unverified.
+**Exit:** iterating Transform over 100k entities and running the hierarchy update over 50k entities meet budgets set in M0. Compatible DLL reload keeps every entity, value and system order. Existing samples behave the same.
 
-Resize and shutdown currently wait for device idle. Strict presentation-completion fencing remains a future extension-based improvement; unextended Vulkan has no present fence ([Khronos guidance](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html)).
+### M2 — Vulkan 1.2 renderer foundation
 
-`FrameClock` provides monotonic elapsed seconds and frame delta. The first drawable frame and first frame after restore receive zero delta; total elapsed time includes minimized time. Debug/Release builds, focused clock checks, and native minimize/restore timing pass. Separate 10-second clear-loop samples after a one-second warm-up measure **59.3 FPS in Debug** (593 successful presentations) and **59.7 FPS in Release** (597), with the existing 16 ms sleep and FIFO presentation. Neither sample reports presentation failures or warning/error diagnostics; Debug runs with synchronization validation enabled.
+Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win.
 
-The initial vertex/fragment shaders are written in HLSL and compiled by DXC through the `RavenShaders` build dependency. Both configurations generate SPIR-V for Vulkan 1.0 and validate it with `spirv-val`; shader source changes rebuild the affected stage. Outputs are under each build's `RavenEngine/Shaders/<config>/` directory. `VulkanShaderModule` loads aligned words with file-size/magic checks and RAII ownership. `VulkanTrianglePipeline` owns the graphics pipeline/layout; the existing frame loop binds it, sets dynamic viewport/scissor, and draws three vertices generated by `SV_VertexID`.
+- [ ] Target Vulkan 1.2 for the instance and SPIR-V. Use dynamic rendering, synchronization2 and timeline semaphores. Add portability enumeration for MoltenVK. Report unsupported devices with clear errors.
+- [ ] Move per-frame uploads to persistently mapped ring buffers sized per frame in flight.
+- [ ] Move camera and lighting into a per-frame uniform buffer, and shrink instance data to a transform plus material/object indices.
+- [ ] Batch lit meshes by (mesh, material) with instanced draws. Transparent draws keep their sorted path.
+- [ ] Consolidate meshes into shared vertex/index pools, so geometry is ready for indirect drawing.
+- [ ] Review device loss, presentation completion and the swapchain readiness check. Fold in the pending framebuffer-state and mesh-handle cleanups.
 
-The first triangle is demonstrated in Debug and Release: focused native checks present 230 triangle frames each, exercise two resize dimensions and three minimize/restore cycles, and verify minimized startup plus normal/minimized shutdown. Debug has no core or synchronization validation warnings/errors. Missing/malformed shader files and injected module/layout/pipeline failures verify rejection and rollback; failed pipeline recreation leaves the context able to retry. The running Debug executable is visually confirmed in `out/screenshots/ravenengine-first-triangle.jpg`. Development builds use a CMake-supplied absolute shader output directory; relocatable asset paths remain packaging work.
+**Exit:** 10k lit meshes using a few unique meshes record draws in proportion to the number of unique (mesh, material) pairs. The current samples render identically, and Debug validation is clean.
 
-The triangle now rotates at 90 degrees per second using frame delta. `VulkanContext` preserves a bounded angle across swapchain recreation; each draw supplies an 8-byte vertex-stage push constant containing angle and aspect ratio. HLSL uses explicit offsets `0`/`4` and corrects landscape/portrait proportions. Debug/Release builds and focused checks each present 243 frames, verify timing, wrapping, minimized skip, zero-delta resume, resize phase preservation, and existing cleanup/recovery paths. Debug has no core or synchronization validation warnings/errors. Computer use confirms changing orientation, maximization resizing, and rendering after minimize/restore in the actual Debug executable. Screenshots are under `out/screenshots/ravenengine-rotation-*.jpg` and diagnostics under `out/validation/animation-<config>.log`.
+### M3 — GPU-driven rendering at scale
 
-`VulkanBuffer` now owns a buffer and its host-visible coherent allocation with one-time initial upload and rollback on failure. Debug/Release builds and focused checks verify four payload sizes, two GPU copy/readbacks, invalid parameter rejection, and six injected resource/memory-selection failures on the RTX 3070 Ti Laptop GPU. Buffer-before-memory destruction and absence of leftover mappings are verified, with no Debug core or synchronization validation warnings/errors. Results are saved in `out/validation/buffer-<config>.log`. The subsequent indexed triangle milestone is implemented and verified; see [TODO.md](TODO.md) for its evidence and the current working priorities.
+Move object processing to the GPU to reach the performance goal.
 
-On 2026-10-10, the perspective sample replaces the hardcoded triangle draw path with 3D color vertices, shared matrix/camera math, context-owned meshes, and per-object draw submissions. Two cubes animate independently above an XY ground slab; each swapchain framebuffer has a separate depth attachment. Debug/Release builds and SPIR-V validation pass. A temporary CPU probe passes 59 transform/projection checks, and computer use verifies camera controls, depth occlusion, resize, minimize/restore, and normal shutdown. Debug reports no core/synchronization validation warnings/errors. See [the coordinate contract](docs/CoordinateSystem.md) for math/controls and `out/validation/perspective-*.log` and `out/screenshots/ravenengine-perspective.jpg` for evidence. No test sources or framework were added to the project.
+- [ ] Keep a GPU-resident object/transform buffer updated incrementally from ECS changes, uploading dirty ranges only.
+- [ ] Make materials and textures bindless through descriptor indexing.
+- [ ] Add compute frustum culling that writes indirect draw arguments. Use draw-indirect-count where supported, with a fixed-count fallback that zeroes culled instance counts (for example on MoltenVK).
+- [ ] Add Hi-Z occlusion culling if the measurements justify it.
+- [ ] Move sprites onto the same instance and culling path.
+- [ ] Record GPU and CPU timings per stage in the benchmark build, and add a stress sample with thousands of moving objects driven by reloadable ECS systems.
 
-The original engine/sample build boundary put reusable code in RavenCore.dll and the retained client in RavenEngine.exe. Its historical validation includes 17 DLL client checks per configuration and native smoke checks with clean Debug Vulkan diagnostics; see `out/validation/dll-*.log`. The subsequent joint ECS/reload milestone adds a separately replaceable RavenGame.dll while retaining those engine/host lifetimes; see [the current module contract](docs/EngineModules.md).
+**Exit (proposed targets, measured on the minimum-spec machine):** 50,000 lit meshes with 20% animated run at ≥ 60 FPS at 2560 × 1440 on the RTX 3070 Ti Laptop, with CPU frame preparation ≤ 4 ms. 100,000 static meshes stay ≥ 60 FPS. A DLL edit to the animating system reloads without frame-time spikes above 100 ms.
 
-Runtime path/file utilities now replace the absolute build-tree shader lookup with executable-relative `Content/Shaders`, including a startup content-root override. Debug/Release builds, 61 utility checks per configuration, relocated Unicode packages, missing/malformed-file diagnostics, and follow-up buffer/long-file checks pass. See [RuntimeUtilities.md](docs/RuntimeUtilities.md) for the current contract, evidence, and validation limits.
+### M4 — Cross-platform parity
 
-RGBA8 texture ownership/upload is implemented through `VulkanContext::CreateTexture`. Debug/Release verify nine GPU readbacks, 21 injected construction/upload failures, and 36 public-client texture uploads per configuration, with clean Debug core/synchronization validation. The following rendering milestone adds immutable descriptors, separate UV meshes, and opaque HLSL sampling. Both configurations pass 13 public checks with 24 frames and 72 textures, plus 13 GPU pixel checks across nine readbacks and 73 descriptor bindings. UV orientation, tint, SRGB decoding, transforms, and depth occlusion are verified. See [TextureResources.md](docs/TextureResources.md).
+Run the same engine on Linux and macOS. Platform contributors own native implementation and verification and can start now.
 
-Public PNG/JPEG loading now returns owned RGBA8 CPU images through `Images::Load`. The pinned decoder is private to RavenCore and its license is staged beside the application. Debug/Release each pass 109 CPU/public-DLL checks, 19 valid fixture cases, 15 failure cases, concurrent decoding, 39 decoded-image uploads, and eight existing perspective frames, with clean Debug core/synchronization validation. See [ImageLoading.md](docs/ImageLoading.md) for the pixel contract, limits, and evidence. The current sample loads two staged PNGs and displays opaque and transparent textured quads alongside colored geometry.
+- [ ] macOS/Linux: random-byte hook for `AssetId::Generate`.
+- [ ] macOS/Linux: native game-module load/unload/replace (`dlopen`), with build-toolchain capture for game-only builds.
+- [ ] macOS/Linux: native directory watching (FSEvents/inotify), or a confirmed polling fallback.
+- [ ] macOS/Linux: an audio backend for the existing one-shot service.
+- [ ] Shader toolchain (DXC/spirv-val) on all hosts, plus the MoltenVK portability subset.
+- [ ] CI builds and CPU tests on Windows, Linux and macOS.
+- [ ] Finish Win32 key translation, repeat/text input and focus state, and verify mixed-DPI movement. Bring the other backends to the same input contract.
+- [ ] Verify queue-family configurations beyond the single-family device, and document GPU requirements.
 
-Straight-alpha transparency, explicit layer/order, automatic camera-depth sorting, and conservative per-instance frustum culling are implemented. Visibility/ordering prepares a borrowed draw queue before Vulkan recording; meshes cache static local bounds. Debug/Release each pass 42 checks including 13 GPU pixel readbacks and six public-entry-point frames. Debug core/synchronization validation is clean. See [TextureResources.md](docs/TextureResources.md) for responsibilities, limits, and validation evidence. Orthographic projection and the 2D sample subsequently pass 38 focused checks and 13 public frame calls per configuration; see [CoordinateSystem.md](docs/CoordinateSystem.md). Adjacent compatible textured draws now use frame-safe instancing while preserving both pass boundaries and ordering. Five uncompressed GPU captures in each configuration match the previous individual-draw renderer byte for byte.
+**Exit:** every sample and every reload path runs in Debug/Release on all three platforms, with native verification recorded by the responsible contributor.
 
-Common UUIDv4 asset identities, typed persistent references, an immutable in-memory catalog, and ID-based texture reuse are now implemented. Windows Debug/Release each pass 3,417 public-client checks and present 25 frames; seven asset headers compile independently. API tracing verifies repeated requests do not allocate additional textures/descriptors and preserves the 257-opaque/4-transparent two-draw batching path. Both native samples remain valid with clean core/synchronization diagnostics. Existing 24 DLL exports are retained with 12 asset exports added. Persistent metadata, FBX sub-assets, dependency/build outputs and runtime handle/reload contracts remain pending; see [AssetSystem.md](docs/AssetSystem.md).
+### M5 — Hot reload completeness and iteration speed
 
-## 0. Project Foundation
+- [ ] Reload every shader stage (vertex, fragment and compute), with dependency tracking for includes.
+- [ ] Record each asset's source, dependencies and build outputs for images, FBX and HLSL. Reimport when a dependency changes.
+- [ ] Reload systems registered by the DLL, and decide the policy for added or removed systems.
+- [ ] Reduce DLL save-to-present from about 3.5 s to a target set after profiling the build (for example below 1.5 s for a one-file edit).
+- [ ] Extend last-good recovery and diagnostics to every newly supported replacement path.
 
-- [x] Create the CMake executable and Windows build presets. The current compiler baseline is C++23.
-- [x] Initialize Git and ignore local build output and `AGENTS.md`.
-- [x] Make the initial Git commit.
-- [x] Add repository-local VS Code build and debug configurations.
-- [ ] Verify an `F5` session stops at a breakpoint and document the VS Code workflow.
-- [ ] Refresh the README and document exact CMake, Ninja, MSVC, and Vulkan SDK versions and setup.
-- [x] Separate reusable engine code into the `RavenCore` shared-library target and sample code into `RavenEngine`.
-- [ ] Add CTest and automated builds; retain the explicit CTest deferral until revisited with the owner.
-- [x] Add basic thread-safe logging and top-level exception reporting.
-- [ ] Verify the assertion path and establish a consistent formatting policy.
+**Exit:** code, every shader stage and supported assets reload on all platforms with recorded timings and failure recovery.
 
-## 1. Platform Layer
+### M6 — Gameplay services and samples
 
-- [x] Move the shared `Window` contract to [`Window.hpp`](RavenEngine/Public/Raven/Platform/Window.hpp) without exposing Win32 types.
-- [x] Implement native Win32 window creation, close handling, event polling, and framebuffer size. Verify opening, resizing, and closing a window.
-- [x] Add a platform-independent input snapshot with Win32 keyboard transitions, mouse position/delta, mouse buttons, and focus/capture recovery.
-- [x] Populate Win32 keyboard events/modifiers and vertical/horizontal wheel state through the shared input snapshot.
-- [ ] Finish remaining key translations and define remaining repeat/text-input behavior as required by the samples.
-- [x] Define drawable framebuffer state through a shared snapshot of pixel dimensions and persistent resize revision. Verify Win32 resize, minimized `0 x 0`, restore, and close while minimized with Vulkan validation enabled.
-- [ ] Complete window state needed by rendering: expose focus state and verify mixed-DPI monitor movement. Per-monitor v2 awareness and DPI-message size handling are implemented in the Win32 backend.
-- [x] Add an engine clock with monotonic elapsed time and frame delta. Verify initial/reset delta, elapsed time during pauses, normal timing after resume, and native minimize/restore behavior.
-- [ ] Replace the fixed 16 ms sleep with explicit frame pacing.
-- [x] Add platform-independent file and path APIs without exposing OS types to `Core/`. Public filesystem-based queries/readers and the Windows executable-path backend are verified; see [RuntimeUtilities.md](docs/RuntimeUtilities.md). Other platform backends remain their own milestone.
-- [x] Merge Cocoa implementations of the current window/input/framebuffer and executable-path interfaces, with macOS presets and earlier Debug smoke evidence.
-- [x] Merge the Linux X11/XCB window backend, executable paths and Debug/Release presets.
-- [ ] Implement and connect the asset system's `Platform::FillRandomBytes` hook on macOS and Linux.
-- [ ] Verify both current rendering samples and shared contracts in native Debug/Release on macOS and Linux; merged code and historical smoke checks do not establish current full support.
+- [ ] Expose stable scene access, ECS views and runtime resource handles to game code.
+- [ ] Generalize component and asset serialization beyond the current sample codecs, with round-trip tests.
+- [ ] Import multi-object FBX files with stable sub-asset identities.
+- [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
+- [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.
 
-## 2. Vulkan Bootstrap — implemented baseline
+**Exit:** a small 3D game, the stress sample and the 2D sample run on all platforms using only engine APIs.
 
-- [x] Create a Vulkan instance with validation and a debug messenger enabled in debug builds.
-- [x] Create and destroy a Win32 Vulkan surface through explicit RAII ownership.
-- [x] Validate requested instance extensions and report missing Vulkan capabilities clearly. Verify Windows startup/shutdown and the named missing-extension error.
-- [x] Select a physical device with graphics and presentation support and required swapchain capabilities.
-- [x] Create the logical device and retrieve graphics/presentation queues. Verify queue handles and normal shutdown on Windows.
-- [x] Create swapchain images and image views with explicit format, present-mode, and extent selection. Verify creation/destruction on Windows; separate-family presentation remains unverified on hardware.
-- [x] Recreate the swapchain when the framebuffer is resized or restored, and defer rendering while minimized. Verify native resize/minimize/restore and injected out-of-date/suboptimal recovery.
-- [x] Submit and present a color clear each frame without validation errors; own every Vulkan object with explicit lifetime rules. Verify 407 frames in Debug and Release and resource-construction rollback.
-- [x] Confirm the blue clear color visually and record a screenshot of the first rendered frame on Windows.
-- [x] Move Vulkan orchestration out of `Application` into a renderer-owned context. Verify Windows Debug/Release startup and shutdown, with device-idle waiting and dependency-ordered destruction before the window is destroyed.
+### M7 — Quality and release
 
-## 3. Rendering Core
+- [ ] Static analysis and sanitizer configurations where toolchains support them. Add crash diagnostics.
+- [ ] Verify the assertion path and the debugger breakpoint workflow. Document Edit and Continue versus runtime reload.
+- [ ] Refresh the README with tested tool versions, architecture, module contracts and asset workflow.
+- [ ] Package the host, game modules, shaders, assets and licenses per platform. Verify a clean-machine run.
 
-- [x] Define the initial renderer frame boundary through `VulkanContext::DrawFrame()` and keep rendering work out of the platform input layer.
-- [x] Add the current command submission, frame synchronization, GPU buffer/image ownership, immutable texture descriptors and color/texture pipelines.
-- [x] Add renderer-scoped value handles for existing color meshes; shared geometry stays alive until renderer shutdown.
-- [ ] Extend runtime resource handles and define a scene-sharing/release policy, including safe GPU retirement before scene switching or resource replacement.
-- [x] Compile the initial HLSL vertex/fragment shaders to SPIR-V using DXC through CMake. Validate Debug/Release binaries and incremental source dependencies for Vulkan 1.0.
-- [x] Load SPIR-V shader modules and create a graphics pipeline for the first triangle. Verify Debug/Release drawing, resize/minimize/restore, resource-creation rollback, and capture the running Debug executable.
-- [x] Animate the triangle using frame delta and vertex-stage push constants. Verify rotation timing, aspect correction, resize phase preservation, and pause/resume with validation and computer use.
-- [x] Add a Vulkan buffer owner with compatible memory selection, one-time upload, and partial-construction cleanup. Verify uploaded bytes and GPU copy/readback in Debug/Release with validation.
-- [x] Move triangle geometry into vertex/index buffers and submit indexed draws with explicit vertex layout and resource lifetime. Verify Debug/Release indexed drawing and cleanup with validation.
-- [x] Add shared model/view/projection math and a perspective camera; validate simple 3D geometry, depth testing, clipping, and resize behavior first.
-- [x] Add orthographic projection and render textured 2D sprites with a camera and batching. Orthographic projection, pan/zoom, transparent sprites, frustum selection, and adjacent compatible draw instancing are implemented and verified.
-- [ ] Extend the perspective/depth path to imported 3D meshes, materials, and basic lighting.
-- [x] Handle viewport resizing, swapchain/depth/pipeline recreation, minimized rendering and tested acquire/present recovery.
-- [ ] Review remaining graphics-error/device-loss and presentation-completion behavior, including the device-idle recreation/shutdown approach.
+**Exit:** another developer can clone, build, run, modify and package a game on any supported platform from the documentation alone.
 
-## 4. ECS and Scene Model — current focus
+## Out of scope for v1
 
-- [x] Implement the entity identity/lifecycle baseline: registry ownership, index/generation identity, creation/destruction, slot reuse and stale-reference rejection. Retaining repeatable lifetime checks remains pending.
-- [x] Validate the narrow Windows GameInstance/game-DLL/minimal-component example before expanding the general ECS storage/query design.
-- [ ] Extend component ownership/invalidation and safe mutation rules as needed; choose general storage/query behavior against the concrete component-rendering path.
-- [x] Add reusable Transform/StaticMesh components and generate Perspective colored-mesh submissions directly from GameInstance/Registry.
-- [x] Add SpriteComponent and generate orthographic submissions from Transform/Sprite data using one shared quad and cached textures.
-- [x] Exercise runtime sprite creation, movement, fading, texture/blend/order edits and removal while preserving resource reuse and ownership.
-- [x] Separate Transform, StaticMesh, Sprite and Camera component headers under Public/Raven/Components. Keep Component, Entity and Registry under ECS.
-- [x] Implement CameraComponent projection settings and prepare a CameraView from the entity's Transform and active projection. Use local +Y forward/+Z up and ignore camera scale.
-- [x] Add the renderer handoff. The prepared swapchain extent goes to CameraViewBuilder, and existing camera overloads converge on the same draw routine.
-- [ ] Migrate OrthographicSample to its own selected ECS camera, including component-based pan, zoom and reset and selection failure handling.
-- [ ] Exercise explicit camera switching and keep entity ownership separate from selection.
-- [ ] Migrate PerspectiveSample, retire its local camera copy and make draw gathering read-only. Add world/screen/ray helpers that use the same snapshot and viewport. See the [six-step implementation plan](TODO.md#next-implementation-target-cameracomponent).
-- [ ] Migrate game movement to Transform and camera settings with explicit entity bindings; prevent later host updates from overwriting module-controlled state and remove legacy Position/bridge code once its replacement works.
-- [ ] Add scene ownership after the component-rendering path. Deferred; it is not an immediate prerequisite.
-- [ ] Add hierarchy and scene switching after defining resource sharing/release and persistent asset metadata in the next phase of [TODO.md](TODO.md).
-- [ ] Serialize/load scenes and explicitly reload them from data files; validate references, failure paths and repeated switching. Automatic scene watching follows its resource/reload contract; the initial game-code watcher is part of the joint ECS/reload milestone.
+A full visual editor, arbitrary C++ state migration beyond field-level component migration, generalized plugin loading, particle/VFX systems, a render graph, and simultaneous multi-view rendering (unless M3 needs one).
 
-## 5. Assets and Reloading
+## Deferred collision and physics
 
-- [x] Define UUIDv4 identities, typed references, runtime paths, the in-memory catalog and ID-based texture reuse.
-- [x] Load PNG/JPEG textures and compile/validate/stage HLSL shaders through the existing build path.
-- [ ] Persist asset metadata and define source/dependency/build-output records, keeping asset identity separate from runtime resource handles.
-- [ ] Import reusable meshes through the planned Blender/FBX path, including sub-asset identity and coordinate conversion.
-- [ ] Watch source files and reload shaders and assets at a safe frame boundary.
-- [ ] Report import/compile errors while keeping the last valid resource active.
-
-## 6. Game Modules and Code Reloading
-
-Initial work in this section is part of the immediate joint ECS/reload milestone; it is not deferred until the full gameplay framework is complete.
-
-- [x] Establish the minimal retained-state/update contract under the owner's direct-edit authorization. Reuse application/client/export definitions and separate host management from reloadable code.
-- [x] Demonstrate Windows DLL replacement with preserved entity/component data, then automate successful stable builds through source polling.
-- [x] Generate conservative compatibility checks for the supported dependency set; reject unsupported changes until the host is rebuilt/restarted, without manual layout counters.
-- [ ] Load and unload a game module dynamically on each supported OS.
-- [ ] Extend compatible Windows replacement to directly controlled Transform/CameraComponent values and preserve host-owned camera selection across the integrated mesh/sprite examples.
-- [ ] Extend failed-build/rejected-replacement checks to the integrated camera/mesh/sprite path and other native backends; Windows minimal-example recovery is implemented.
-- [ ] Extend state preservation to broader scene/gameplay ownership when those contracts exist; arbitrary C++ migration remains outside the baseline.
-
-## 7. Gameplay Services
-
-- [x] Expose input snapshots and frame timing to game code through `ApplicationClient::OnFrame`.
-- [ ] Add a free-fly perspective controller with frame-rate-independent movement and mouse look in reloadable game code; verify behavior changes without resetting camera/world state.
-- [ ] Add reusable orbit/follow controllers, smoothing, shake and transitions/blending as later gameplay needs them; keep behavior outside CameraComponent.
-- [ ] Expose scene access and runtime resource handles to game code through stable engine APIs.
-- [ ] Add audio and 2D/3D physics behind documented engine APIs.
-- [ ] Connect input, audio, and physics to ECS systems and verify behavior in sample games.
-
-## 8. Quality and Release
-
-- [ ] Add focused subsystem tests, Vulkan validation runs, performance profiling, and crash diagnostics.
-- [ ] Add compiler warnings, static analysis, and sanitizer configurations where each toolchain supports them.
-- [ ] Maintain a lightweight manual smoke checklist for native window, input, and Vulkan integration paths.
-- [ ] Make focused Windows camera/reload checks rerunnable with recorded commands, including lifetime, state preservation, failed replacement, resource stability and shutdown; keep CTest deferred unless separately agreed.
-- [ ] Measure edit-to-visible-change time and document compatible game-code reload versus host rebuild/restart and separate shader/asset reload requirements.
-- [ ] Build and run on Windows, Linux, and macOS in automated checks.
-- [ ] Ship a small 2D game and a small 3D game that exercise scenes, assets, and both reload paths.
-- [ ] Document setup, architecture, module contracts, asset workflow, and release packaging.
-
-## Next Review Point
-
-Review the [six-step camera/integration plan](TODO.md#next-implementation-target-cameracomponent) after each buildable change. First verify OrthographicSample rendering and controls from its selected ECS camera, then extend that path to Perspective and game-module control. Completion requires integrated Windows view/gameplay/reload checks, stable resources and a recorded iteration-time measurement. Scene ownership, broader migration, other native module backends and tracked regression coverage remain separate work.
-
-Keep files cohesive by responsibility and lifetime. Reuse existing files for related small definitions, while separating retained host/module management from reloadable game implementation and native services. Preserve renderer/cache initialization across code replacement; repeatedly recreating sample clients can accumulate renderer-owned resources.
-
-Before scene switching, define persistent asset/scene data and runtime resource sharing/release. Current mesh/texture references remain renderer-owned until shutdown, and destroying an asset service does not unload them. Preserve that contract until an explicit replacement is implemented and validated.
-
-Keep remaining input work, platform hooks and validation debt visible. Revisit the CTest deferral for entity/component lifetime checks; do not mark absent automated checks complete. Suggest small, reviewable engine snippets for the owner to apply, as recorded in [TODO.md](TODO.md). Edit engine files only when the owner explicitly requests that specific change.
+General-purpose 2D collision, 3D collision and physics simulation are deferred with no scheduled milestone. Courtyard's swept XZ checks and trigger overlaps cover its current gameplay. Revisit the scope when a concrete mechanic needs more.
