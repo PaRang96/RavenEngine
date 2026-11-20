@@ -1,0 +1,51 @@
+name: Windows
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.preset }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [x64-debug, x64-release]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Provides cl.exe, Ninja and VSINSTALLDIR, which the Windows presets require.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Headers, import library, DXC and spirv-val for shader builds. The runtime
+      # loader is needed because test executables load RavenCore.dll.
+      - uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+          cache: true
+          stripdown: true
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # Hosted runners have no Vulkan GPU; GPU-labeled tests run locally.
+      - name: CPU tests
+        run: ctest --preset ${{ matrix.preset }} -LE gpu

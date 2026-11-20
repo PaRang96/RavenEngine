@@ -75,6 +75,8 @@ cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game --free-fly
 ```
 
+Run the tracked tests with `ctest --preset x64-debug`, or `ctest --preset x64-debug -LE gpu` to skip tests that need a Vulkan device. Tests enroll automatically from `Tests/**/<Name>Tests.cpp`; see [Tests/CMakeLists.txt](Tests/CMakeLists.txt). Run `out\build\x64-release\RavenEngine\EcsBenchmark.exe` for the ECS baseline recorded in [ECSDesign.md](docs/ECSDesign.md#performance-budgets). CI builds both x64 presets and runs the CPU tests on every push and pull request ([workflow](.github/workflows/windows.yml)).
+
 Run the [Windows 3D smoke check](docs/InteractionGame.md#repeatable-windows-3d-smoke) with `pwsh -File scripts/Test-Windows3D.ps1 -Preset x64-debug` or `-Preset x64-release` after configuring that preset.
 Add `-DefaultLaunch` to exercise the stock executable with live source edits in an isolated source copy. The Release run also measures frame times. See the [validation commands](docs/DevelopmentReload.md#validation).
 

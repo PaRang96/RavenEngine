@@ -6,6 +6,8 @@
 /.codex/
 /.agents/
 /.aws/
+/.claude/settings.local.json
+/.claude/worktrees/
 .env
 .env.*
 !.env.example
@@ -79,6 +81,22 @@ DerivedData/
 *.dSYM/
 *.spv
 
+# GPU captures, profiler traces, crash dumps, and coverage output
+*.rdc
+*.wpix
+*.nsight-gfxproj
+*.ngfx-capture
+*.nsys-rep
+*.qdrep
+*.etl
+*.tracy
+*.dmp
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+perf.data*
+
 # Logs, temporary files, and local caches
 *.log
 *.tmp
@@ -90,6 +108,8 @@ DerivedData/
 .cache/
 __pycache__/
 *.pyc
+.venv/
+venv/
 /.history/
 /tmp/
 /temp/

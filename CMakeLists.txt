@@ -18,3 +18,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 
 add_subdirectory(RavenEngine)
+
+# Tracked CTest suites. GPU-dependent tests carry the "gpu" label so CI can
+# run CPU tests on machines without a Vulkan device (ctest -LE gpu).
+# Source snapshots used by benchmark and smoke scripts may omit Tests/.
+option(RAVEN_BUILD_TESTS "Build the RavenEngine CTest suites" ON)
+if(RAVEN_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CMakeLists.txt")
+    enable_testing()
+    add_subdirectory(Tests)
+endif()

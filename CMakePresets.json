@@ -141,5 +141,31 @@
                 "release-base"
             ]
         }
+    ],
+    "buildPresets": [
+        { "name": "x64-debug", "configurePreset": "x64-debug" },
+        { "name": "x64-release", "configurePreset": "x64-release" },
+        { "name": "x86-debug", "configurePreset": "x86-debug" },
+        { "name": "x86-release", "configurePreset": "x86-release" },
+        { "name": "macos-debug", "configurePreset": "macos-debug" },
+        { "name": "macos-release", "configurePreset": "macos-release" },
+        { "name": "linux-debug", "configurePreset": "linux-debug" },
+        { "name": "linux-release", "configurePreset": "linux-release" }
+    ],
+    "testPresets": [
+        {
+            "name": "test-base",
+            "hidden": true,
+            "output": { "outputOnFailure": true },
+            "execution": { "noTestsAction": "error" }
+        },
+        { "name": "x64-debug", "configurePreset": "x64-debug", "inherits": "test-base" },
+        { "name": "x64-release", "configurePreset": "x64-release", "inherits": "test-base" },
+        { "name": "x86-debug", "configurePreset": "x86-debug", "inherits": "test-base" },
+        { "name": "x86-release", "configurePreset": "x86-release", "inherits": "test-base" },
+        { "name": "macos-debug", "configurePreset": "macos-debug", "inherits": "test-base" },
+        { "name": "macos-release", "configurePreset": "macos-release", "inherits": "test-base" },
+        { "name": "linux-debug", "configurePreset": "linux-debug", "inherits": "test-base" },
+        { "name": "linux-release", "configurePreset": "linux-release", "inherits": "test-base" }
     ]
 }
