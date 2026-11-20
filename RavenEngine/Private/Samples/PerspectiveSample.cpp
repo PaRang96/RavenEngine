@@ -1,55 +1,58 @@
 #include "PerspectiveSample.hpp"
+#include "Core/FrameTrace.hpp"
+#include "SampleCamera.hpp"
 
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
+#include "Raven/Components/MaterialComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Platform/Input.hpp"
+#include "Raven/Renderer/CameraView.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <format>
+#include <numbers>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace Raven
 {
 	namespace
 	{
-		// Face shades make the unlit geometry readable without introducing materials yet.
-		constexpr std::array<ColorVertex, 24> CubeVertices
+		std::optional<Vec3> IntersectGroundPlane(const Ray& ray)
 		{
-			ColorVertex{ { -0.5f, -0.5f, -0.5f }, { 0.85f, 0.85f, 0.85f } },
-			ColorVertex{ { 0.5f, -0.5f, -0.5f }, { 0.85f, 0.85f, 0.85f } },
-			ColorVertex{ { 0.5f, -0.5f, 0.5f }, { 0.85f, 0.85f, 0.85f } },
-			ColorVertex{ { -0.5f, -0.5f, 0.5f }, { 0.85f, 0.85f, 0.85f } },
-			ColorVertex{ { 0.5f, 0.5f, -0.5f }, { 0.55f, 0.55f, 0.55f } },
-			ColorVertex{ { -0.5f, 0.5f, -0.5f }, { 0.55f, 0.55f, 0.55f } },
-			ColorVertex{ { -0.5f, 0.5f, 0.5f }, { 0.55f, 0.55f, 0.55f } },
-			ColorVertex{ { 0.5f, 0.5f, 0.5f }, { 0.55f, 0.55f, 0.55f } },
-			ColorVertex{ { -0.5f, 0.5f, -0.5f }, { 0.65f, 0.65f, 0.65f } },
-			ColorVertex{ { -0.5f, -0.5f, -0.5f }, { 0.65f, 0.65f, 0.65f } },
-			ColorVertex{ { -0.5f, -0.5f, 0.5f }, { 0.65f, 0.65f, 0.65f } },
-			ColorVertex{ { -0.5f, 0.5f, 0.5f }, { 0.65f, 0.65f, 0.65f } },
-			ColorVertex{ { 0.5f, -0.5f, -0.5f }, { 0.75f, 0.75f, 0.75f } },
-			ColorVertex{ { 0.5f, 0.5f, -0.5f }, { 0.75f, 0.75f, 0.75f } },
-			ColorVertex{ { 0.5f, 0.5f, 0.5f }, { 0.75f, 0.75f, 0.75f } },
-			ColorVertex{ { 0.5f, -0.5f, 0.5f }, { 0.75f, 0.75f, 0.75f } },
-			ColorVertex{ { -0.5f, -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } },
-			ColorVertex{ { 0.5f, -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } },
-			ColorVertex{ { 0.5f, 0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } },
-			ColorVertex{ { -0.5f, 0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } },
-			ColorVertex{ { -0.5f, 0.5f, -0.5f }, { 0.35f, 0.35f, 0.35f } },
-			ColorVertex{ { 0.5f, 0.5f, -0.5f }, { 0.35f, 0.35f, 0.35f } },
-			ColorVertex{ { 0.5f, -0.5f, -0.5f }, { 0.35f, 0.35f, 0.35f } },
-			ColorVertex{ { -0.5f, -0.5f, -0.5f }, { 0.35f, 0.35f, 0.35f } }
-		};
-		constexpr std::array<std::uint16_t, 36> CubeIndices
+			if (ray.Direction.Z == 0.0f)
+				return std::nullopt;
+
+			const float distance = -ray.Origin.Z / ray.Direction.Z;
+			if (!std::isfinite(distance) || distance < 0.0f)
+				return std::nullopt;
+
+			const Vec3 hit = ray.Origin + ray.Direction * distance;
+			if (!std::isfinite(hit.X) || !std::isfinite(hit.Y))
+				return std::nullopt;
+
+			return Vec3{ hit.X, hit.Y, 0.0f };
+		}
+
+		void SetOrbitPose(ECS::TransformComponent& transform, Vec3 target,
+			float yaw, float pitch, float distance)
 		{
-			0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4,
-			8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12,
-			16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20
-		};
+			const float horizontal = distance * std::cos(pitch);
+			transform.Position = target + Vec3{
+				horizontal * std::cos(yaw),
+				horizontal * std::sin(yaw),
+				distance * std::sin(pitch)
+			};
+			transform.Rotation = { -pitch, 0.0f, yaw + std::numbers::pi_v<float> / 2.0f };
+		}
 
 		// An XZ quad facing the initial camera. Images are top-row first; V=0 is the top edge.
 		constexpr std::array<TexturedVertex, 4> QuadVertices
@@ -63,95 +66,189 @@ namespace Raven
 
 	}
 
-	PerspectiveSample::PerspectiveSample(VulkanContext& renderer, GameInstance& instance)
+	PerspectiveSample::PerspectiveSample(VulkanContext& renderer, GameInstance& instance,
+		bool freeFly, bool watchMesh, bool watchLevel, std::optional<AssetId> initialScene)
 		: m_Renderer(renderer),
 		  m_Game(instance),
-		  m_Assets(renderer),
-		  m_Cube(renderer.CreateMeshHandle(CubeVertices, CubeIndices)),
+		  m_FreeFly(freeFly),
+		  m_Assets(renderer, watchLevel, watchMesh),
+		  m_Audio(m_Assets.GetCatalog()),
 		  m_Quad(renderer.CreateTexturedMesh(QuadVertices, QuadIndices)),
-		  m_Texture(m_Assets.LoadTexture(SampleAssets::GetUVGrid())),
-		  m_AlternateTexture(m_Assets.LoadTexture(SampleAssets::GetUVGridAlternate())),
-		  m_TexturedDraws{ VulkanTexturedDraw{ m_Quad, m_Texture },
-			  VulkanTexturedDraw{ m_Quad, m_AlternateTexture } },
-		  m_TransparentDraws{ VulkanTransparentDraw{ { m_Quad, m_Texture } },
-			  VulkanTransparentDraw{ { m_Quad, m_AlternateTexture } } }
+		  m_TexturedDraws{ VulkanTexturedDraw{ m_Quad, m_Assets.LoadTexture(SampleAssets::GetUVGrid()) },
+			  VulkanTexturedDraw{ m_Quad, m_Assets.LoadTexture(SampleAssets::GetUVGridAlternate()) } },
+		  m_TransparentDraws{ VulkanTransparentDraw{ m_TexturedDraws[0] },
+			  VulkanTransparentDraw{ m_TexturedDraws[1] } }
 	{
 		m_TexturedDraws[0].Model = Translation({ -2.0f, 0.5f, 0.6f }) * Scale({ 1.6f, 1.0f, 1.6f });
 		m_TexturedDraws[1].Model = Translation({ 2.0f, 0.5f, 0.6f }) * Scale({ 1.6f, 1.0f, 1.6f });
 		m_TexturedDraws[1].Tint = { 0.8f, 1.0f, 0.8f, 1.0f };
-		// Overlap in front of the cubes. Orbit changes their relative camera depth.
+		// The transparent quads overlap behind the imported meshes in the initial view.
 		m_TransparentDraws[0].Draw.Model = Translation({ -0.45f, -1.55f, 0.65f }) * Scale({ 1.8f, 1.0f, 1.8f });
 		m_TransparentDraws[0].Draw.Tint = { 1.0f, 0.65f, 0.65f, 0.45f };
 		m_TransparentDraws[1].Draw.Model = Translation({ 0.45f, -1.15f, 0.85f }) * Scale({ 1.8f, 1.0f, 1.8f });
 		m_TransparentDraws[1].Draw.Tint = { 0.65f, 0.8f, 1.0f, 0.65f };
-		std::array<ECS::TransformComponent, 3> transforms{};
-		transforms[0].Position = { -0.35f, -0.55f, 0.6f };
-		transforms[0].Scale = { 1.2f, 1.2f, 1.2f };
-		transforms[1].Position = { 0.45f, 1.0f, 0.5f };
-		transforms[1].Rotation = { -0.25f, 0.0f, 0.0f };
-		transforms[2].Position = { 0.0f, 0.5f, -0.65f };
-		transforms[2].Scale = { 8.0f, 8.0f, 0.1f };
-		const std::array<Vec4, 3> tints
-		{
-			Vec4{ 1.0f, 0.45f, 0.12f, 1.0f },
-			Vec4{ 0.12f, 0.8f, 0.9f, 1.0f },
-			Vec4{ 0.22f, 0.27f, 0.34f, 1.0f }
-		};
-		auto& registry = m_Game.GetRegistry();
-		try
-		{
-			m_Draws.reserve(m_MeshEntities.size());
-			for (std::size_t index = 0; index < m_MeshEntities.size(); ++index)
+		m_Session = std::make_unique<SceneSession>(m_Assets.GetProject(), SceneType::Perspective,
+			[this](std::span<const std::byte> bytes, const std::filesystem::path& path, const AssetCatalog& catalog)
 			{
-				auto& entity = m_MeshEntities[index];
-				entity = registry.Create();
-				ECS::StaticMeshComponent mesh;
-				mesh.Mesh = m_Cube;
-				mesh.Tint = tints[index];
-				if (!registry.Add(entity, transforms[index]) ||
-					!registry.Add(entity, mesh))
-					throw std::logic_error("Cannot initialize static mesh entity");
-			}
-			ResetCamera();
-			UpdateDraws();
-		}
-		catch (...)
-		{
-			for (const auto entity : m_MeshEntities) registry.Destroy(entity);
-			throw;
-		}
+				return std::make_unique<PerspectiveLevel>(m_Game.GetRegistry(), m_Assets.GetProject(),
+					PerspectiveLevel::Decode(bytes, path), catalog);
+			}, initialScene);
+		m_BenchmarkRotor = GetLevel().FindEntity("benchmark-rotor-0");
+		UpdateDraws();
 	}
 
-	PerspectiveSample::~PerspectiveSample()
+	PerspectiveSample::~PerspectiveSample() = default;
+
+	GameBindings PerspectiveSample::GetGameBindings() const noexcept
 	{
-		for (const auto entity : m_MeshEntities) m_Game.GetRegistry().Destroy(entity);
+		if (m_FreeFly)
+		{
+			auto bindings = m_Session->GetActive().GetBindings();
+			bindings.Interactions = m_Interactions;
+			return bindings;
+		}
+		return {};
+	}
+
+	PerspectiveLevel& PerspectiveSample::GetLevel() const noexcept
+	{
+		return static_cast<PerspectiveLevel&>(m_Session->GetActive());
+	}
+
+	bool PerspectiveSample::PrepareFrame(const InputState& input, const FrameTime& frameTime)
+	{
+		const bool replaced = m_Session->Update(m_FreeFly && input.WasKeyPressed(Key::F3), input.WasKeyPressed(Key::F4));
+		m_Interactions.clear();
+		if (!replaced && frameTime.DeltaSeconds > 0) m_Interactions.swap(m_PendingInteractions);
+		m_PendingInteractions.clear();
+		if (replaced)
+		{
+			m_Audio.Stop(); m_CameraViewUnavailable = false; m_Angle = 0;
+			m_BenchmarkRotor = GetLevel().FindEntity("benchmark-rotor-0");
+			UpdateDraws();
+		}
+		return replaced;
 	}
 
 	void PerspectiveSample::OnFrame(VulkanContext& renderer,
 		const InputState& input, const FrameTime& frameTime)
 	{
+		const auto frameStart = std::chrono::steady_clock::now();
+		const auto reloaded = m_Assets.ApplyReloads();
+		const bool replacedMesh = reloaded.Mesh;
+		m_MeshReloadAwaitingPresent |= replacedMesh;
 		Update(input, frameTime);
-		renderer.DrawFrame(m_Camera, m_Draws, m_TexturedDraws, m_TransparentDraws);
+		if (auto* metrics = GetFrameMetrics(); metrics && !m_BenchmarkRotor.IsNull())
+		{
+			ECS::TransformComponent rotor;
+			if (m_Game.GetRegistry().Read(m_BenchmarkRotor, rotor))
+				metrics->BenchmarkPhase = rotor.Rotation.Y;
+		}
+		const auto renderedView = renderer.DrawFrame([this](std::uint32_t width, std::uint32_t height)
+		{
+			std::optional<CameraView> view;
+			try
+			{
+				view = GetLevel().GetCameraView(GetLevel().GetSelectedCamera(), static_cast<float>(width) / height);
+				m_CameraViewUnavailable = false;
+			}
+			catch (const std::invalid_argument& error)
+			{
+				ReportCameraUnavailable(m_CameraViewUnavailable, error.what());
+			}
+			return view;
+		}, m_Draws, m_TexturedDraws, m_TransparentDraws, GetLevel().GetLighting());
+
+		if (m_MeshReloadAwaitingPresent)
+		{
+			const auto present = std::chrono::steady_clock::now();
+			const std::chrono::duration<double, std::milli> frame = present - frameStart;
+			if (renderedView)
+			{
+				Log(LogLevel::Info, std::format("FBX reload presented: frame {:.3f} ms, clock {} ns",
+					frame.count(), std::chrono::duration_cast<std::chrono::nanoseconds>(
+						present.time_since_epoch()).count()));
+				m_MeshReloadAwaitingPresent = false;
+			}
+			else if (replacedMesh)
+				Log(LogLevel::Info, std::format("FBX reload frame skipped presentation: frame {:.3f} ms", frame.count()));
+		}
+		if (!renderedView)
+			return;
+
+		for (const MouseButtonPress& press : input.MouseButtonPresses)
+		{
+			if (press.Button != MouseButton::Left || press.X < 0 || press.Y < 0 ||
+				static_cast<std::uint32_t>(press.X) >= press.FramebufferWidth ||
+				static_cast<std::uint32_t>(press.Y) >= press.FramebufferHeight)
+				continue;
+
+			const double pixelX = (press.X + 0.5) * renderedView->Width / press.FramebufferWidth;
+			const double pixelY = (press.Y + 0.5) * renderedView->Height / press.FramebufferHeight;
+			const auto ray = ScreenPointToRay(renderedView->Camera,
+				renderedView->Width, renderedView->Height, pixelX, pixelY);
+			if (!ray)
+				continue;
+
+			if (m_FreeFly)
+			{
+				ECS::CameraComponent lens;
+				if (m_Game.GetRegistry().Read(GetLevel().GetSelectedCamera(), lens))
+					if (const auto distance = RayDistanceToFarPlane(renderedView->Camera, *ray, lens.FarPlane))
+						if (const auto picked = GetLevel().Pick(renderer, *ray, *distance))
+						{
+							m_PendingInteractions.push_back(picked->Entity);
+							Log(LogLevel::Info, "Picked " + GetLevel().GetAuthoredId(picked->Entity));
+						}
+			}
+			if (const auto hit = IntersectGroundPlane(*ray))
+				Log(LogLevel::Info, std::format("Ground hit ({:.3f}, {:.3f}, {:.3f})",
+					hit->X, hit->Y, hit->Z));
+		}
 	}
 
-	void PerspectiveSample::ResetCamera()
+	void PerspectiveSample::UpdateCamera(const InputState& input, const FrameTime& frameTime)
 	{
-		m_Yaw = -std::numbers::pi_v<float> / 2.0f;
-		m_Pitch = 0.4f;
-		m_Distance = 7.5f;
-		m_Camera.Target = { 0.0f, 0.3f, 0.2f };
-		m_Camera.Position = m_Camera.Target + Vec3
+		const float delta = static_cast<float>(std::min(frameTime.DeltaSeconds, 0.1));
+
+		const bool reset = input.WasKeyPressed(Key::R) || input.WasKeyPressed(Key::Home);
+		const float yawStep = CameraKeyStep(input, Key::Right, 0.1f, delta) -
+			CameraKeyStep(input, Key::Left, 0.1f, delta);
+		const float pitchStep = CameraKeyStep(input, Key::Up, 0.1f, delta) -
+			CameraKeyStep(input, Key::Down, 0.1f, delta);
+		if (!reset && yawStep == 0.0f && pitchStep == 0.0f && input.ScrollY == 0.0f)
+			return;
+
+		auto& registry = m_Game.GetRegistry();
+		const auto& camera = GetLevel().GetCamera();
+		ECS::TransformComponent transform;
+		if (!registry.Read(camera.Entity, transform))
+			return;
+
+		if (reset)
+			transform = camera.Spawn;
+
+		if (yawStep != 0.0f || pitchStep != 0.0f || input.ScrollY != 0.0f)
 		{
-			m_Distance * std::cos(m_Pitch) * std::cos(m_Yaw),
-			m_Distance * std::cos(m_Pitch) * std::sin(m_Yaw),
-			m_Distance * std::sin(m_Pitch)
-		};
+			const Vec3 offset = transform.Position - camera.OrbitTarget;
+			const float horizontal = std::hypot(offset.X, offset.Y);
+			const float radius = std::hypot(horizontal, offset.Z);
+			if (!std::isfinite(radius) || radius == 0.0f)
+				return;
+
+			const float yaw = std::remainder(std::atan2(offset.Y, offset.X) + yawStep,
+				2.0f * std::numbers::pi_v<float>);
+			const float pitch = std::clamp(std::atan2(offset.Z, horizontal) + pitchStep, -1.3f, 1.3f);
+			const float distance = std::clamp(radius - input.ScrollY * 0.5f, 2.5f, 25.0f);
+			SetOrbitPose(transform, camera.OrbitTarget, yaw, pitch, distance);
+		}
+
+		if (!registry.Write(camera.Entity, transform))
+			Log(LogLevel::Warning, "Cannot update perspective camera transform");
 	}
 
 	void PerspectiveSample::Update(const InputState& input, const FrameTime& frameTime)
 	{
-		if (input.WasKeyPressed(Key::R) || input.WasKeyPressed(Key::Home))
-			ResetCamera();
 		if (input.WasKeyPressed(Key::Space))
 			m_Animate = !m_Animate;
 		if (input.WasKeyPressed(Key::O) || input.WasKeyPressed(Key::F1))
@@ -162,54 +259,56 @@ namespace Raven
 				"Transparent order: blue-tinted quad composited last");
 		}
 
-		const float delta = static_cast<float>(std::min(frameTime.DeltaSeconds, 0.1));
-		const auto orbitStep = [&input, delta](Key key)
+		if (input.WasKeyPressed(Key::F6) && GetLevel().SwapMeshSources())
+			Log(LogLevel::Info, "Swapped Perspective mesh sources");
+		if (!m_FreeFly)
+			UpdateCamera(input, frameTime);
+		else if (GetLevel().ConsumeCompletion())
 		{
-			// A short tap survives a press/release in the same event poll.
-			return (input.WasKeyPressed(key) ? 0.1f : 0.0f) +
-				(input.IsKeyDown(key) ? delta : 0.0f);
-		};
-		m_Yaw += orbitStep(Key::Right) - orbitStep(Key::Left);
-		m_Yaw = std::remainder(m_Yaw, 2.0f * std::numbers::pi_v<float>);
-		m_Pitch = std::clamp(m_Pitch + orbitStep(Key::Up) - orbitStep(Key::Down), -1.3f, 1.3f);
-		m_Distance = std::clamp(m_Distance - input.ScrollY * 0.5f, 2.5f, 25.0f);
-		m_Camera.Position = m_Camera.Target + Vec3
-		{
-			m_Distance * std::cos(m_Pitch) * std::cos(m_Yaw),
-			m_Distance * std::cos(m_Pitch) * std::sin(m_Yaw),
-			m_Distance * std::sin(m_Pitch)
-		};
+			Log(LogLevel::Info, "Goal completed. F3 restarts.");
+			if (const auto* sound = GetLevel().GetWinSound())
+				m_Audio.Play(*sound);
+		}
 
-		if (m_Animate)
+		if (m_Animate && !m_FreeFly)
+		{
 			m_Angle = std::fmod(m_Angle + frameTime.DeltaSeconds * 0.7,
 				2.0 * std::numbers::pi_v<double>);
+			GetLevel().AnimateMeshes(static_cast<float>(m_Angle), !m_FreeFly);
+		}
 		UpdateDraws();
 	}
 
 	void PerspectiveSample::UpdateDraws()
 	{
-		const float angle = static_cast<float>(m_Angle);
-		auto& registry = m_Game.GetRegistry();
+		auto* metrics = GetFrameMetrics();
+		FrameSection gather(metrics ? &metrics->SceneGather : nullptr);
+		const auto& registry = m_Game.GetRegistry();
+		auto& level = GetLevel();
+		Scene::WorldTransformPass worldTransforms(level, m_DrawWorldTransforms);
 		ECS::TransformComponent transform;
-		if (registry.Read(m_MeshEntities[0], transform))
-		{
-			transform.Rotation = { angle * 0.37f, 0.0f, angle };
-			registry.Write(m_MeshEntities[0], transform);
-		}
-		if (registry.Read(m_MeshEntities[1], transform))
-		{
-			transform.Rotation = { -0.25f, 0.0f, -angle * 0.65f };
-			registry.Write(m_MeshEntities[1], transform);
-		}
-
 		m_Draws.clear();
-		for (const auto entity : registry.GetEntities())
+		for (const auto entity : level.GetEntities())
 		{
 			ECS::StaticMeshComponent mesh;
-			if (!registry.Read(entity, transform) || !registry.Read(entity, mesh))
+			if (!registry.Read(entity, mesh) || !registry.Read(entity, transform))
 				continue;
 			if (const auto* resource = m_Renderer.ResolveMesh(mesh.Mesh))
-				m_Draws.push_back({ *resource, transform.GetMatrix(), mesh.Tint });
+			{
+				ECS::MaterialComponent material;
+				registry.Read(entity, material);
+				const VulkanTexture* texture = nullptr;
+				if (material.BaseColorTexture.IsValid())
+					texture = &GetLevel().UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
+				const Vec4 color{ mesh.Tint.X * material.BaseColor.X, mesh.Tint.Y * material.BaseColor.Y,
+					mesh.Tint.Z * material.BaseColor.Z, mesh.Tint.W * material.BaseColor.W };
+				Mat4 model;
+				{
+					FrameSection transformTiming(metrics ? &metrics->WorldTransforms : nullptr);
+					model = worldTransforms.Get(entity, transform);
+				}
+				m_Draws.push_back({ *resource, model, color, texture, material.Lit });
+			}
 		}
 	}
 }

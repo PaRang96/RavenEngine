@@ -133,6 +133,14 @@ namespace Raven::ECS
 		return entities;
 	}
 
+	bool Registry::Has(Entity entity, const Component& component) const noexcept
+	{
+		if (!IsAlive(entity)) return false;
+		const auto pool = m_Impl->Components.find(component.GetTypeName());
+		return pool != m_Impl->Components.end() && pool->second.Size == component.GetDataSize() &&
+			pool->second.Values.contains(entity.m_Index);
+	}
+
 	bool Registry::Add(Entity entity, const Component& component)
 	{
 		if (!IsAlive(entity))

@@ -39,6 +39,7 @@ namespace Raven
 		case AssetKind::Animation:
 		case AssetKind::Shader:
 		case AssetKind::Scene:
+		case AssetKind::Audio:
 			break;
 		default:
 			throw std::invalid_argument("Invalid asset kind: " + identity);
@@ -79,6 +80,18 @@ namespace Raven
 	}
 
 	AssetCatalog::~AssetCatalog() = default;
+	AssetCatalog::AssetCatalog(AssetCatalog&&) noexcept = default;
+	AssetCatalog& AssetCatalog::operator=(AssetCatalog&&) noexcept = default;
+	void AssetCatalog::Swap(AssetCatalog& other) noexcept { m_Impl.swap(other.m_Impl); }
+
+	std::vector<AssetRecord> AssetCatalog::GetRecords() const
+	{
+		std::vector<AssetRecord> result;
+		result.reserve(m_Impl->Entries.size());
+		for (const auto& [id, entry] : m_Impl->Entries)
+			result.push_back(entry.Record);
+		return result;
+	}
 
 	void AssetCatalog::Register(const AssetRecord& record)
 	{

@@ -4,13 +4,17 @@ The Windows build separates reusable engine code from sample code:
 
 | Target | Output | Responsibility |
 | --- | --- | --- |
-| `RavenCore` | `RavenCore.dll` and import library `RavenCore.lib` | Application loop, platform backend, input, logging, and Vulkan resource ownership |
+| `RavenCore` | `RavenCore.dll` and import library `RavenCore.lib` | Application loop, platform backend, input, logging, scene/project services, scoped asset ownership and Vulkan resources |
 | `RavenEngine` | `RavenEngine.exe` | Entry point, window description, perspective/orthographic samples, camera controls, and animation |
 | `RavenGame` | `RavenGame.dll` | Replaceable sample movement code; standalone child build links the completed engine import library |
 | `RavenShaders` | Validated SPIR-V under `Shaders/<config>/` | Build dependency of `RavenCore` |
-| `RavenContent` | Runtime copies under `Content/` beside the sample | Stages validated shaders and sample PNGs before the engine/sample build |
+| `RavenContent` | Runtime copies under `Content/` beside the sample | Stages validated shaders, discovered Content files, metadata and licenses before the engine/sample build |
 
 The DLL and executable are emitted together under `out/build/x64-debug/RavenEngine/` or `out/build/x64-release/RavenEngine/`. Existing executable paths and launch configurations remain valid. The `.lib` is an import library used when linking the sample; the engine implementation remains in the DLL, which is required at runtime. Shader lookup now uses executable-relative `Content/Shaders`; see [RuntimeUtilities.md](RuntimeUtilities.md) for relocation and content-root overrides.
+
+## Current scene and asset workflow
+
+Both sample families use SceneProject, SceneSession and Scene. The project catalog stores asset UUID/type/path/settings and family-specific scene order. Scene owns entities, selected camera/gameplay bindings and AssetStore leases. Compatible game replacement retains these host objects. Successful level saves restart the authored attempt; PNG/FBX and compatible DLL replacement preserve its runtime state. Development reads configured source paths, including an absolute shader source path, while ordinary execution reads staged Content. See [SceneWorkflow.md](SceneWorkflow.md) for ownership, format, complete commands, rejection policies and validation.
 
 ## CMake layout
 
@@ -25,7 +29,7 @@ The build entry points keep target names, output directories and preset commands
 | `cmake/RavenSources.cmake` | Assign discovered public/common/sample files to their owning target |
 | `cmake/RavenGameSources.cmake` | Game folder discovery shared by compilation and content-based rebuild checks |
 | `cmake/RavenPlatform.cmake` | Select the native folder from the shared discovery result; configure platform dependencies/settings |
-| `cmake/RavenContent.cmake` | Single registrations for shaders/runtime files; derives source entries, compilation, validation, outputs, dependencies and staging |
+| `cmake/RavenContent.cmake` | Shader registration/validation, automatic Content discovery/staging, and configured development source roots |
 | `cmake/RavenBuildEnvironment.cmake` | Capture selected compiler/SDK environment variables once at host configuration |
 | `cmake/RavenGameModule.cmake` | Optional standalone game build, host contract, generated environment and build configuration |
 | `RavenEngine/Private/Game/CMakeLists.txt` | Independent game-DLL project linking the completed engine import library |
@@ -162,7 +166,7 @@ One create callback and `Destroy` are required and checked before creating a win
 
 `Run` establishes its content root, then creates the window, renderer, GameInstance, optional GameModule, and host client in that order. Cleanup reverses this order. A custom-deleter `unique_ptr` invokes the caller's destroy function exactly once on normal exit or frame failure. Renderer cleanup waits for GPU completion; the window outlives it. Factory exceptions unwind the earlier owners. Only one application run may be active at a time; independent GameInstance values do not require a singleton.
 
-Clients borrow the renderer and input during callbacks. `CreateMesh` returns renderer-owned resources valid until shutdown. Both sample factories receive GameInstance. Cameras and animation/input bookkeeping stay in sample members. OrthographicSample owns five Transform/Sprite entities, with F1 editing Sprite ordering in Registry; PerspectiveSample owns three Transform/StaticMesh entities. Cleanup removes only each sample's own entity handles. GPU resource ownership is unchanged.
+Clients borrow the renderer and input during callbacks. Legacy CreateMesh resources remain valid until renderer shutdown. Both sample factories receive GameInstance and create host-owned SceneSessions. Their Scene instances own the current entities, selected ECS cameras, gameplay bindings and managed asset leases. F1 edits Sprite ordering in Registry. Cleanup affects only owned handles; compatible game replacement preserves the session. The [scene workflow](SceneWorkflow.md) defines shared resource ownership and release.
 
 Frame timing and minimized-window behavior are preserved: event polling precedes `OnFrame`, a nondrawable framebuffer skips it, and the first drawable frame after startup or restore receives zero delta.
 
@@ -174,7 +178,7 @@ Validation: Windows x64 Debug and Release builds pass for RavenCore, RavenEngine
 
 ## Static meshes on entities — 2026-10-19
 
-`Public/Raven/Components/TransformComponent.hpp` and `StaticMeshComponent.hpp` define their respective components, both derived from the abstract Component parent. TransformComponent directly holds position, Euler rotation in radians and scale, composing `T * Rz * Ry * Rx * S`; its default matrix is identity. StaticMeshComponent directly holds a runtime MeshHandle and RGBA tint. These are concrete fields, not part of Component. Static describes immutable mesh geometry; entity transforms can still animate. This first path uses the existing unlit ColorVertex meshes; textured/imported mesh assets and materials remain separate work.
+`Public/Raven/Components/TransformComponent.hpp` and `StaticMeshComponent.hpp` define their respective components, both derived from the abstract Component parent. TransformComponent directly holds position, Euler rotation in radians and scale, composing `T * Rz * Ry * Rx * S`; its default matrix is identity. StaticMeshComponent directly holds a runtime MeshHandle and RGBA tint. These are concrete fields, not part of Component. Static describes immutable mesh geometry; entity transforms can still animate. This first path uses the existing unlit ColorVertex meshes; textured/imported mesh assets and materials remain separate work. The current extension with imported normals, UVs, retained materials and lighting is documented in [MeshMaterials.md](MeshMaterials.md).
 
 `VulkanContext::CreateMeshHandle(vertices, indices)` creates renderer-owned geometry and returns a copied value identifying its context and slot. `ResolveMesh(handle)` returns a borrowed resource or null for null/foreign/expired-context handles. Context identities are not reused and mesh slots are not recycled. Handles are runtime identities, not persistent asset references, and do not release geometry when copied or removed. GPU resources live until renderer shutdown after pending work completes. Do not store the resolved pointer in Registry data or serialize the handle for later runs.
 
@@ -188,11 +192,11 @@ The owner requested component implementation before further game-DLL work. The i
 
 SpriteComponent and SpriteBlendMode live in `Public/Raven/Components/SpriteComponent.hpp`; SpriteComponent derives from the same virtual Component parent. It contains AssetRef<TextureAsset>, RGBA Tint, SpriteBlendMode and signed SortLayer/SortOrder. The macro supplies the common type/size/copy implementation. Default mode is Alpha, default tint is white, and a null texture reference produces no draw. Pose and size remain in Transform; the shared quad lies in local XZ, so Scale.X/Scale.Z control width/height. No texture pointer, resource owner or renderer callback enters Registry storage.
 
-OrthographicSample initializes five Transform/Sprite entities and gathers matching entities from the Registry snapshot each frame. All sprites share one quad; texture references resolve through the existing catalog/cache. Opaque mode uses the opaque depth-tested path. Alpha uses the existing straight-alpha path, sorted by layer/order then camera depth; higher layer/order draws later. SortLayer/SortOrder apply to Alpha only. Tint alpha supports fading. Runtime additions and edits update submissions without a fixed draw array or per-entity geometry allocation. Missing Transform/Sprite, null textures and unknown blend modes are skipped. A non-null unregistered asset or load failure propagates through the existing asset-service exception path. Registry slot order is not creation order and does not replace explicit transparent ordering.
+OrthographicSample initializes the active level's Transform/Sprite entities and gathers matching entities from the Registry snapshot each frame. All sprites share one quad; texture references resolve through the existing catalog/cache. Opaque mode uses the opaque depth-tested path. Alpha uses the existing straight-alpha path, sorted by layer/order then camera depth; higher layer/order draws later. SortLayer/SortOrder apply to Alpha only. Tint alpha supports fading. Runtime additions and edits update submissions without a fixed draw array or per-entity geometry allocation. Missing Transform/Sprite, null textures and unknown blend modes are skipped. A non-null unregistered asset or load failure propagates through the existing asset-service exception path. Registry slot order is not creation order and does not replace explicit transparent ordering.
 
-F1 edits the blue sprite's SortOrder in Registry. Camera controls remain local pending ECS camera selection/render-view integration. Cleanup and initialization rollback destroy only the five owned handles; removing an owned entity and reusing its slot does not let the sample destroy the replacement. Other callers own their runtime entities. Renderer-owned resources remain valid until context shutdown; removing a Sprite does not release its texture or quad.
+F1 edits the blue sprite's SortOrder in Registry. Pan, zoom and Home update the selected camera’s components. Cleanup and initialization rollback destroy only the owned sprite and camera handles. Removing an owned entity and reusing its slot does not let the sample destroy the replacement. Other callers own their runtime entities. Renderer-owned resources remain valid until context shutdown; removing a Sprite does not release its texture or quad.
 
-The existing game DLL still updates Position/Velocity. A temporary sample-only SyncLegacyMovement applies its Position delta to the first sprite's Transform.Position before gathering draws. Applying deltas preserves direct Transform edits rather than overwriting the pose every frame. This keeps --game/--watch-game behavior compatible without changing DLL source or build/loader code. The planned game-code migration will update Transform directly and remove this bridge; it is not a general component synchronization system.
+The Orthographic sample adds Velocity to the moving sprite. The game DLL writes its existing Transform directly and reverses Velocity.X at the existing bounds. OnFrame gathers the retained pose for drawing.
 
 Sprites are suitable visual primitives for future smoke/VFX: many puffs can reuse a quad/texture while a system updates transforms and tint alpha. Emitters, particle lifetime/pooling, automatic camera-facing billboards, flipbook/UV animation and additive blending are not implemented by this milestone.
 
@@ -208,7 +212,87 @@ The `ViewFromPoseRH(position, rotation)` helper converts the entity Transform po
 
 Validation on 2026-11-12: the Windows `x64-debug` build passed. A temporary public client passed 35 checks against RavenCore covering Registry Add/Read/Write, retained settings across a projection mode switch, one Transform shared by mesh and camera, near/far depth, aspect, scale independence and invalid inputs. Its builder received the prepared drawable extent, skipped the missing-camera view and presented a frame from a valid Registry camera. It also checked rejection of a destroyed handle after slot reuse. The previous Debug smoke check presented a frame in both samples through the existing overloads. This is focused Debug evidence for the current component and handoff. The older 241-check camera-foundation logs describe the reverted prototype. Release and native macOS/Linux were outside this audit, and no test suite was added.
 
-Both samples still use local camera objects. The [next change](../TODO.md#next-implementation-target-cameracomponent) is to give OrthographicSample a selected camera entity and move its pan, zoom and reset to the entity components. Selection switching, Perspective migration and direct game-module camera control follow.
+OrthographicSample owns two camera entities and stores the selected entity separately. F2 changes selection before camera input runs. Each camera retains its own Transform and projection settings across switches. Home restores the selected camera’s startup pose and projection. The primary camera starts at X = 0 and the second at X = 4, both at Y = -10 facing +Y. This restores the moving sprite’s initial depth visibility in the primary view. The callback reads the selected components and skips drawing for missing, stale or invalid camera values.
+
+Validation on 2026-11-13: Windows x64 Debug and Release builds passed. A focused Debug client verified Vulkan presentation, startup depth, F2 selection before input, independent pan and zoom, Home on the second camera, and recovery by switching away from a destroyed camera. A replacement entity in a recycled slot and an unrelated entity survived sample cleanup. The Debug `--orthographic` and Release `--game` samples presented a frame, and Release loaded the game DLL. These checks used programmatic input and startup smoke runs. Manual controls, native macOS/Linux and live DLL replacement were outside this check.
+
+PerspectiveSample owns an ECS camera and gathers meshes after its animation update. ScreenPointToRay uses the matrices and drawable extent returned by DrawFrame, and the sample intersects the ray against Z = 0 after rendering. Standalone orbit and reloadable free-fly share the same rendering and picking paths.
+
+## File-authored Orthographic levels
+
+Run the Windows sample with --orthographic, --game, or --watch-game. F1 toggles the bound alpha sprite's sort order. F2 switches cameras. Home resets the selected camera to its authored pose and lens. F3 restarts the current level from disk. F4 switches between Orthographic and Courtyard.
+
+CMake stages the source files in Content/Levels beside the executable. To try an edit while running, edit the staged Content/Levels/Orthographic.ravenlevel, change the runner's position from -2 to -1 on X, then press F3. F4 loads the other file. The next host build stages the source copies again. Keep permanent edits in the repository's Content/Levels directory.
+
+The text format uses one record per line, whitespace-delimited fields, and # comments. The first record is raven-level 1. Entity names are unique within the file. Records after the header can appear in any order.
+
+| Record | Fields after the record name |
+| --- | --- |
+| camera | Name, position XYZ, rotation XYZ in radians, orthographic height, near plane, far plane |
+| sprite | Name, texture UUID, opaque or alpha, position XYZ, rotation XYZ in radians, scale XYZ, tint RGBA, integer sort layer, integer sort order |
+| cameras | Initial camera name and alternate camera name |
+| moving | Sprite name and initial velocity XYZ |
+| order | Alpha sprite name for the F1 sort-order toggle |
+| player | Sprite name for DLL-controlled movement |
+| goal | Sprite name for the goal |
+| bounds | Player, moving sprite, or goal name and positive finite X and Z half-extents in world units |
+| solid | Stationary sprite name and positive finite X and Z half-extents in world units |
+
+Each level declares two distinct cameras and one cameras, moving, and order record. A playable level adds one player record, one goal record, and exactly three bounds records, one each for the player, moving sprite, and goal. These three bindings name distinct sprites. A level can add multiple solid records, each bound to a different stationary sprite. Each solid uses its sprite's authored position. Its X and Z half-extents are explicit world units, independent of rotation and visual scale. The loader rejects unknown solid names, duplicate records, invalid extents, and a player spawn inside a solid. Sprite textures use UUIDs from SampleAssets.cpp. The sample validates records, bindings, and texture files before publishing a new level. A failed F3 or F4 logs the file path and cause and keeps the current level. A successful replacement destroys only the previous level's entities. The retained GameInstance, Registry, renderer, quad, texture cache, and DLL continue to serve the host. F3 resets the level to its authored values. A compatible DLL reload preserves live values and camera selection.
+
+Windows x64 Debug and Release builds passed. The native integration probe matched the original sprite transforms, tints, texture assignments and camera settings, and exercised F1, F2, Home, and both sprite bounce bounds. It verified 16 switches and 16 restarts per configuration. Old handles became stale, an unrelated entity survived, and the original quad and two texture objects were reused. Vulkan API traces showed 32 presentations and zero new image, buffer, sampler, or descriptor-set allocations in that loop. Malformed data, unknown camera and sprite references, an unknown UUID, and a missing texture file were rejected while the previous level kept rendering. Restoring the file recovered on the next restart.
+
+Stock executable captures in both configurations showed the edited layout after F3, Courtyard after F4, and a pixel-identical original frame after restoring the file and switching back. A Debug integration probe used the same source watcher as --watch-game and changed MovementScale while Courtyard was active. DLL activation retained the level entity IDs, moving sprite pose and velocity, and alternate camera selection. The changed movement rendered, and F3 restored Courtyard's authored sprite and camera state. Test source and content edits were restored, and the native runs shut down cleanly.
+
+Local probe sources, native logs, captures, and Vulkan API traces are under ignored out/validation/orthographic-levels/. Live DLL retention was checked in Debug. Native macOS/Linux were outside this milestone. The validation used the original shared texture set. Courtyard now has a dedicated wall PNG. See [live texture replacement](AssetSystem.md#live-courtyard-wall-reload). General scene serialization and resource retirement remain open.
+
+## Courtyard gameplay
+
+Launch the Windows sample with --game or --watch-game and press F4 to enter Courtyard. Move the cyan explorer with WASD, go around the purple wall, avoid the gold courier, and reach the green beacon. To win from spawn, follow the bottom edge to the right and then go up toward the beacon. To lose, go straight up from spawn into the courier's path. A win turns the explorer green and plays an ascending cue. A loss turns it red and plays a descending cue. The player stays in place until F3, and the courier keeps moving. F2 switches cameras, arrows pan, wheel or PageUp/PageDown zoom, and Home restores the selected camera. F4 returns to the original Orthographic level. Plain --orthographic displays both levels and provides camera controls. WASD movement and the moving sprite use the game DLL.
+
+Application processes frame controls once and renders once per drawable frame. The Orthographic client advances gameplay in 1/60-second steps and runs at most four steps per frame after a stall. The keyboard snapshot holds the latest held state and buffers transitions in arrival order until the first tick consumes them. A press and release between ticks still moves the player for one tick. Mouse and wheel stay on the frame path. Minimize and successful level replacement clear pending simulation time and transitions, and the first restored frame starts at zero delta. Drawable frames have a 120 Hz cap and minimized frames have a 30 Hz cap. The loop sleeps only for the remainder of each frame budget. Perspective orbit and DLL free-fly use the frame update path. Rendering uses the latest simulated pose.
+
+GameBindings passes nullable camera and player handles by value. The DLL supplies normalized player displacement in GameUpdateResult, and the level resolves it with ResolveMovementXZ before writing the existing Transform once per moving tick. The swept XZ box stops at the first wall and slides with any remaining tangent motion. Y, rotation, and visual scale are independent of collision. The beacon and courier use trigger overlap after player and courier movement each tick. Edge contact counts, and a courier hit takes precedence over reaching the beacon. The level returns an outcome only on the tick it finishes, which lets the host emit one cue.
+
+Further collision and physics work is deferred. See the [roadmap deferral](../ROADMAP.md#deferred-collision-and-physics).
+
+AudioPlayer caches mono or stereo 16-bit PCM WAV clips at 8–96 kHz by asset ID. The sample owns the service, catalog, and attempt cues across level replacements and DLL reloads. Its private XAudio2 backend owns one source voice at a time and keeps sample data alive until the voice is destroyed. A successful F3 or F4 stops the outgoing cue. Compatible DLL reload retains the current cue and attempt state. Audio failure logs a warning and leaves the attempt playable. Native playback is implemented for Windows.
+
+To move the goal while running, change the beacon position in staged Content/Levels/Courtyard.ravenlevel beside the executable and press F3. For a quick test, move it to X = -1.7 and Z = -2.4, then walk right from spawn. Move the platform sprite to move its wall, or change its solid record to resize the collider. A negative solid extent rejects the replacement and the current attempt stays playable. Keep permanent edits in the repository's Content/Levels directory.
+
+With --watch-game, change PlayerSpeed in the game DLL source while Courtyard is active. A compatible replacement uses the new speed and retains the player pose, courier pose and velocity, selected camera, and attempt result. F3 restores authored values and the initial camera. The shared GameUpdateResult signature requires a host rebuild and restart when first adopted. Subsequent game-body edits use the existing watcher.
+
+Windows x64-debug and x64-release built and passed native-input playthroughs, restart and switch, live goal edits, invalid solid rollback, and minimized input reset. Standalone orbit and DLL free-fly passed mouse/wheel and picking checks. The cadence probe found identical poses and outcome ticks at simulated 30, 60, and 144 Hz render schedules. It checked a thin wall, sliding and corner contacts, simultaneous triggers, movement lock, short taps, and four-step catch-up. WASAPI loopback on the unmuted default Windows render endpoint captured one ascending and one descending cue per playthrough in each build. A 37-attempt loop per build had stable post-warmup handle counts, recovered from a missing WAV, and shut down cleanly. The Debug watcher changed the speed from 3 to 6 units per second, retained both active and finished state, and verified the authored reset after F3. Probe sources and logs are under ignored out/validation/courtyard-milestone/. Native macOS and Linux audio playback remains open.
+
+## Live Courtyard shader reload
+
+Build the Windows preset once. From the repository root run:
+
+~~~powershell
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --game --watch-shader
+~~~
+
+Use the corresponding x64-release path for Release. Press F4 and save an edit to [Texture.frag.hlsl](../RavenEngine/Private/Renderer/Shaders/Texture.frag.hlsl). The startup log prints the absolute source path configured by CMake, independent of the launch directory. Replace the return statement in PSMain with the following to see the change on opaque and transparent sprites:
+
+~~~hlsl
+float4 color = SurfaceTexture.Sample(SurfaceSampler, input.UV) * input.Tint;
+return float4(color.bgr, color.a);
+~~~
+
+Save a syntax error to see the compiler diagnostic while the previous shader remains visible. Restore valid HLSL to recover. Keep the current PSMain entry, texture and sampler bindings, and stage inputs and output. The watcher checks the compiled SPIR-V against that fixed interface before pipeline creation. Use --watch-wall to watch the Courtyard PNG as well, and use --watch-game in place of --game to enable automatic game DLL builds.
+
+The worker polls the shader contents every 40 ms and waits for 100 ms of stability. It takes an immutable source snapshot, runs the same CMake DXC and spirv-val recipe as a normal build in a private temporary directory, and checks the source again before handing off the result. The renderer builds an opaque and transparent pipeline from the same candidate and publishes both before recording the next frame. Each submitted frame holds its pipeline pair until its frame fence signals. The context retains the active SPIR-V across swapchain recreation. The normal staged shader provides the startup version, and live compilation writes only temporary outputs. The shader compiler and automatic game builds share the Windows process owner, with separate job and output handles for each build.
+
+Stock Debug and Release captures verified changes in both passes during play and after a win. A syntax error and an incompatible descriptor binding kept both previous pixels visible. A temporarily missing source also recovered on the next valid save in both builds. The corrected save, minimize and restore, and resize showed the replacement. A focused probe verified entity identity, player and courier poses, courier velocity, the selected camera, and the completed result. F3, F4, wall PNG reload, and compatible DLL reload passed. A Debug run launched from the repository root and exercised the three watchers together. Temporary source edits were restored. Vulkan traces of 64 replacements per preset peaked at five live graphics pipelines including the color pipeline and returned to zero at shutdown. Core and synchronization validation reported no warnings or errors in the traced runs.
+
+| Windows build | Save to first present, median / worst | Compile and validate, median / worst | Create both pipelines, median / worst | Longest reload frame |
+| --- | ---: | ---: | ---: | ---: |
+| x64-debug | 231.5 / 244.5 ms | 62.7 / 78.1 ms | 0.54 / 0.60 ms | 27.4 ms |
+| x64-release | 240.3 / 267.0 ms | 63.9 / 88.1 ms | 0.30 / 0.37 ms | 27.5 ms |
+
+Each timing run used 14 saves on the RTX 3070 Ti Laptop GPU without screenshot or API capture. Save-to-present starts when the file replacement completes and ends at the successful Vulkan present call. Reload frame time covers renderer work through present, including pipeline creation and any frame or presentation waits. The pipeline timings reflect the observed driver cache state. Validation scripts, captures, and logs are under ignored out/validation/live-shader/.
+
+The Windows development workflow covers this one self-contained fragment shader and its existing interface. Shader include dependency watching, layout changes, other shader stages, and native macOS and Linux verification remain open. Driver-level pipeline allocation failures were not injected.
 
 ## Retained ECS state and game reload — 2026-10-19
 
@@ -248,7 +332,7 @@ An empty declaration such as `RAVEN_COMPONENT(MyGame::Selected);` inside a Compo
 
 List every retained field once in the macro, in a consistent order. Adding a retained field requires updating this declaration. This is an in-process value-copy contract, not a persistent file format or automatic layout migration. No manual layout-version counter, per-component storage implementation, new lifecycle callback or global Registry is introduced.
 
-TransformComponent exposes Position/Rotation/Scale/GetMatrix directly; StaticMeshComponent exposes Mesh/Tint. The existing sample Position/Velocity structs expose Location/Linear. Component keys now include their full qualified type identifiers. Renaming a type changes its key; names and equal byte sizes alone are not layout compatibility proofs. The existing generated shared-header/build contract remains responsible for rejecting unsupported code replacement until a host/game rebuild and restart.
+TransformComponent exposes Position/Rotation/Scale/GetMatrix directly; StaticMeshComponent exposes Mesh/Tint. SampleGame::Velocity exposes Linear. Component keys now include their full qualified type identifiers. Renaming a type changes its key; names and equal byte sizes alone are not layout compatibility proofs. The existing generated shared-header/build contract remains responsible for rejecting unsupported code replacement until a host/game rebuild and restart.
 
 Historical metadata-only refactor validation on 2026-10-19: Debug/Release engine, host, existing game DLL and temporary probe callers built. Component-only checks covered generated names, namespace separation, copied fields, removal and stale slot reuse. An expected compilation failure rejected std::string. Both native samples passed focused GPU checks, with clean Debug core/synchronization diagnostics. Logs remain under ignored `out/validation/game-reload/`: `{debug,release}-component-macro-build.log`, `*-component-macro-probe-build.log`, `*-component-macro-probe.log`, `*-component-macro-render.log` and `component-macro-invalid.log`. That evidence predates the virtual Component parent; it is not the current verification record. The probes remain temporary evidence; no tracked test suite or CTest integration was added.
 
@@ -271,7 +355,7 @@ The following remain deliberate limits: field lists are manual; type names/equal
 
 Assessment verification: Windows Debug/Release engine, host, existing game DLL and focused probes build; changed Registry/module sources also compile with /W4 /WX. Checks pass for operations through Component references, virtual destruction, independent copies, reviewed custom values/arrays, tags, buffer-size failure, stale handles and cleanup. One changed-logic DLL replacement preserves state; an incompatible candidate is rejected while the active code continues; values remain readable after final unload. Both samples pass 50 frames per configuration, with clean Debug Vulkan core/synchronization diagnostics. Separate expected compile failures reject owning and borrowed-view fields. Logs: `out/validation/game-reload/{debug,release}-component-assessment-build.log`, `*-component-assessment-probe.log`, `*-component-assessment-render.log`, `InvalidComponent-assessment.log` and `InvalidBorrowedComponent-assessment.log`. Watcher recovery, manual visual/resize/minimize checks and non-Windows execution were not rerun. Probes remain ignored temporary evidence; no tracked test suite or CTest integration was added.
 
-Sample control state uses ordinary class members. No separate sample-component file or Registry wrapper helpers are needed. OrthographicSample initializes Transform/Sprite entities and keeps Position/Velocity only for the temporary first-sprite compatibility bridge described above. All sample factory paths still receive GameInstance. Only the movement update in RavenGame.dll is currently replaceable.
+OrthographicSample initializes Transform/Sprite entities and the moving sprite's Velocity once. PerspectiveSample initializes its camera once and supplies its handle to the game update in free-fly mode. Both factory paths receive the host-owned GameInstance.
 
 The implemented ownership boundary is:
 
@@ -283,9 +367,9 @@ The implemented ownership boundary is:
 
 A GameInstance per running game does not require a process-wide singleton. Its retained implementation and destruction must remain available after a game module is unloaded. Future editor editing/play sessions are a design assumption, not a commitment to ship a complete visual editor in v1. The current application still runs one client/window; multiple concurrent play sessions are not implemented by this plan.
 
-Application polls the GameModule between updates, then calls its active update function with borrowed GameInstance/InputState/FrameTime before the host client's OnFrame. Polling/builds continue while minimized; gameplay/rendering pause. The retained OrthographicSample initializes resources/entities once, bridges legacy movement into Transform and gathers Transform/Sprite values for drawing. Only the movement function lives in RavenGame.dll. No module-owned virtual objects, destructors, callbacks, threads or retained pointers may survive an update. The explicit ComponentValue policy and structural checks protect copied values; custom opt-ins still require reviewed value/ID-only members.
+Application polls GameModule between updates and calls the active function with borrowed GameInstance, InputState, and FrameTime, plus a GameBindings value from the client. The host client then runs OnFrame. The DLL updates sprites with Velocity and runs camera and player control for the corresponding bound handles. In free-fly, the DLL is the sole writer of the selected camera pose after initialization. Polling/building continue while minimized. Gameplay and drawing pause, and the first drawable frame gets zero delta. Module-owned objects, callbacks, threads and retained pointers must end before unload.
 
-For the initial scene and reload example, share the existing mesh and asset catalog/cache. Current meshes, textures and immutable descriptors remain renderer-owned until shutdown. Sample constructors allocate resources and create per-client caches, so recreating clients on every code replacement can accumulate unused renderer-owned resources. Preserve this initialization across game-code swaps. Destroying a client or AssetResources service does not individually release GPU resources. Persistent asset references, runtime entity identity and future resource handles have separate responsibilities. Define sharing/release, stale-handle behavior and safe GPU retirement before repeated scene switching or resource replacement.
+Preserve the initialized renderer, project, active scene and asset service across game-code replacement. The scene path shares resources through AssetStore leases and releases unused managed resources behind generation-checked handles. Submitted frames retain native data until their fences complete. Legacy AssetResources and direct renderer creation remain pinned until context shutdown. Persistent asset UUIDs, runtime resource handles and entity identities have separate roles; see [ownership and retirement](SceneWorkflow.md#scene-and-resource-ownership).
 
 Game callback aliases remain in ApplicationClient.hpp; Api.hpp holds separate engine/game export macros. GameModule.cpp owns replacement and polling/build orchestration. Win32GameModule.cpp contains native loading and a hidden child process/job with redirected diagnostics; shutdown cancels only its own build tree. Game implementation and state definitions remain in Private/Game. Application.cpp coordinates lifetimes and frame calls.
 
@@ -295,7 +379,7 @@ Engine implementation follows assistant-suggested, owner-applied snippets as cla
 
 `RavenCore.dll` and the host remain loaded. GameModule reserves a unique execution-copy directory beside the game output, copies the DLL, loads it by absolute path, checks the fixed C-linkage contract query, then obtains the typed update function. A valid candidate replaces the old function only between synchronous calls. The previous library and its execution copy are released after activation. Failed copying/loading, missing exports, null updates and contract mismatches leave the active module intact. The build output is never loaded, so the linker can overwrite it.
 
-Run `RavenEngine.exe --game` for explicit/finished-output reload or `--watch-game` for source builds. F5 calls Reload. Poll observes external output contents/metadata after two stable samples, including replacements with equal size/timestamps. The source watcher compares file contents every 500 ms and waits for a stable sample before building. It watches Public headers, game .cpp/.hpp files, game/root CMake rules, presets and cmake helpers. Edits during a build queue another build; a source snapshot changed during compilation is not activated. This is a polling watcher, not a native notification backend.
+The [default Windows launch](DevelopmentReload.md) enables source builds for Perspective in free-fly mode. The explicit `--game` and `--watch-game` commands still select Orthographic when used alone. Add `--free-fly` to select Perspective. F5 calls Reload. A worker observes external output contents and metadata after two stable samples, including replacements with equal size and timestamps. Windows directory notifications wake the worker, and a periodic content audit catches missed changes. It watches Public headers, game C++ files, game and root CMake rules, presets, and CMake helpers. A source edit during a build queues a new build. The frame loop accepts a finished result between gameplay updates.
 
 CMake generates a SHA-256 contract from all Public/game .hpp definitions, relevant build files, compiler/version, pointer size, configuration and C++ flags. Game .cpp bodies are excluded so logic can change. Any contract change, including a header comment, conservatively requires rebuilding/restarting the host; there is no automatic reset or migration. A separate content-derived build key forces compilation even when timestamps are equal. Component names must be unique and kept stable; byte-size checks alone do not prove layout compatibility. No developer-maintained layout counter is needed.
 
@@ -304,6 +388,27 @@ The standalone child project under each build's RavenEngine/GameBuild links Rave
 This is a matching-toolchain development interface, not a sandbox or compiler-independent plugin ABI. The supported sample dependency set is shared .hpp definitions and fixed CMake rules; adding private/external headers, libraries, generator flags or other dependencies requires extending the contract inputs and rebuilding the host first. Do not use a cpp-only edit to introduce persistent type definitions or change ABI-affecting pragmas/macros. Arbitrary layout migration and recovery from native code crashes remain outside scope. The DLL's loader initialization runs before its query can be checked, so load only trusted local build output. Shipping packages should omit this development module/build workflow.
 
 Build or pre-activation validation failures should retain the previous working module. This does not guarantee recovery from arbitrary execution errors in newly activated native code. Automatic migration of arbitrary C++ object layouts is outside the first example. End-to-end completion requires actual changed behavior with retained ECS state and repeated replacement, not just a DLL export check.
+
+## Windows gameplay hot reload validation
+
+Build `x64-debug` and `x64-release` from a Visual Studio developer shell. Run these commands from the workspace after building:
+
+```powershell
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game --free-fly
+```
+
+Run the examples separately. In Orthographic, edit `MovementScale` in `RavenEngine/Private/Game/RavenGame.cpp` and observe the moving sprite. In Perspective, hold the right mouse button and drag to look, use WASD to move and Q/E for world-vertical travel. The wheel changes FOV. A left-click logs the ground hit from the presented camera view. Change `FreeFlySpeed` and repeat a movement input, or change the wheel multiplier and scroll. Source polling builds and activates compatible edits while retaining the existing camera. `--free-fly` without `--watch-game` also loads the DLL and supports F5. Standalone `--perspective` keeps orbit controls. Restore test edits when finished.
+
+Shared headers and build-rule edits require a host rebuild and restart. Routine `.cpp` logic edits use the DLL watcher. While a host runs, use `cmake -P out/build/x64-debug/RavenEngine/GameBuild/BuildGame.cmake` for a manual game-only build. F5 reloads the resulting DLL.
+
+To reproduce rejection in a running Debug watcher, save the original game source and shared definitions first. Add an intentional compile error to RavenGame.cpp and verify that the active movement still responds. Restore the game source, then make a reversible comment edit in a shared header. The resulting DLL has a different contract and the host reports rejection. Restore the header and make a valid game-body edit to verify recovery. The validation probe used a separately built incompatible DLL for the second case.
+
+- Windows x64 Debug and Release builds and native runs passed. Programmatic input checked standalone orbit, free-fly strafe and right-drag, ground picking after resize, and minimize/restore without a pose jump. A Vulkan integration probe checked both bounce bounds, 30/60 Hz movement, FOV and pose independence, and the host frame's use of the updated sprite and camera.
+- In the Debug integration probe, two compatible source edits changed both movement behaviors in the first tested frame after replacement. Registry/entity identity, both selected camera handles, camera pose/lens and sprite position/rotation/scale/velocity carried through activation. Submitted mesh, shared quad and cached texture object addresses stayed stable. A compiler error and an incompatible contract both kept generation 4 active and rendering. A valid edit activated generation 5, and restoring the original source activated generation 6. The sample entities were cleaned up at shutdown.
+- Save to first verified rendered effect took **2.250 s** and **1.969 s** for the two compatible edits. Recovery took **2.312 s**. These are local Debug measurements with the existing polling and background-build path on the RTX 3070 Ti Laptop GPU system. The stock `--watch-game --free-fly` executable also rendered two wheel-response changes while preserving the prior lens and off-center ground hit across each replacement.
+
+Local probe sources and logs are under ignored `out/validation/midterm-gameplay/`. `sample_smoke.py` drives native windows, `GameplayProbe.cpp` verifies retained state and renderer resources with the production sample classes, and `watch_probe.py` and `watch_live.py` exercise the two watcher paths. The intentional bad build log is `x64-debug/intentional-failure.log`. These checks used Windows. Live replacement timing and failure cases were measured in Debug.
 
 ## Joint ECS/reload validation on 2026-10-19
 
@@ -342,3 +447,28 @@ Two additional Windows/shared API defects are reproduced before correction: a cl
 Debug and Release builds pass. All 17 public headers and 21 Windows/shared private headers compile independently with `/W4 /WX`; public DLL clients check function/member-pointer types, pass 27 behavior checks, and render eight frames per configuration. Checks include both `Run` overloads, factory validation, direct public window creation, framebuffer/input access, renderer creation/texture upload, client cleanup, and content-root restoration. A separate client built using the original application declaration links and runs in each configuration. Debug Vulkan core/synchronization validation is clean. The DLL has 18 exports and preserves all 16 prior symbols. Evidence is under `out/validation/signature-*.log`; temporary probe binaries and objects are removed, and no tracked test source is added.
 
 At the time of the signature audit, the former `Arm64Mac` header had an invalid `IsKeyDown` override, lacked the required input/framebuffer overrides, and had no executable-path implementation. The historical compiler evidence is in `out/validation/signature-before-mac-header.log`; these interface/path findings have since been addressed by `CocoaWindow`, `CocoaInput` and `MacPaths.cpp`. Earlier native macOS Debug evidence is recorded in [MacOSBuild.md](MacOSBuild.md). As of 2026-10-14, macOS/Linux still lack the asset system's `Platform::FillRandomBytes` implementation and CMake hookup, and need current Debug/Release native verification. They are not included in the passing Windows build/header counts. Follow [PlatformHandoff.md](PlatformHandoff.md) for remaining work.
+
+## Live Perspective level editing and completion audio
+
+Build a Windows preset once, then run from the repository root.
+
+~~~powershell
+Set-Location -LiteralPath 'D:\RavenEngine'
+& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
+~~~
+
+Use `x64-release` for the Release build; [SceneWorkflow.md](SceneWorkflow.md#complete-launch-commands) includes all complete 2D/3D commands. `--watch-game` enables automatic scene/project watching in both sample families. The log prints the source file, such as `D:\RavenEngine\Content\Levels\Perspective.ravenlevel`. A valid save restarts the authored attempt automatically, and F3 explicitly restarts the same file. Ordinary runs read staged Content beside the executable.
+
+The settled-file worker polls contents every 40 ms and waits for 100 ms of stability. SceneSession takes the immutable source snapshot, runs the host codec, resolves scoped dependencies and prepares owned entities before replacing the active scene. It checks the bytes again before publication. Invalid or missing data preserves the attempt; dependency-blocked candidates retry and corrected data recovers automatically. F3 seeds the replacement watcher from the accepted bytes to avoid a duplicate reset. The original validation below used the earlier sample-specific parser worker and staged paths; the current shared session path and source roots are recorded in [SceneWorkflow.md](SceneWorkflow.md).
+
+Perspective owns an AudioPlayer across level and game-DLL replacements. Reaching the beacon plays the existing Courtyard win WAV once. Compatible DLL activation preserves the completed level and cue. A successful level replacement stops any outgoing cue, clears completion through the new level, and lets the next completion play it again.
+
+Windows Debug and Release builds and native runs passed. A state probe covered automatic position changes, malformed and empty files, invalid bindings, unknown asset IDs, missing-file recovery, manual restart without a duplicate reset, burst saves, and repeated replacement with stable renderer resources. Stock runs completed at a saved beacon position without F3 and retained completion through a compatible DLL replacement. Windows endpoint loopback captured exactly three ascending cues across the initial completion, automatic reload, and manual restart. Separate loopback runs verified that both restart paths cut off an outgoing cue. One save-to-activation observation was 0.190 seconds in Debug and 0.179 seconds in Release. These are local single-save observations. Native macOS/Linux playback and tracked regression coverage remain open. Local sources, logs, and endpoint recordings are under ignored `out/validation/live-perspective-level/`. Test level files and game DLL outputs were restored.
+
+## Shared mesh materials and lighting
+
+Perspective and Gallery now use the shared mesh material path. Their versioned level records, retained components, vertex and instance layouts, normal transforms, asset lifetimes, launch workflow and Windows Debug/Release evidence are documented in [MeshMaterials.md](MeshMaterials.md). Shared header changes require rebuilding and restarting the host once through the generated contract. Routine compatible game-body edits then use the existing DLL watcher.
+
+## Reloadable 3D scene gameplay and binary authoring
+
+The current 3D path provides borrowed SceneAccess and presented-frame interaction spans through GameBindings. Queries and copied component read/write are scoped to the active Scene; gameplay behavior and retained progress live in the DLL-driven ECS systems. The host owns scene/resource lifetimes, draw gathering and completion notifications. 3D level files now use the binary SceneDocument codec and RavenSceneTool save/export path. Earlier text-editing instructions and their dated validation records above are historical; use [InteractionGame.md](InteractionGame.md) for current file format, complete launch/authoring commands, ownership, recovery and validation.

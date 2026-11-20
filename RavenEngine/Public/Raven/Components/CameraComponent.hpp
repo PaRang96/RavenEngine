@@ -32,20 +32,17 @@ namespace Raven::ECS
 			ProjectionMode, VerticalFovRadians, OrthographicHeight,
 			NearPlane, FarPlane);
 
-        Mat4 GetProjection(float aspect) const
-        {
-            switch(ProjectionMode)
-            {
-            case CameraProjectionMode::Perspective:
-                return PerspectiveVulkanRH(VerticalFovRadians, aspect, NearPlane, FarPlane);
-                
-            case CameraProjectionMode::Orthographic:
-                return OrthographicVulkanRH(OrthographicHeight, aspect, NearPlane, FarPlane);
-                
-            default:
-                throw std::invalid_argument("Unknown camera projection mode");
-            }
-        }
+		Mat4 GetProjection(float aspect) const
+		{
+			switch (ProjectionMode)
+			{
+			case CameraProjectionMode::Perspective:
+				return PerspectiveVulkanRH(VerticalFovRadians, aspect, NearPlane, FarPlane);
+			case CameraProjectionMode::Orthographic:
+				return OrthographicVulkanRH(OrthographicHeight, aspect, NearPlane, FarPlane);
+			}
+			throw std::invalid_argument("Unknown camera projection mode");
+		}
 	};
 
 	inline CameraView GetCameraView(
@@ -53,14 +50,7 @@ namespace Raven::ECS
 		const CameraComponent& camera,
 		float aspect)
 	{
-		CameraView result;
-		
-		result.View = ViewFromPoseRH(
-			transform.Position,
-			transform.Rotation);
-			
-		result.Projection = camera.GetProjection(aspect);
-
-		return result;
+		const Mat4 view = ViewFromPoseRH(transform.Position, transform.Rotation);
+		return CameraView{ view, camera.GetProjection(aspect) };
 	}
 }

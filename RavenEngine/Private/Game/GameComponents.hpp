@@ -5,13 +5,6 @@
 
 namespace Raven::SampleGame
 {
-	struct Position : ECS::Component
-	{
-		Vec3 Location{};
-
-		RAVEN_COMPONENT(Raven::SampleGame::Position, Location);
-	};
-
 	struct Velocity : ECS::Component
 	{
 		Vec3 Linear{};

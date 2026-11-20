@@ -17,7 +17,8 @@ namespace Raven
 		Skeleton = 5,
 		Animation = 6,
 		Shader = 7,
-		Scene = 8
+		Scene = 8,
+		Audio = 9
 	};
 
 	struct AssetRecord

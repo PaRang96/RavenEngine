@@ -3,6 +3,7 @@
 namespace Raven::GameBuild
 {
 	inline constexpr bool Enabled = @RAVEN_GAME_ENABLED@;
+	inline constexpr wchar_t ModuleFilename[] = L"@RAVEN_GAME_MODULE_FILENAME@";
 	inline constexpr char Contract[] = "@RAVEN_GAME_CONTRACT@";
 	inline constexpr wchar_t Root[] = LR"raven(@PROJECT_SOURCE_DIR@)raven";
 	inline constexpr wchar_t Cmake[] = LR"raven(@CMAKE_COMMAND@)raven";

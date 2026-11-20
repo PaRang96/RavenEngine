@@ -16,6 +16,9 @@ namespace Raven
 		// Empty disables development game-module loading. Paths must name trusted local code.
 		std::filesystem::path GameModulePath;
 		bool AutoBuildGame = false;
+		bool WatchGameModule = true;
+		// Optional buffered timing capture, written after the run.
+		std::filesystem::path FrameTracePath;
 	};
 
 	class Application

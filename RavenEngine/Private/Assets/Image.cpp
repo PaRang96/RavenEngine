@@ -1,4 +1,4 @@
-#include "Raven/Assets/Image.hpp"
+#include "Assets/ImageSource.hpp"
 
 #include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
@@ -10,7 +10,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
@@ -48,15 +47,19 @@ namespace Raven::Images
 
 	ImageData Load(const std::filesystem::path& path, ImageLoadOptions options)
 	{
+		return Decode(ReadEncoded(path), std::filesystem::absolute(path), options);
+	}
+
+	std::vector<std::byte> ReadEncoded(const std::filesystem::path& path)
+	{
 		if (path.empty())
 			throw std::invalid_argument("Cannot load an empty image path");
-		const auto attemptedPath = std::filesystem::absolute(path);
-		// Avoid reading an already oversized file. Check again after reading for changed files.
-		std::error_code sizeError;
-		const auto encodedSize = std::filesystem::file_size(attemptedPath, sizeError);
-		if (!sizeError && encodedSize > MaxEncodedBytes)
-			throw ImageError(attemptedPath, "Encoded image exceeds the 64 MiB limit");
-		const auto bytes = Files::ReadBinary(attemptedPath);
+		return Files::ReadBinary(path, MaxEncodedBytes);
+	}
+
+	ImageData Decode(std::span<const std::byte> bytes, const std::filesystem::path& attemptedPath,
+		ImageLoadOptions options)
+	{
 		if (bytes.empty())
 			throw ImageError(attemptedPath, "Image file is empty");
 		if (bytes.size() > MaxEncodedBytes || bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))

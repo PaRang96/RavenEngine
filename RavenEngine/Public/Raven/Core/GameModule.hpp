@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Raven/Core/Api.hpp"
+#include "Raven/Core/ApplicationClient.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -28,7 +29,8 @@ namespace Raven
 		// A rejected candidate leaves the active module and game data intact.
 		RAVEN_API bool Reload();
 		RAVEN_API void Poll();
-		RAVEN_API void Update(GameInstance&, const InputState&, const FrameTime&);
+		RAVEN_API GameUpdateResult Update(GameInstance&, const InputState&, const FrameTime&,
+			GameBindings bindings = {});
 		RAVEN_API std::uint64_t GetGeneration() const noexcept;
 		RAVEN_API bool IsBuilding() const noexcept;
 		RAVEN_API std::string GetLastError() const;

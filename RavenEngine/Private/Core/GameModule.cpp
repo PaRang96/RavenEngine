@@ -2,13 +2,19 @@
 #include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Platform/GameModulePlatform.hpp"
+#include "Platform/BuildProcess.hpp"
+#include "Platform/DirectoryWatch.hpp"
 #include "GameBuildConfig.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace Raven
@@ -17,16 +23,29 @@ namespace Raven
 	{
 		using Clock = std::chrono::steady_clock;
 		std::atomic<std::uint64_t> NextCopy{ 0 };
+		constexpr std::uint64_t HashOffset = 14695981039346656037ull;
+		constexpr std::uint64_t HashPrime = 1099511628211ull;
+
+		void AppendHashByte(std::uint64_t& hash, unsigned char byte)
+		{
+			hash ^= byte;
+			hash *= HashPrime;
+		}
 
 		void HashFile(const std::filesystem::path& path, std::uint64_t& hash)
 		{
 			std::ifstream stream(path, std::ios::binary);
-			if (!stream) throw std::runtime_error("Cannot read watched game file");
+			if (!stream)
+				throw std::runtime_error("Cannot read watched game file");
 			char buffer[4096];
-			while (stream.read(buffer, sizeof(buffer)) || stream.gcount())
-				for (std::streamsize i = 0; i < stream.gcount(); ++i)
-					hash = (hash ^ static_cast<unsigned char>(buffer[i])) * 1099511628211ull;
-			if (!stream.eof()) throw std::runtime_error("Cannot finish reading watched game file");
+			while (stream.read(buffer, sizeof(buffer)) || stream.gcount() > 0)
+			{
+				const auto byteCount = stream.gcount();
+				for (std::streamsize index = 0; index < byteCount; ++index)
+					AppendHashByte(hash, static_cast<unsigned char>(buffer[index]));
+			}
+			if (!stream.eof())
+				throw std::runtime_error("Cannot finish reading watched game file");
 		}
 
 		struct FileStamp
@@ -39,7 +58,10 @@ namespace Raven
 
 		FileStamp Stamp(const std::filesystem::path& path)
 		{
-			FileStamp stamp{ std::filesystem::last_write_time(path), std::filesystem::file_size(path), 14695981039346656037ull };
+			FileStamp stamp;
+			stamp.Time = std::filesystem::last_write_time(path);
+			stamp.Size = std::filesystem::file_size(path);
+			stamp.Digest = HashOffset;
 			HashFile(path, stamp.Digest);
 			if (stamp.Time != std::filesystem::last_write_time(path) || stamp.Size != std::filesystem::file_size(path))
 				throw std::runtime_error("Game DLL changed during observation; retry reload");
@@ -64,14 +86,14 @@ namespace Raven
 			for (const auto* name : { "CMakeLists.txt", "CMakePresets.json", "RavenEngine/CMakeLists.txt" })
 				files.push_back(root / name);
 			std::sort(files.begin(), files.end());
-			std::uint64_t hash = 14695981039346656037ull;
-			const auto append = [&hash](unsigned char byte) { hash = (hash ^ byte) * 1099511628211ull; };
+			std::uint64_t hash = HashOffset;
 			for (const auto& path : files)
 			{
-				for (unsigned char byte : path.generic_string()) append(byte);
-				append(0);
+				for (unsigned char byte : path.generic_string())
+					AppendHashByte(hash, byte);
+				AppendHashByte(hash, 0);
 				HashFile(path, hash);
-				append(0);
+				AppendHashByte(hash, 0);
 			}
 			return hash;
 		}
@@ -97,68 +119,84 @@ namespace Raven
 
 	struct GameModule::Impl
 	{
+		struct WatchEvent
+		{
+			std::optional<FileStamp> File;
+			std::string Error;
+			std::uint64_t Revision = 0;
+		};
+
 		std::filesystem::path Path;
 		std::unique_ptr<LoadedGame> Active;
-		std::unique_ptr<Platform::GameBuildProcess, decltype(&Platform::DestroyGameBuild)>
-			Build{ nullptr, Platform::DestroyGameBuild };
 		std::uint64_t Generation = 0;
 		std::string Error;
 		bool AutoBuild = false;
-		bool BuildQueued = false;
-		std::uint64_t ObservedSource = 0;
-		std::uint64_t BuiltSource = 0;
-		Clock::time_point SourceChanged{};
-		Clock::time_point NextPoll{};
-		FileStamp ObservedFile{};
 		FileStamp AttemptedFile{};
+		std::atomic<bool> Building{ false };
+		std::mutex EventMutex;
+		std::optional<WatchEvent> Pending;
+		std::atomic<bool> HasEvent{ false };
+		std::atomic<std::uint64_t> SourceRevision{ 0 };
+		std::jthread Worker; // Joins before the state it uses is destroyed.
 
 		void Report(const std::string& error)
 		{
-			if (Error != error) Log(LogLevel::Warning, error);
+			if (Error != error)
+				Log(LogLevel::Warning, error);
 			Error = error;
 		}
+
+		void Publish(WatchEvent event)
+		{
+			const std::scoped_lock lock(EventMutex);
+			Pending = std::move(event);
+			HasEvent.store(true, std::memory_order_release);
+		}
+
+		void DiscardCandidate()
+		{
+			const std::scoped_lock lock(EventMutex);
+			if (Pending && Pending->File)
+			{
+				Pending.reset();
+				HasEvent.store(false, std::memory_order_release);
+			}
+		}
+
+		std::optional<WatchEvent> TakeEvent()
+		{
+			if (!HasEvent.load(std::memory_order_acquire))
+				return {};
+			const std::scoped_lock lock(EventMutex);
+			HasEvent.store(false, std::memory_order_release);
+			return std::exchange(Pending, std::nullopt);
+		}
+
+		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0);
+		void Watch(std::stop_token stop, FileStamp initial);
 	};
 
-	GameModule::GameModule(const std::filesystem::path& path, bool autoBuild)
-		: m_Impl(std::make_unique<Impl>())
+	bool GameModule::Impl::Activate(std::optional<FileStamp> expected, std::uint64_t revision)
 	{
-		if (!GameBuild::Enabled) throw std::runtime_error("Game modules are disabled or unsupported in this build");
-		m_Impl->Path = std::filesystem::absolute(path);
-		m_Impl->AutoBuild = autoBuild;
-		if (autoBuild && !std::filesystem::equivalent(m_Impl->Path,
-			std::filesystem::path(GameBuild::BuildDirectory).parent_path() / "RavenGame.dll"))
-			throw std::invalid_argument("Automatic builds require this build's configured RavenGame.dll output");
-		if (!Reload()) throw std::runtime_error(m_Impl->Error);
-		if (autoBuild)
-		{
-			// Also build on startup: source may have changed while the host was stopped.
-			m_Impl->ObservedSource = SourceSignature();
-			m_Impl->BuildQueued = true;
-			m_Impl->SourceChanged = Clock::now();
-		}
-	}
-
-	GameModule::~GameModule() = default;
-
-	bool GameModule::Reload()
-	{
-		auto& state = *m_Impl;
+		if (expected && (*expected == AttemptedFile || SourceRevision.load() != revision))
+			return false;
 		try
 		{
-			const auto before = Stamp(state.Path);
-			state.AttemptedFile = before;
-			state.ObservedFile = before;
+			const auto before = Stamp(Path);
+			if (expected && before != *expected)
+				return false;
 			auto candidate = std::make_unique<LoadedGame>();
 			// The build output is never loaded, so the linker can replace it at any time.
 			// create_directory reserves a unique directory across hosts and processes.
 			std::filesystem::path directory;
 			do
 			{
-				directory = state.Path.parent_path() / (".raven-game-" + std::to_string(++NextCopy));
+				directory = Path.parent_path() / (".raven-game-" + std::to_string(++NextCopy));
 			} while (!std::filesystem::create_directory(directory));
-			candidate->Copy = directory / state.Path.filename();
-			std::filesystem::copy_file(state.Path, candidate->Copy);
-			if (!(Stamp(state.Path) == before)) throw std::runtime_error("Game DLL changed during copy; retry reload");
+			candidate->Copy = directory / Path.filename();
+			std::filesystem::copy_file(Path, candidate->Copy);
+			if (!(Stamp(Path) == before) || Stamp(candidate->Copy).Digest != before.Digest)
+				throw std::runtime_error("Game DLL changed during copy; retry reload");
 			candidate->Library = Platform::LoadGameLibrary(candidate->Copy);
 			const auto contract = reinterpret_cast<GetGameContractFunction>(
 				Platform::FindGameEntryPoint(candidate->Library, GameContractEntryPoint));
@@ -168,85 +206,205 @@ namespace Raven
 			const auto getUpdate = reinterpret_cast<GetGameUpdateFunction>(
 				Platform::FindGameEntryPoint(candidate->Library, GameUpdateEntryPoint));
 			candidate->Update = getUpdate();
-			if (!candidate->Update) throw std::runtime_error("Game DLL returned a null update function");
-			state.Active.swap(candidate);
-			++state.Generation;
-			state.Error.clear();
-			Log(LogLevel::Info, "Game module activated, generation " + std::to_string(state.Generation));
+			if (!candidate->Update)
+				throw std::runtime_error("Game DLL returned a null update function");
+			if (expected && SourceRevision.load() != revision)
+				return false;
+			Active.swap(candidate);
+			AttemptedFile = before;
+			++Generation;
+			Error.clear();
+			Log(LogLevel::Info, "Game module activated, generation " + std::to_string(Generation));
 			return true;
 		}
 		catch (const std::exception& error)
 		{
-			state.Report(error.what());
+			Report(error.what());
 			return false;
 		}
+	}
+
+	void GameModule::Impl::Watch(std::stop_token stop, FileStamp initial)
+	{
+		using namespace std::chrono_literals;
+		using BuildProcess = std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)>;
+		BuildProcess build{ nullptr, &Platform::DestroyBuildProcess };
+		const auto directory = std::filesystem::path(GameBuild::BuildDirectory);
+		std::vector<Platform::WatchDirectory> directories{ { Path.parent_path() } };
+		if (AutoBuild)
+		{
+			const std::filesystem::path root(GameBuild::Root);
+			directories.insert(directories.end(), {
+				{ root }, { root / "RavenEngine" }, { root / "RavenEngine/Public", true },
+				{ root / "RavenEngine/Private/Game", true }, { root / "cmake", true }
+			});
+		}
+		Platform::DirectoryWatch watch(directories);
+		auto observedFile = initial;
+		auto publishedFile = initial;
+		std::uint64_t publishedRevision = 0;
+		std::optional<std::uint64_t> observedSource;
+		std::uint64_t builtSource = 0;
+		Clock::time_point nextPoll{};
+		Clock::time_point sourceChanged{};
+		bool buildQueued = AutoBuild;
+		bool buildFailed = false;
+		std::string lastError;
+		const auto report = [&](const std::string& error)
+		{
+			if (lastError != error)
+			{
+				lastError = error;
+				Publish({ {}, error });
+			}
+		};
+		const auto observeSource = [&](std::uint64_t signature)
+		{
+			if (observedSource != signature)
+			{
+				observedSource = signature;
+				++SourceRevision;
+				sourceChanged = Clock::now();
+				buildQueued = true;
+				DiscardCandidate();
+			}
+		};
+		const auto offer = [&](FileStamp file, bool successfulBuild = false)
+		{
+			const auto revision = SourceRevision.load();
+			if (publishedFile != file || publishedRevision != revision)
+			{
+				publishedFile = file;
+				publishedRevision = revision;
+				lastError.clear();
+				Publish({ file, {}, revision });
+			}
+			else if (successfulBuild && !lastError.empty())
+			{
+				lastError.clear();
+				Publish({});
+			}
+		};
+
+		while (!stop.stop_requested())
+		{
+			try
+			{
+				const auto now = Clock::now();
+				int exitCode = 0;
+				if (build && Platform::PollBuildProcess(*build, exitCode))
+				{
+					build.reset();
+					Building.store(false);
+					if (exitCode != 0)
+					{
+						buildFailed = true;
+						report("Game build failed; keeping active code. See " + (directory / "AutoBuild.log").string());
+					}
+					// Keep external observation suspended until the build's inputs can be rechecked.
+					const bool superseded = buildQueued;
+					buildQueued = true;
+					const auto signature = SourceSignature();
+					observeSource(signature);
+					if (!superseded && signature == builtSource)
+					{
+						if (exitCode == 0)
+						{
+							offer(Stamp(Path), true);
+							buildFailed = false;
+						}
+						buildQueued = false;
+					}
+				}
+
+				if (now >= nextPoll)
+				{
+					nextPoll = now + 500ms;
+					if (AutoBuild)
+						observeSource(SourceSignature());
+					if (!build && buildQueued && now - sourceChanged >= 350ms)
+					{
+						build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
+							{ L"-P", (directory / "BuildGame.cmake").wstring() }, directory / "AutoBuild.log"));
+						Building.store(true);
+						builtSource = *observedSource;
+						buildQueued = false;
+						DiscardCandidate();
+						Log(LogLevel::Info, "Building game module in background");
+					}
+					if (!build && !buildQueued && !buildFailed)
+					{
+						const auto file = Stamp(Path);
+						if (file == observedFile)
+							offer(file);
+						observedFile = file;
+					}
+				}
+			}
+			catch (const std::exception& error)
+			{
+				report(error.what());
+			}
+			const bool settling = build || buildQueued || (!buildFailed && observedFile != publishedFile);
+			if (watch.Wait(stop, settling || !watch.IsAvailable() ? 40ms : 2000ms))
+				nextPoll = {};
+		}
+	}
+
+	GameModule::GameModule(const std::filesystem::path& path, bool autoBuild)
+		: m_Impl(std::make_unique<Impl>())
+	{
+		if (!GameBuild::Enabled)
+			throw std::runtime_error("Game modules are disabled or unsupported in this build");
+		m_Impl->Path = std::filesystem::absolute(path);
+		m_Impl->AutoBuild = autoBuild;
+		if (autoBuild && !std::filesystem::equivalent(m_Impl->Path,
+			std::filesystem::path(GameBuild::BuildDirectory).parent_path() / GameBuild::ModuleFilename))
+			throw std::invalid_argument("Automatic builds require this build's configured RavenGame.dll output");
+		if (!Reload())
+			throw std::runtime_error(m_Impl->Error);
+	}
+
+	GameModule::~GameModule() = default;
+
+	bool GameModule::Reload()
+	{
+		return m_Impl->Activate();
 	}
 
 	void GameModule::Poll()
 	{
 		auto& state = *m_Impl;
-		try
+		if (!state.Worker.joinable())
 		{
-			bool buildCompleted = false;
-			if (state.Build)
+			state.Worker = std::jthread([&state, initial = state.AttemptedFile](std::stop_token stop)
 			{
-				int exitCode = 0;
-				if (Platform::PollGameBuild(*state.Build, exitCode))
-				{
-					state.Build.reset();
-					buildCompleted = true;
-					if (exitCode == 0)
-					{
-						if (SourceSignature() == state.BuiltSource) Reload();
-						else
-						{
-							state.BuildQueued = true;
-							state.SourceChanged = Clock::now();
-						}
-					}
-					else state.Report("Game build failed; keeping active code. See " +
-						(std::filesystem::path(GameBuild::BuildDirectory) / "AutoBuild.log").string());
-				}
-			}
-			const auto now = Clock::now();
-			if (now < state.NextPoll) return;
-			state.NextPoll = now + std::chrono::milliseconds(500);
-			if (state.AutoBuild)
-			{
-				const auto signature = SourceSignature();
-				if (signature != state.ObservedSource)
-				{
-					state.ObservedSource = signature;
-					state.SourceChanged = now;
-					state.BuildQueued = true;
-				}
-				if (!state.Build && state.BuildQueued && now - state.SourceChanged >= std::chrono::milliseconds(350))
-				{
-					const std::filesystem::path buildDirectory(GameBuild::BuildDirectory);
-					state.Build.reset(Platform::StartGameBuild(GameBuild::Cmake,
-						{ L"-P", (buildDirectory / "BuildGame.cmake").wstring() }, buildDirectory / "AutoBuild.log"));
-					state.BuiltSource = signature;
-					state.BuildQueued = false;
-					Log(LogLevel::Info, "Building game module in background");
-				}
-			}
-			// Observe external/manual builds only after two stable samples, never mid-build.
-			if (!state.Build && !buildCompleted)
-			{
-				const auto file = Stamp(state.Path);
-				if (file == state.ObservedFile && !(file == state.AttemptedFile)) Reload();
-				state.ObservedFile = file;
-			}
+				state.Watch(stop, initial);
+			});
 		}
-		catch (const std::exception& error) { state.Report(error.what()); }
+		if (auto event = state.TakeEvent())
+		{
+			if (event->File)
+			{
+				if (*event->File == state.AttemptedFile && event->Revision == state.SourceRevision.load())
+					state.Error.clear();
+				else
+					state.Activate(event->File, event->Revision);
+			}
+			else if (event->Error.empty())
+				state.Error.clear();
+			else
+				state.Report(event->Error);
+		}
 	}
 
-	void GameModule::Update(GameInstance& game, const InputState& input, const FrameTime& frame)
+	GameUpdateResult GameModule::Update(GameInstance& game, const InputState& input, const FrameTime& frame,
+		GameBindings bindings)
 	{
-		m_Impl->Active->Update(game, input, frame);
+		return m_Impl->Active->Update(game, input, frame, bindings);
 	}
 
 	std::uint64_t GameModule::GetGeneration() const noexcept { return m_Impl->Generation; }
-	bool GameModule::IsBuilding() const noexcept { return m_Impl->Build != nullptr; }
+	bool GameModule::IsBuilding() const noexcept { return m_Impl->Building.load(); }
 	std::string GameModule::GetLastError() const { return m_Impl->Error; }
 }

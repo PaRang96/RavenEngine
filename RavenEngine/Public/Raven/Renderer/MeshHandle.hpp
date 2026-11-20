@@ -6,7 +6,7 @@ namespace Raven
 {
 	class VulkanContext;
 
-	// A runtime color-mesh identity, scoped to one renderer. Slots are never reused.
+	// Runtime identity scoped to one renderer; a reused slot has a new generation.
 	class MeshHandle
 	{
 	public:
@@ -16,10 +16,11 @@ namespace Raven
 
 	private:
 		friend class VulkanContext;
-		constexpr MeshHandle(std::uint64_t context, std::uint64_t index) noexcept
-			: m_Context(context), m_Index(index) {}
+		constexpr MeshHandle(std::uint64_t context, std::uint64_t index, std::uint64_t generation) noexcept
+			: m_Context(context), m_Index(index), m_Generation(generation) {}
 
 		std::uint64_t m_Context = 0;
 		std::uint64_t m_Index = 0;
+		std::uint64_t m_Generation = 0;
 	};
 }

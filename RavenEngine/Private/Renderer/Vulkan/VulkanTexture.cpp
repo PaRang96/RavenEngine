@@ -7,6 +7,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace Raven
 {
@@ -261,6 +262,17 @@ namespace Raven
 		if (binding == VK_NULL_HANDLE || m_DescriptorSet != VK_NULL_HANDLE)
 			throw std::invalid_argument("A texture binding must be valid and assigned only once");
 		m_DescriptorSet = binding;
+	}
+
+	void VulkanTexture::SwapImage(VulkanTexture& other) noexcept
+	{
+		using std::swap;
+		swap(m_Image, other.m_Image);
+		swap(m_Memory, other.m_Memory);
+		swap(m_View, other.m_View);
+		swap(m_Sampler, other.m_Sampler);
+		swap(m_Format, other.m_Format);
+		swap(m_Extent, other.m_Extent);
 	}
 
 	VulkanTexture::~VulkanTexture()

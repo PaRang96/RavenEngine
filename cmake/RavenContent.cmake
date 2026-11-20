@@ -18,6 +18,8 @@ find_program(RAVEN_SPIRV_VALIDATOR_EXECUTABLE
 
 set(RAVEN_SHADER_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Shaders/$<CONFIG>")
 set(RAVEN_SHADER_OUTPUTS)
+set(RAVEN_SHADER_COMPILE_SCRIPT "${PROJECT_SOURCE_DIR}/cmake/CompileShader.cmake")
+set(RAVEN_SHADER_OPTIMIZATION "$<IF:$<CONFIG:Debug>,-Od,-O3>")
 function(raven_add_shader source profile entry)
     set(shader_source "${CMAKE_CURRENT_SOURCE_DIR}/Private/Renderer/Shaders/${source}")
     get_filename_component(shader_name "${source}" NAME_WLE)
@@ -27,15 +29,13 @@ function(raven_add_shader source profile entry)
     add_custom_command(
         OUTPUT "${shader_output}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${RAVEN_SHADER_OUTPUT_DIRECTORY}"
-        COMMAND "${RAVEN_DXC_EXECUTABLE}"
-            -spirv -fspv-target-env=vulkan1.0 -WX
-            "$<IF:$<CONFIG:Debug>,-Od,-O3>"
-            -T "${profile}" -E "${entry}"
-            "${shader_source}" -Fo "${shader_output}"
-        COMMAND "${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}"
-            --target-env vulkan1.0 "${shader_output}"
+        COMMAND "${CMAKE_COMMAND}" "-DDXC=${RAVEN_DXC_EXECUTABLE}"
+            "-DVALIDATOR=${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}"
+            "-DOPTIMIZATION=${RAVEN_SHADER_OPTIMIZATION}" "-DPROFILE=${profile}" "-DENTRY=${entry}"
+            "-DSOURCE=${shader_source}" "-DOUTPUT=${shader_output}"
+            -P "${RAVEN_SHADER_COMPILE_SCRIPT}"
         DEPENDS "${shader_source}" "${RAVEN_DXC_EXECUTABLE}"
-            "${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}"
+            "${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}" "${RAVEN_SHADER_COMPILE_SCRIPT}"
         COMMENT "Compile and validate ${source} (${entry})"
         VERBATIM
     )
@@ -44,11 +44,22 @@ function(raven_add_shader source profile entry)
     set(RAVEN_SHADER_OUTPUTS "${outputs}" PARENT_SCOPE)
 endfunction()
 
+set(RAVEN_WATCH_PROFILE ps_6_0)
+set(RAVEN_WATCH_ENTRY PSMain)
+set(RAVEN_LIT_FRAGMENT_SOURCE Color.frag.hlsl)
+set(RAVEN_TEXTURED_FRAGMENT_SOURCE Texture.frag.hlsl)
 raven_add_shader("Color.vert.hlsl" vs_6_0 VSMain)
-raven_add_shader("Color.frag.hlsl" ps_6_0 PSMain)
+raven_add_shader("${RAVEN_LIT_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
 raven_add_shader("Texture.vert.hlsl" vs_6_0 VSMain)
-raven_add_shader("Texture.frag.hlsl" ps_6_0 PSMain)
+raven_add_shader("${RAVEN_TEXTURED_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
+configure_file("${PROJECT_SOURCE_DIR}/cmake/ShaderWatchConfig.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/Generated/ShaderWatchConfig.hpp.in" @ONLY)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/$<CONFIG>/ShaderWatchConfig.hpp"
+    INPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/ShaderWatchConfig.hpp.in")
 add_custom_target(RavenShaders DEPENDS ${RAVEN_SHADER_OUTPUTS})
+
+configure_file("${PROJECT_SOURCE_DIR}/cmake/ContentSourceConfig.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/Generated/ContentSourceConfig.hpp" @ONLY)
 
 set(RAVEN_CONTENT_SOURCES)
 set(RAVEN_CONTENT_DESTINATIONS)
@@ -75,9 +86,18 @@ foreach(shader IN LISTS RAVEN_SHADER_OUTPUTS)
     get_filename_component(name "${shader}" NAME)
     raven_stage_file("${shader}" "Content/Shaders/${name}")
 endforeach()
-raven_stage_file("Content/Textures/UVGrid.png")
-raven_stage_file("Content/Textures/UVGridAlternate.png")
 raven_stage_file("ThirdParty/stb/LICENSE" "Licenses/stb-LICENSE.txt")
+raven_stage_file("ThirdParty/ufbx/LICENSE" "Licenses/ufbx-LICENSE.txt")
+set(RAVEN_PLAYER_SUPPORT_SOURCES "${RAVEN_CONTENT_SOURCES}")
+set(RAVEN_PLAYER_SUPPORT_DESTINATIONS "${RAVEN_CONTENT_DESTINATIONS}")
+
+# Content and metadata enroll automatically; development reads their source root directly.
+file(GLOB_RECURSE raven_runtime_content CONFIGURE_DEPENDS LIST_DIRECTORIES false
+    "${PROJECT_SOURCE_DIR}/Content/*")
+foreach(content IN LISTS raven_runtime_content)
+    file(RELATIVE_PATH relative "${PROJECT_SOURCE_DIR}" "${content}")
+    raven_stage_file("${relative}")
+endforeach()
 
 # One process restores missing runtime files without rewriting identical files.
 configure_file("${PROJECT_SOURCE_DIR}/cmake/StageContent.cmake.in"
@@ -88,7 +108,7 @@ file(GENERATE OUTPUT "${RAVEN_CONTENT_BUILD_SCRIPT}"
 add_custom_target(RavenContent
     COMMAND "${CMAKE_COMMAND}" -P "${RAVEN_CONTENT_BUILD_SCRIPT}"
     DEPENDS RavenShaders ${RAVEN_CONTENT_SOURCES}
-    COMMENT "Stage validated shaders, sample textures and dependency license"
+    COMMENT "Stage validated shaders, sample content and dependency license"
     VERBATIM
 )
 add_dependencies(RavenCore RavenContent)

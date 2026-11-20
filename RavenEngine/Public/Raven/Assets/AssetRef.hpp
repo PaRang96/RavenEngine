@@ -12,6 +12,7 @@ namespace Raven
 	struct AnimationAsset;
 	struct ShaderAsset;
 	struct SceneAsset;
+	struct AudioAsset;
 
 	// Persistent typed identity; does not load or own a runtime resource.
 	template<typename AssetType>

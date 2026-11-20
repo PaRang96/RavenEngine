@@ -248,7 +248,8 @@ namespace Raven
 				return 0;
 			}
 			case WM_LBUTTONDOWN:
-				self->m_Input.SetMouseButtonDown(MouseButton::Left, true);
+				self->m_Input.PressMouseButton({ MouseButton::Left, GET_X_LPARAM(lParam),
+					GET_Y_LPARAM(lParam), self->m_Width, self->m_Height });
 				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_LBUTTONUP:
@@ -256,7 +257,9 @@ namespace Raven
 				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_RBUTTONDOWN:
-				self->m_Input.SetMouseButtonDown(MouseButton::Right, true);
+				self->m_Input.SetCursorPosition(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+				self->m_Input.PressMouseButton({ MouseButton::Right, GET_X_LPARAM(lParam),
+					GET_Y_LPARAM(lParam), self->m_Width, self->m_Height });
 				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_RBUTTONUP:
@@ -264,7 +267,8 @@ namespace Raven
 				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_MBUTTONDOWN:
-				self->m_Input.SetMouseButtonDown(MouseButton::Middle, true);
+				self->m_Input.PressMouseButton({ MouseButton::Middle, GET_X_LPARAM(lParam),
+					GET_Y_LPARAM(lParam), self->m_Width, self->m_Height });
 				self->UpdateMouseCapture(handle);
 				return 0;
 			case WM_MBUTTONUP:
@@ -276,7 +280,8 @@ namespace Raven
 				const MouseButton button =
 					GET_XBUTTON_WPARAM(wParam) == XBUTTON1
 					? MouseButton::X1 : MouseButton::X2;
-				self->m_Input.SetMouseButtonDown(button, true);
+				self->m_Input.PressMouseButton({ button, GET_X_LPARAM(lParam),
+					GET_Y_LPARAM(lParam), self->m_Width, self->m_Height });
 				self->UpdateMouseCapture(handle);
 				return TRUE;
 			}

@@ -18,6 +18,11 @@ namespace Raven
 		m_Pending.SetKeyDown(key, down);
 	}
 
+	void InputBuffer::PressMouseButton(MouseButtonPress press)
+	{
+		m_Pending.PressMouseButton(press);
+	}
+
 	void InputBuffer::SetMouseButtonDown(MouseButton button, bool down)
 	{
 		m_Pending.SetMouseButtonDown(button, down);

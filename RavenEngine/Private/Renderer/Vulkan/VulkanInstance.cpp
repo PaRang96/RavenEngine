@@ -7,6 +7,48 @@
 
 namespace Raven
 {
+	namespace
+	{
+		std::vector<VkExtensionProperties> ReadInstanceExtensions(const char* layerName)
+		{
+			std::vector<VkExtensionProperties> properties;
+			VkResult result = VK_SUCCESS;
+
+			do
+			{
+				std::uint32_t count = 0;
+				result = vkEnumerateInstanceExtensionProperties(
+					layerName, &count, nullptr);
+
+				if (result != VK_SUCCESS)
+				{
+					throw std::runtime_error(
+						"Could not enumerate Vulkan instance extensions: " +
+						std::to_string(result));
+				}
+
+				properties.resize(count);
+				if (count == 0)
+					return properties;
+
+				result = vkEnumerateInstanceExtensionProperties(
+					layerName, &count, properties.data());
+
+				if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+				{
+					throw std::runtime_error(
+						"Could not read Vulkan instance extensions: " +
+						std::to_string(result));
+				}
+
+				properties.resize(count);
+			}
+			while (result == VK_INCOMPLETE);
+
+			return properties;
+		}
+	}
+
 	VulkanInstance::VulkanInstance(const std::vector<const char*> extensions)
 	{
 		#ifdef RAVEN_ENABLE_VALIDATION
@@ -56,49 +98,10 @@ namespace Raven
 		createInfo.ppEnabledLayerNames = &validationLayer;
 		#endif //RAVEN_ENABLE_VALIDATION
 
-		const auto readExtensions = [](const char* layerName)
-		{
-			std::vector<VkExtensionProperties> properties;
-			VkResult result = VK_SUCCESS;
-
-			do
-			{
-				std::uint32_t count = 0;
-				result = vkEnumerateInstanceExtensionProperties(
-					layerName, &count, nullptr);
-
-				if (result != VK_SUCCESS)
-				{
-					throw std::runtime_error(
-						"Could not enumerate Vulkan instance extensions: " +
-						std::to_string(result));
-				}
-
-				properties.resize(count);
-				if (count == 0)
-					return properties;
-
-				result = vkEnumerateInstanceExtensionProperties(
-					layerName, &count, properties.data());
-
-				if (result != VK_SUCCESS && result != VK_INCOMPLETE)
-				{
-					throw std::runtime_error(
-						"Could not read Vulkan instance extensions: " +
-						std::to_string(result));
-				}
-
-				properties.resize(count);
-			}
-			while (result == VK_INCOMPLETE);
-
-			return properties;
-		};
-
-		auto availableExtensions = readExtensions(nullptr);
+		auto availableExtensions = ReadInstanceExtensions(nullptr);
 
 		#ifdef RAVEN_ENABLE_VALIDATION
-		const auto layerExtensions = readExtensions(validationLayer);
+		const auto layerExtensions = ReadInstanceExtensions(validationLayer);
 		availableExtensions.insert(
 			availableExtensions.end(),
 			layerExtensions.begin(),

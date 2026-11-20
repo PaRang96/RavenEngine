@@ -2,11 +2,13 @@
 
 RavenEngine is a work-in-progress C++23 game engine targeting 2D and 3D games, Vulkan rendering, ECS, native platform backends, and hot reload. The current Windows build contains `RavenCore.dll` and a `RavenEngine.exe` sample with native input, perspective/orthographic cameras, reusable meshes, depth-tested colored geometry, opaque/transparent textured quads, frustum culling, compatible draw batching, and ID-based texture reuse.
 
+Launch either Windows development build with no arguments to play Perspective in free-fly mode with live reload for gameplay code, scenes, project metadata, PNGs, FBX meshes, and the lit fragment shader. Press F4 three times for Puzzle or four times for Collection. F3 restarts the active level. Use `--no-watch` to play the same ECS game from staged content with watching and automatic builds disabled. See the [default Windows workflow](docs/DevelopmentReload.md) and [3D gameplay and authoring guide](docs/InteractionGame.md).
+
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
 
-As of 2026-10-19, Windows also has a joint ECS/game-code reload example: a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. General ECS queries, scene ownership/persistence, runtime resource release, imported meshes/lighting, physics, audio and playable games remain pending. The samples still construct objects and asset registrations in C++.
+On Windows, a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. Courtyard is playable with fixed-step movement, an authored wall, triggers, and outcome audio. General collision and physics work is deferred. See the [roadmap](ROADMAP.md#deferred-collision-and-physics).
 
-ECS and hot reload are joint goals. Transform/StaticMesh components drive Perspective colored geometry; Transform/Sprite components drive Orthographic textured sprites through GameInstance/Registry. Sprites share a quad and cached textures and support tint, opaque/alpha blending and transparent ordering. CameraComponent projection settings and the renderer handoff are implemented. The [next step is an ECS camera for OrthographicSample](TODO.md#next-implementation-target-cameracomponent), followed by Perspective and direct game-code migration to Transform. Scene ownership remains deferred. The design accommodates future editor editing and play sessions without adding a complete visual editor to v1. Fast iteration refers to the developer edit/build/observe cycle.
+ECS and hot reload are joint goals. Perspective and Orthographic use ECS cameras and shared renderer resources. The Windows game DLL updates the Orthographic sprite's Transform directly and supports an opt-in Perspective free-fly camera. Both samples use host-owned Scene/SceneSession services with a file-backed project catalog, data-driven F4 order, shared asset leases and safe resource retirement. The 3D codec also supports hierarchy, full world transforms and atomic authored save/load; F4 twice opens the shared-asset Assemblies demo. See [the live scene workflow](docs/SceneWorkflow.md) and [TODO.md](TODO.md).
 
 All components derive from the abstract `ECS::Component` parent, which supplies virtual destruction, type/size access and synchronous data copying. Registry add/read/write/remove operations accept `Component&` references and retain only copied values, never the object or its virtual-table pointer. Inside each derived type, `RAVEN_COMPONENT(FullyQualifiedType, Field1, Field2, ...);` generates its name and declares its retained fields; omit the fields for a tag component. Scalars, approved engine values/IDs and arrays of approved values are supported. Custom value structs require an explicit ComponentValue declaration; borrowed views and owning types are rejected. The parent contains no rendering or gameplay data. Reusable components have separate headers under `Public/Raven/Components/`, with MeshHandle declared separately from Vulkan draw submissions. Both samples clean up their own entities. See [EngineModules.md](docs/EngineModules.md) for the architecture assessment and remaining limits.
 
@@ -22,6 +24,7 @@ RavenEngine/
     Math/             Shared transform math
     Platform/         Window and input contracts
     Renderer/         Camera, vertices, draw data, and renderer interface
+    Scene/            Host-owned scenes, project metadata and live sessions
   Private/            Engine implementation and internal headers
     Assets/           Asset catalog/cache implementations and private image decoder
     Core/             Application loop, utilities, logging implementation, and frame clock
@@ -29,7 +32,8 @@ RavenEngine/
     Game/             Reloadable game logic and shared sample component definitions
     Platform/         Native backend implementations
     Renderer/         Vulkan resource owners and HLSL shaders
-    Samples/          Sample entry point, geometry, animation, and camera controls
+    Samples/          Sample entry point, scene codecs, rules and camera controls
+    Scene/            Scene/project/session ownership and publication
   CMakeLists.txt      Engine/sample targets, include visibility and build helper ordering
 cmake/               Automatic source discovery, shared defaults, content and game builds
 ThirdParty/stb/       Pinned image decoder, license, and upstream provenance
@@ -46,11 +50,15 @@ Developer utilities include `Paths::GetContentPath()`, `GetShaderPath()`, execut
 
 The four-argument `DrawFrame()` adds straight-alpha draws with explicit layer/order and automatic camera-depth sorting. A private preparation stage performs per-instance frustum selection before Vulkan command recording. The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
 
-Run with `--orthographic` for the 2D sample. `OrthographicCamera::VerticalSize` sets the full visible height in world units; width follows the drawable aspect ratio. The shared frame path handles both camera types with the same depth, transparency, and frustum rules. Arrows pan, wheel/PageUp/PageDown zoom, Home resets the camera, and F1 toggles transparent order. The two upper sprites have equal world/screen sizes despite different depths. See [the coordinate contract](docs/CoordinateSystem.md).
+Run with `--orthographic` for the 2D sample. `CameraComponent::OrthographicHeight` sets the full visible height in world units, and width follows the drawable aspect ratio. The shared frame path handles both camera types with the same depth, transparency, and frustum rules. Arrows pan, wheel/PageUp/PageDown zoom, Home resets the selected camera, F1 toggles transparent order and F2 switches cameras. F3 restarts the current level from disk and F4 switches between the original layout and Courtyard. Run with --game or --watch-game and press F4 to enter Courtyard. Use WASD to go around the wall, avoid the gold courier, and reach the green beacon. A distinct sound marks each outcome. F3 restarts the attempt. See [the level format](docs/EngineModules.md#file-authored-orthographic-levels) and [Courtyard controls](docs/EngineModules.md#courtyard-gameplay).
 
-`Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. The sample loads two staged PNGs and displays them alongside the existing cubes and ground slab. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation.
+`Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. The sample loads two catalog PNGs and displays them alongside the imported Blender cube, sphere, and ground slab. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation.
 
-`AssetId`, `AssetRef<T>`, `AssetCatalog` and `AssetResources` provide stable UUIDv4 identity, typed references, in-memory loading metadata and synchronous texture reuse within a renderer context. The renderer owns GPU resources until shutdown; destroying an asset service does not unload textures. Persistent catalog/scene files, resource release handles and reload are future work. See [AssetSystem.md](docs/AssetSystem.md).
+`Content/Project.ravenproject` registers stable UUIDs, typed source paths, texture settings and scene order. AssetStore shares resources through host-owned leases; managed runtime handles reject stale generations and retire unused GPU resources after frame completion. Both sample families automatically reload source levels and project metadata with `--watch-game`. Legacy AssetResources/CreateTexture references keep their context-lifetime contract. See [SceneWorkflow.md](docs/SceneWorkflow.md) for adding content without C++ edits, complete launch commands, ownership and recovery, and [AssetSystem.md](docs/AssetSystem.md) for asset details.
+
+On Windows, the default 3D launch watches `Color.frag.hlsl`. The explicit Courtyard launch with `--watch-shader` watches `Texture.frag.hlsl`. See the [Windows 3D workflow](docs/DevelopmentReload.md) and [Courtyard shader reload](docs/EngineModules.md#live-courtyard-shader-reload).
+
+In Perspective, press F6 to swap the cube and sphere mesh sources. Use `--perspective --watch-mesh` to watch the configured source Content root, independent of the launch directory. See [live Perspective mesh reload](docs/AssetSystem.md#live-perspective-mesh-reload).
 
 ## Build on Windows
 
@@ -60,11 +68,21 @@ Use MSVC with C++23 support (Visual Studio 2022 17.13 or newer). Configure and b
 cmake --preset x64-debug
 cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --no-watch
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --perspective
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --orthographic
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --watch-game --free-fly
 ```
 
-In `--watch-game`, edit `RavenEngine/Private/Game/RavenGame.cpp` (for example, `MovementScale`). The game DLL rebuilds in the background and changes the moving sprite's behavior while retaining its position. `--game` loads the same example without source-build automation; F5 explicitly reloads the built DLL. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/BuildGame.cmake`. Use this standalone build script while the engine runs; a full engine build can try to overwrite loaded engine files.
+Run the [Windows 3D smoke check](docs/InteractionGame.md#repeatable-windows-3d-smoke) with `pwsh -File scripts/Test-Windows3D.ps1 -Preset x64-debug` or `-Preset x64-release` after configuring that preset.
+Add `-DefaultLaunch` to exercise the stock executable with live source edits in an isolated source copy. The Release run also measures frame times. See the [validation commands](docs/DevelopmentReload.md#validation).
+
+Build the [Windows x64 player folder](docs/PlayerBuild.md) with `python scripts/BuildPlayer.py --preset x64-release --profile public-preview`. Edit a build profile to control which levels go into the folder.
+
+Profile the development-only [Windows 3D benchmark](docs/Benchmark3D.md) with `python scripts/Benchmark-Windows3D.py measure current`.
+
+In `--watch-game`, edit `RavenEngine/Private/Game/RavenGame.cpp` (for example, `MovementScale`). The game DLL rebuilds in the background and changes the moving sprite's behavior while retaining its position. `--game` loads the same example without source-build automation; F5 explicitly reloads the built DLL. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/BuildGame.cmake`. Use this standalone build script while the engine runs; a full engine build can try to overwrite loaded engine files. With `--free-fly`, use WASD and Q/E to move, right-drag to look, the wheel for FOV, and left-click for a ground hit. Edit `FreeFlySpeed` to test camera movement reload.
 
 This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Shared-header or build-contract changes are rejected until the host is rebuilt and restarted. Component layout versions are generated automatically; arbitrary C++ migration, module-owned persistent objects and untrusted plugins are outside this example. Game-only builds reuse the compiler/SDK environment captured during host configuration; runtime watching does not require a developer shell. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
 

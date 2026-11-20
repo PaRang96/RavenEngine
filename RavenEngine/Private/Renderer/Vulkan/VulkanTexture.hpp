@@ -19,6 +19,8 @@ namespace Raven
 		VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
 		// A borrowed immutable binding owned by the context's descriptor pools.
 		void SetDescriptorSet(VkDescriptorSet binding);
+		// Same device, with all earlier GPU use completed. Each texture keeps its binding.
+		void SwapImage(VulkanTexture& other) noexcept;
 		VkImageView GetView() const { return m_View; }
 		VkSampler GetSampler() const { return m_Sampler; }
 		VkFormat GetFormat() const { return m_Format; }

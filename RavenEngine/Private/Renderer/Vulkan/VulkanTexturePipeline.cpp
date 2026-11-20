@@ -11,7 +11,8 @@
 namespace Raven
 {
 	VulkanTexturePipeline::VulkanTexturePipeline(const VulkanDevice& device,
-		VkRenderPass renderPass, VkDescriptorSetLayout textureLayout, const std::filesystem::path& shaderDirectory,
+		VkRenderPass renderPass, VkDescriptorSetLayout textureLayout,
+		const VulkanShaderModule& vertex, const VulkanShaderModule& fragment,
 		TexturePipelineMode mode)
 		: m_Device(device.Get())
 	{
@@ -20,8 +21,6 @@ namespace Raven
 
 		try
 		{
-			const VulkanShaderModule vertex(device, shaderDirectory / "Texture.vert.spv");
-			const VulkanShaderModule fragment(device, shaderDirectory / "Texture.frag.spv");
 
 			std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
 			stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;

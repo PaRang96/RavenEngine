@@ -2,7 +2,11 @@
 if(WIN32)
     set(raven_native_directory "Windows")
     target_compile_definitions(RavenCore PRIVATE UNICODE _UNICODE)
-    target_link_libraries(RavenCore PRIVATE user32 bcrypt)
+    target_link_libraries(RavenCore PRIVATE user32 bcrypt ole32 xaudio2)
+    if(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+        set(raven_player_platform "windows-x64")
+        set(raven_player_readme "${PROJECT_SOURCE_DIR}/docs/WindowsPlayerReadme.txt")
+    endif()
 elseif(APPLE)
     set(raven_native_directory "Mac")
     target_compile_options(RavenCore PRIVATE
@@ -40,5 +44,10 @@ list(FILTER raven_native_sources INCLUDE REGEX
     "/Private/Platform/${raven_native_directory}/.*\\.(cpp|hpp|mm)$")
 target_sources(RavenCore PRIVATE ${raven_native_sources})
 if(NOT WIN32)
-    target_sources(RavenCore PRIVATE "Private/Platform/UnsupportedGameModule.cpp")
+    target_sources(RavenCore PRIVATE
+        "Private/Platform/PollDirectoryWatch.cpp"
+        "Private/Platform/PosixAtomicFile.cpp"
+        "Private/Platform/UnsupportedAudio.cpp"
+        "Private/Platform/UnsupportedGameModule.cpp"
+    )
 endif()

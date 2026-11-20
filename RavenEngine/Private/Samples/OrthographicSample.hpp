@@ -1,19 +1,23 @@
 #pragma once
 
 #include "SampleAssets.hpp"
+#include "Raven/Scene/SceneSession.hpp"
 
+#include "Raven/Audio/AudioPlayer.hpp"
 #include "Raven/Core/ApplicationClient.hpp"
-#include "Raven/ECS/Entity.hpp"
-#include "Raven/Math/Transform.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
-#include <array>
+#include <chrono>
+#include <cstddef>
+#include <optional>
+#include <memory>
 #include <span>
 #include <vector>
 
 namespace Raven
 {
+	class OrthographicLevel;
 	class VulkanContext;
 	struct FrameTime;
 	struct InputState;
@@ -21,8 +25,12 @@ namespace Raven
 	class OrthographicSample final : public ApplicationClient
 	{
 	public:
-		OrthographicSample(VulkanContext& renderer, GameInstance& instance);
+		OrthographicSample(VulkanContext& renderer, GameInstance& instance, bool watchWall = false, bool watchLevel = false);
 		~OrthographicSample() override;
+		GameBindings GetGameBindings() const noexcept override;
+		bool UsesFixedGameplayStep() const noexcept override { return true; }
+		bool PrepareFrame(const InputState& input, const FrameTime& frameTime) override;
+		void OnGameplayStep(const GameUpdateResult& result) override;
 		void OnFrame(VulkanContext& renderer,
 			const InputState& input, const FrameTime& frameTime) override;
 
@@ -30,19 +38,18 @@ namespace Raven
 		std::span<const VulkanTransparentDraw> GetTransparentDraws() const { return m_TransparentDraws; }
 
 	private:
+		OrthographicLevel& GetLevel() const noexcept;
 		void Update(const InputState& input, const FrameTime& frameTime);
-		void SyncLegacyMovement();
 		void UpdateDraws();
 
 		GameInstance& m_Game;
-		std::array<ECS::Entity, 5> m_SpriteEntities{};
-		// Temporary adapter for the existing game DLL's Position/Velocity update.
-		Vec3 m_PreviousGamePosition{};
 		SampleAssets m_Assets;
+		AudioPlayer m_Audio;
 		const VulkanTexturedMesh& m_Quad;
 		std::vector<VulkanTexturedDraw> m_OpaqueDraws;
 		std::vector<VulkanTransparentDraw> m_TransparentDraws;
-		ECS::Entity m_CameraEntity{};
+		std::unique_ptr<SceneSession> m_Session;
 		bool m_CameraViewUnavailable = false;
+		std::optional<std::chrono::duration<double, std::milli>> m_WallUpload;
 	};
 }

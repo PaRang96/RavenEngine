@@ -1,8 +1,10 @@
 # RGBA8 texture resources
 
-Textures now have a complete initial path from [PNG/JPEG file decoding](ImageLoading.md) through upload, immutable descriptors, UV geometry, and HLSL sampling. The perspective sample displays two opaque textured quads alongside its colored cubes and ground slab.
+The texture path covers [PNG/JPEG file decoding](ImageLoading.md), upload, descriptor binding, UV geometry, and HLSL sampling. The perspective sample displays two opaque textured quads alongside its colored cubes and ground slab.
 
 ## Public interface
+
+The sample scene path now uses AssetStore leases and `CreateManagedTexture`/TextureHandle. A managed handle expires after its last lease releases it; frame slots retain the native texture until their GPU fences complete, then its descriptor set is freed and reusable pool capacity remains. [SceneWorkflow.md](SceneWorkflow.md#runtime-handles-and-gpu-retirement) records the current contract. The CreateTexture API below retains its original context-lifetime borrowed reference and cannot be released through the managed API.
 
 Include `Raven/Renderer/TextureDesc.hpp` and the public renderer context. `TextureDesc` contains width, height, a borrowed span of tightly packed RGBA8 bytes, and `TextureColorSpace` (`Linear` or `SRGB`, default `SRGB`). Rows contain exactly `Width * 4` bytes, and the span must contain exactly `Width * Height * 4` bytes.
 
@@ -36,6 +38,8 @@ If a wait fails after a successful submission, cleanup drains the graphics queue
 
 Failed construction unwinds temporary upload resources before sampler, view, image, and image memory. Context shutdown waits for GPU work, destroys frame resources/pipelines, then texture descriptor pools/layout, textures and meshes, and finally the device. Swapchain recreation preserves textures and their descriptors. The complete owners and native handles remain in `Private/Renderer/Vulkan/`. The original upload milestone added one explicit export, bringing the engine to 14 exports at that milestone.
 
+`ReplaceTexture` runs on the rendering thread between frames. It completes the candidate upload before writing the texture's existing descriptor. The same graphics-queue fence covers earlier draws, so the previous image resources can be destroyed after the swap. The borrowed texture reference stays valid. See [the live Courtyard workflow](AssetSystem.md#live-courtyard-wall-reload).
+
 ## Textured draw submissions
 
 `TexturedVertex` contains `float Position[3]` and `float UV[2]` (20 bytes). `VulkanTexturedMesh` is a separate opaque type from the existing color mesh, so their vertex layouts cannot be mixed accidentally. Include `Raven/Renderer/Vulkan/VulkanContext.hpp` for mesh creation and draw submissions:
@@ -62,7 +66,7 @@ Creation copies the CPU geometry. Meshes and textures must belong to the submitt
 
 Set 0 uses binding 0 for a sampled image and binding 1 for a sampler. The context owns descriptor pools in pages of 64 texture bindings. Each binding is written once during successful texture creation, stays valid across frames and swapchain recreation, and is released only after GPU completion at shutdown. Drawing performs no descriptor allocation or mutation.
 
-The texture pipeline uses `Texture.vert.hlsl` and `Texture.frag.hlsl`, compiled and validated through the existing DXC/SPIR-V build. Each textured instance supplies an 80-byte transform/tint record through vertex binding 1; the color path retains its push constants. UV `(0, 0)` addresses the image's top-left; the supplied quad places V=0 on its +Z edge. SRGB textures decode RGB during sampling, then sampled RGBA is multiplied by `Tint`.
+The texture pipeline uses `Texture.vert.hlsl` and `Texture.frag.hlsl`, compiled and validated through the existing DXC/SPIR-V build. Each textured instance supplies an 80-byte transform/tint record through vertex binding 1; the current mesh material path uses a separate 176-byte per-frame instance layout described in [MeshMaterials.md](MeshMaterials.md). UV `(0, 0)` addresses the image's top-left; the supplied quad places V=0 on its +Z edge. SRGB textures decode RGB during sampling, then sampled RGBA is multiplied by `Tint`.
 
 Opaque geometry uses depth test/write with blending disabled. Color draws precede opaque textured draws, followed by a separate transparent queue. Compatible textured draws use the instancing path below. Mipmaps and broader material updates remain later work.
 

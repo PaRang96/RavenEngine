@@ -98,11 +98,14 @@ namespace Raven::ECS
 		{
 			if (bytes.size() != ComponentFields<std::tuple<T&...>>::Size)
 				return false;
-			[[maybe_unused]] std::size_t offset = 0;
-			std::apply([&](const auto&... field)
+			const auto copyField = [&bytes](const auto& field)
 			{
-				((std::memcpy(bytes.data() + offset, std::addressof(field), sizeof(field)),
-					offset += sizeof(field)), ...);
+				std::memcpy(bytes.data(), std::addressof(field), sizeof(field));
+				bytes = bytes.subspan(sizeof(field));
+			};
+			std::apply([&copyField](const auto&... field)
+			{
+				(copyField(field), ...);
 			}, fields);
 			return true;
 		}
@@ -112,11 +115,14 @@ namespace Raven::ECS
 		{
 			if (bytes.size() != ComponentFields<std::tuple<T&...>>::Size)
 				return false;
-			[[maybe_unused]] std::size_t offset = 0;
-			std::apply([&](auto&... field)
+			const auto restoreField = [&bytes](auto& field)
 			{
-				((std::memcpy(std::addressof(field), bytes.data() + offset, sizeof(field)),
-					offset += sizeof(field)), ...);
+				std::memcpy(std::addressof(field), bytes.data(), sizeof(field));
+				bytes = bytes.subspan(sizeof(field));
+			};
+			std::apply([&restoreField](auto&... field)
+			{
+				(restoreField(field), ...);
 			}, fields);
 			return true;
 		}

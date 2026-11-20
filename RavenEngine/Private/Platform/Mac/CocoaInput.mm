@@ -181,49 +181,11 @@ namespace Raven
             input.SetKeyDown(Key::CapsLock, (flags & NSEventModifierFlagCapsLock) != 0);
         }
 
-        void UpdateButton(ButtonState& state, bool down)
-        {
-            if (state.Down == down)
-                return;
-            state.Down = down;
-            if (down)
-                state.Pressed = true;
-            else
-                state.Released = true;
-        }
-
-        bool HasMouseButtonDown(const InputState& input)
-        {
-            for (const auto& button : input.MouseButtons)
-                if (button.Down)
-                    return true;
-            return false;
-        }
-
-        void UpdateCursor(InputState& input, NSView* view, NSPoint point)
-        {
-            const NSPoint pixel = [view convertPointToBacking:point];
-            const NSRect bounds = [view convertRectToBacking:view.bounds];
-            const auto x = static_cast<std::int32_t>(std::lround(pixel.x - NSMinX(bounds)));
-            const auto y = static_cast<std::int32_t>(std::lround(view.flipped
-                ? pixel.y - NSMinY(bounds) : NSMaxY(bounds) - pixel.y));
-            if (input.HasCursorPosition)
-            {
-                input.CursorDeltaX += x - input.CursorX;
-                input.CursorDeltaY += y - input.CursorY;
-            }
-            input.CursorX = x;
-            input.CursorY = y;
-            input.HasCursorPosition = true;
-        }
     }
 
     void ReleaseCocoaInput(InputState& input)
     {
-        input.ReleaseAllKeys();
-        for (auto& button : input.MouseButtons)
-            UpdateButton(button, false);
-        input.HasCursorPosition = false;
+        input.HandleFocusLost();
     }
 
     bool ApplyCocoaInputEvent(InputState& input, NSEvent* event, NSView* view)
@@ -261,9 +223,25 @@ namespace Raven
             return false;
         const NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
         // Leave title-bar controls alone, but retain drags/releases outside content.
-        if (!NSPointInRect(point, view.bounds) && !HasMouseButtonDown(input))
+        if (!NSPointInRect(point, view.bounds) && !input.HasMouseButtonDown())
             return false;
-        UpdateCursor(input, view, point);
+        const NSRect bounds = [view convertRectToBacking:view.bounds];
+        const NSPoint pixel = [view convertPointToBacking:point];
+        const auto x = pixel.x - NSMinX(bounds);
+        const auto y = view.flipped ? pixel.y - NSMinY(bounds) : NSMaxY(bounds) - pixel.y;
+        input.SetCursorPosition(static_cast<std::int32_t>(std::lround(x)),
+            static_cast<std::int32_t>(std::lround(y)));
+
+        const auto updateButton = [&input, bounds, x, y](MouseButton button, bool down)
+        {
+            if (down)
+                input.PressMouseButton({ button, static_cast<std::int32_t>(std::floor(x)),
+                    static_cast<std::int32_t>(std::floor(y)),
+                    static_cast<std::uint32_t>(bounds.size.width),
+                    static_cast<std::uint32_t>(bounds.size.height) });
+            else
+                input.SetMouseButtonDown(button, false);
+        };
 
         switch (event.type)
         {
@@ -278,18 +256,16 @@ namespace Raven
         }
         case NSEventTypeLeftMouseDown:
         case NSEventTypeLeftMouseUp:
-            UpdateButton(input.MouseButtons[static_cast<std::size_t>(MouseButton::Left)],
-                event.type == NSEventTypeLeftMouseDown);
+            updateButton(MouseButton::Left, event.type == NSEventTypeLeftMouseDown);
             break;
         case NSEventTypeRightMouseDown:
         case NSEventTypeRightMouseUp:
-            UpdateButton(input.MouseButtons[static_cast<std::size_t>(MouseButton::Right)],
-                event.type == NSEventTypeRightMouseDown);
+            updateButton(MouseButton::Right, event.type == NSEventTypeRightMouseDown);
             break;
         case NSEventTypeOtherMouseDown:
         case NSEventTypeOtherMouseUp:
             if (event.buttonNumber >= 2 && event.buttonNumber <= 4)
-                UpdateButton(input.MouseButtons[static_cast<std::size_t>(event.buttonNumber)],
+                updateButton(static_cast<MouseButton>(event.buttonNumber),
                     event.type == NSEventTypeOtherMouseDown);
             break;
         default:

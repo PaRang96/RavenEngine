@@ -2,7 +2,9 @@
 
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 
+#include <algorithm>
 #include <array>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -52,6 +54,7 @@ namespace Raven
 		};
 		VkDescriptorPoolCreateInfo info{};
 		info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 		info.maxSets = SetsPerPage;
 		info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
 		info.pPoolSizes = sizes.data();
@@ -66,19 +69,53 @@ namespace Raven
 		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE ||
 			texture.GetSampler() == VK_NULL_HANDLE)
 			throw std::invalid_argument("Texture descriptors require a texture from the same device");
-		if (m_Pages.empty() || m_Pages.back().Used == SetsPerPage)
+		auto page = std::find_if(m_Pages.begin(), m_Pages.end(), [](const Page& value)
+		{
+			return value.Used < SetsPerPage;
+		});
+		if (page == m_Pages.end())
+		{
 			AddPage();
+			page = std::prev(m_Pages.end());
+		}
 
 		VkDescriptorSetAllocateInfo allocation{};
 		allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocation.descriptorPool = m_Pages.back().Pool;
+		allocation.descriptorPool = page->Pool;
 		allocation.descriptorSetCount = 1;
 		allocation.pSetLayouts = &m_Layout;
 		VkDescriptorSet set = VK_NULL_HANDLE;
 		CheckDescriptorResult(vkAllocateDescriptorSets(m_Device, &allocation, &set),
 			"vkAllocateDescriptorSets (texture)");
-		++m_Pages.back().Used;
+		try
+		{
+			m_Bindings.emplace(set, static_cast<std::size_t>(page - m_Pages.begin()));
+		}
+		catch (...)
+		{
+			vkFreeDescriptorSets(m_Device, page->Pool, 1, &set);
+			throw;
+		}
+		++page->Used;
+		WriteBinding(set, texture);
+		return set;
+	}
 
+	void VulkanTextureDescriptors::ReleaseBinding(VkDescriptorSet binding) noexcept
+	{
+		const auto found = m_Bindings.find(binding);
+		if (found == m_Bindings.end())
+			return;
+		auto& page = m_Pages[found->second];
+		if (vkFreeDescriptorSets(m_Device, page.Pool, 1, &binding) == VK_SUCCESS)
+		{
+			--page.Used;
+			m_Bindings.erase(found);
+		}
+	}
+
+	void VulkanTextureDescriptors::WriteBinding(VkDescriptorSet set, const VulkanTexture& texture) const noexcept
+	{
 		const VkDescriptorImageInfo image{ VK_NULL_HANDLE, texture.GetView(),
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 		const VkDescriptorImageInfo sampler{ texture.GetSampler(), VK_NULL_HANDLE,
@@ -97,7 +134,6 @@ namespace Raven
 		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
 		writes[1].pImageInfo = &sampler;
 		vkUpdateDescriptorSets(m_Device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-		return set;
 	}
 
 	VulkanTextureDescriptors::~VulkanTextureDescriptors()

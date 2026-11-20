@@ -1,16 +1,19 @@
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
 
+#include "Renderer/Vulkan/VulkanMeshInstance.hpp"
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Raven/Renderer/ColorVertex.hpp"
 
 #include <array>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
 namespace Raven
 {
 	VulkanColorPipeline::VulkanColorPipeline(const VulkanDevice& device,
-		VkRenderPass renderPass, const std::filesystem::path& shaderDirectory)
+		VkRenderPass renderPass, VkDescriptorSetLayout textureLayout,
+		std::span<const std::uint32_t> vertexWords, std::span<const std::uint32_t> fragmentWords)
 		: m_Device(device.Get())
 	{
 		if (m_Device == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE)
@@ -18,8 +21,8 @@ namespace Raven
 
 		try
 		{
-			const VulkanShaderModule vertex(device, shaderDirectory / "Color.vert.spv");
-			const VulkanShaderModule fragment(device, shaderDirectory / "Color.frag.spv");
+			const VulkanShaderModule vertex(device, vertexWords);
+			const VulkanShaderModule fragment(device, fragmentWords);
 
 			std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
 			stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -31,27 +34,34 @@ namespace Raven
 			stages[1].module = fragment.Get();
 			stages[1].pName = "PSMain";
 
-			const VkVertexInputBindingDescription binding
+			const std::array<VkVertexInputBindingDescription, 2> bindings
 			{
-				0, sizeof(ColorVertex), VK_VERTEX_INPUT_RATE_VERTEX
+				VkVertexInputBindingDescription{ 0, sizeof(ColorVertex), VK_VERTEX_INPUT_RATE_VERTEX },
+				VkVertexInputBindingDescription{ 1, sizeof(MeshInstanceData), VK_VERTEX_INPUT_RATE_INSTANCE }
 			};
-			const std::array<VkVertexInputAttributeDescription, 2> attributes
+			const std::array<VkVertexInputAttributeDescription, 15> attributes
 			{
-				VkVertexInputAttributeDescription
-				{
-					0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Position)
-				},
-				VkVertexInputAttributeDescription
-				{
-					1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Color)
-				}
+				VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Position) },
+				VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Color) },
+				VkVertexInputAttributeDescription{ 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Normal) },
+				VkVertexInputAttributeDescription{ 3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ColorVertex, UV) },
+				VkVertexInputAttributeDescription{ 4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0 },
+				VkVertexInputAttributeDescription{ 5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16 },
+				VkVertexInputAttributeDescription{ 6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32 },
+				VkVertexInputAttributeDescription{ 7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48 },
+				VkVertexInputAttributeDescription{ 8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 64 },
+				VkVertexInputAttributeDescription{ 9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 80 },
+				VkVertexInputAttributeDescription{ 10, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 96 },
+				VkVertexInputAttributeDescription{ 11, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, Tint) },
+				VkVertexInputAttributeDescription{ 12, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, AmbientAndLit) },
+				VkVertexInputAttributeDescription{ 13, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, LightDirection) },
+				VkVertexInputAttributeDescription{ 14, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, LightColor) }
 			};
 			VkPipelineVertexInputStateCreateInfo vertexInput{};
 			vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-			vertexInput.vertexBindingDescriptionCount = 1;
-			vertexInput.pVertexBindingDescriptions = &binding;
-			vertexInput.vertexAttributeDescriptionCount =
-				static_cast<std::uint32_t>(attributes.size());
+			vertexInput.vertexBindingDescriptionCount = static_cast<std::uint32_t>(bindings.size());
+			vertexInput.pVertexBindingDescriptions = bindings.data();
+			vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
 			vertexInput.pVertexAttributeDescriptions = attributes.data();
 			VkPipelineInputAssemblyStateCreateInfo assembly{};
 			assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -91,16 +101,10 @@ namespace Raven
 			blend.attachmentCount = 1;
 			blend.pAttachments = &color;
 
-			const VkPushConstantRange pushRange
-			{
-				VK_SHADER_STAGE_VERTEX_BIT,
-				0,
-				sizeof(ColorPushConstants)
-			};
 			VkPipelineLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-			layoutInfo.pushConstantRangeCount = 1;
-			layoutInfo.pPushConstantRanges = &pushRange;
+			layoutInfo.setLayoutCount = 1;
+			layoutInfo.pSetLayouts = &textureLayout;
 			VkPipelineLayout layout = VK_NULL_HANDLE;
 			VkResult result = vkCreatePipelineLayout(m_Device, &layoutInfo, nullptr, &layout);
 			if (result != VK_SUCCESS)
@@ -138,11 +142,11 @@ namespace Raven
 	}
 
 	void VulkanColorPipeline::Bind(VkCommandBuffer commands,
-		const ColorPushConstants& constants) const
+		VkDescriptorSet texture) const
 	{
 		vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipeline);
-		vkCmdPushConstants(commands, m_Layout, VK_SHADER_STAGE_VERTEX_BIT,
-			0, sizeof(constants), &constants);
+		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout,
+			0, 1, &texture, 0, nullptr);
 	}
 
 	VulkanColorPipeline::~VulkanColorPipeline()

@@ -28,6 +28,8 @@ namespace Raven::ECS
 		// A snapshot permits structural changes during updates; stale handles still fail.
 		RAVEN_API std::vector<Entity> GetEntities() const;
 
+		RAVEN_API bool Has(Entity entity, const Component& value) const noexcept;
+
 		// Base references support generic callers; no component object is retained.
 		RAVEN_API bool Add(Entity entity, const Component& value);
 		RAVEN_API bool Read(Entity entity, Component& value) const noexcept;
@@ -36,6 +38,8 @@ namespace Raven::ECS
 
 		// Reject typed callers that inherit a parent's declaration without declaring
 		// their own component. Component& itself selects the non-template overload.
+		template<typename T> requires (!ComponentType<T>)
+		bool Has(Entity, const T&) const = delete;
 		template<typename T> requires (!ComponentType<T>)
 		bool Add(Entity, const T&) = delete;
 		template<typename T> requires (!ComponentType<T>)

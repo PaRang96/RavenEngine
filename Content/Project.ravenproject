@@ -1,0 +1,23 @@
+raven-project 1
+
+# Stable asset UUID | Content-relative source | texture color space
+texture 7a590cee-ec82-4a27-927f-860e64619c19 "Textures/UVGrid.png" srgb
+texture a1552d51-3e07-483c-aabd-366e71785a34 "Textures/UVGridAlternate.png" srgb
+texture 638a4a91-4e75-4c27-ae9d-b7f8026cf043 "Textures/CourtyardWall.png" srgb
+mesh 6938c6b9-72ca-4bc1-b0bf-9dc31e158087 "Meshes/Cube.fbx"
+mesh 79607ed4-7591-4672-b47b-7107b21ac4ac "Meshes/Sphere.fbx"
+audio ef451c5a-02db-4d81-89a1-ec2ea98ed719 "Audio/CourtyardWin.wav"
+audio 0b47e26c-7486-45d8-968c-f7507a8feb29 "Audio/CourtyardLoss.wav"
+
+# Scene order is the F4 order within each sample family.
+scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180 perspective "Levels/Perspective.ravenscene"
+scene d852433d-7890-4cd6-955c-661a3b5503d8 perspective "Levels/Gallery.ravenscene"
+scene 43b1aa6f-728d-44e8-bf10-c48713d4fb4a perspective "Levels/Assemblies.ravenscene"
+scene 7e6879b6-0ceb-4327-95a6-354cc4cc0863 perspective "Levels/Puzzle.ravenscene"
+scene 72c6c544-fcf5-44fd-8e87-09e507df67d8 perspective "Levels/Collection.ravenscene"
+scene 5f708ee7-8927-4b46-9434-20a5392eb2c4 perspective "Levels/Benchmark-100.ravenscene"
+scene 675da478-1d28-4440-8d75-4bccd9942c31 perspective "Levels/Benchmark-500.ravenscene"
+scene 84d2e14b-30ba-4158-b3e4-dcfad32b35e0 perspective "Levels/Benchmark-2000.ravenscene"
+scene b61438cc-321d-41da-b9ec-1d17b34d7357 perspective "Levels/Benchmark-4000.ravenscene"
+scene e508bf36-c0c7-467c-a1a3-b29096002ad9 orthographic "Levels/Orthographic.ravenlevel"
+scene 53f8cc80-1031-40ba-ad11-7cdf28f302c6 orthographic "Levels/Courtyard.ravenlevel"

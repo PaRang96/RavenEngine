@@ -6,6 +6,7 @@
 #include "Raven/Core/Api.hpp"
 
 #include <memory>
+#include <vector>
 
 namespace Raven
 {
@@ -15,6 +16,10 @@ namespace Raven
 	public:
 		RAVEN_API AssetCatalog();
 		RAVEN_API ~AssetCatalog();
+		RAVEN_API AssetCatalog(AssetCatalog&&) noexcept;
+		RAVEN_API AssetCatalog& operator=(AssetCatalog&&) noexcept;
+		RAVEN_API void Swap(AssetCatalog& other) noexcept;
+		RAVEN_API std::vector<AssetRecord> GetRecords() const;
 
 		// Add immutable metadata; duplicate IDs are rejected, including identical records.
 		// Texture registration uses its dedicated overload to include color space.

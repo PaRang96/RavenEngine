@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+namespace Raven { class Scene; }
+
 namespace Raven::ECS
 {
     class Registry;
@@ -18,6 +20,7 @@ namespace Raven::ECS
 
     private:
         friend class Registry;
+        friend class ::Raven::Scene;
 
         constexpr Entity(std::uint64_t registryId,
                          std::uint32_t index,

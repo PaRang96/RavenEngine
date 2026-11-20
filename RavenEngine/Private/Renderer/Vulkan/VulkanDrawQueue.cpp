@@ -25,6 +25,15 @@ namespace Raven
 			return transform;
 		}
 
+		std::array<Vec4, 3> NormalTransform(const Mat4& model, bool lit)
+		{
+			const Mat4 normal = lit ? NormalMatrix(model) : Mat4::Identity();
+			std::array<Vec4, 3> result{};
+			for (std::size_t index = 0; index < result.size(); ++index)
+				result[index] = { normal(0, index), normal(1, index), normal(2, index), 0.0f };
+			return result;
+		}
+
 		void AppendTexturedBatches(std::span<const QueuedTexturedDraw> draws,
 			std::vector<TexturedInstanceData>& instances, std::vector<TexturedBatch>& batches)
 		{
@@ -54,9 +63,12 @@ namespace Raven
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,
 		std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws)
+		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
 	{
+		lighting.Validate();
+		const auto direction = Normalize(lighting.Direction);
 		queue.Color.clear();
+		queue.MeshInstances.clear();
 		queue.OpaqueTexture.clear();
 		queue.Transparent.clear();
 		queue.TexturedInstances.clear();
@@ -64,14 +76,22 @@ namespace Raven
 		queue.TransparentBatches.clear();
 		const ViewFrustum frustum(viewProjection);
 		queue.Color.reserve(colorDraws.size());
+		queue.MeshInstances.reserve(colorDraws.size());
 		queue.OpaqueTexture.reserve(opaqueDraws.size());
 		queue.Transparent.reserve(transparentDraws.size());
 		for (const auto& draw : colorDraws)
 		{
-			const auto bounds = TransformBounds(draw.Mesh.GetLocalBounds(), draw.Model);
+			const auto bounds = TransformBounds(draw.Mesh.GetData()->LocalBounds, draw.Model);
 			const auto transform = PrepareTransform(viewProjection, draw.Model, draw.Tint);
+			const auto normal = NormalTransform(draw.Model, draw.Lit);
 			if (frustum.Intersects(bounds))
-				queue.Color.push_back({ &draw, transform });
+			{
+				queue.Color.push_back(&draw);
+				queue.MeshInstances.push_back({ transform, normal, draw.Tint,
+					{ lighting.Ambient.X, lighting.Ambient.Y, lighting.Ambient.Z, draw.Lit ? 1.0f : 0.0f },
+					{ direction.X, direction.Y, direction.Z, 0.0f },
+					{ lighting.Color.X, lighting.Color.Y, lighting.Color.Z, 0.0f } });
+			}
 		}
 		for (const auto& draw : opaqueDraws)
 		{

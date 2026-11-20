@@ -2,10 +2,9 @@
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
 
-#include <filesystem>
-
 namespace Raven
 {
+	class VulkanShaderModule;
 	enum class TexturePipelineMode
 	{
 		Opaque,
@@ -16,7 +15,7 @@ namespace Raven
 	{
 	public:
 		VulkanTexturePipeline(const VulkanDevice& device, VkRenderPass renderPass,
-			VkDescriptorSetLayout textureLayout, const std::filesystem::path& shaderDirectory,
+			VkDescriptorSetLayout textureLayout, const VulkanShaderModule& vertex, const VulkanShaderModule& fragment,
 			TexturePipelineMode mode = TexturePipelineMode::Opaque);
 		~VulkanTexturePipeline();
 

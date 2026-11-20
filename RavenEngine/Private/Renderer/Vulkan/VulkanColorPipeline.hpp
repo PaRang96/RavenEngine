@@ -1,24 +1,22 @@
 #pragma once
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
-#include "Renderer/Vulkan/VulkanDrawConstants.hpp"
 
-#include <cstddef>
-#include <filesystem>
+#include <cstdint>
+#include <span>
 
 namespace Raven
 {
-	using ColorPushConstants = DrawPushConstants;
-
 	class VulkanColorPipeline
 	{
 	public:
 		VulkanColorPipeline(const VulkanDevice& device, VkRenderPass renderPass,
-			const std::filesystem::path& shaderDirectory);
+			VkDescriptorSetLayout textureLayout, std::span<const std::uint32_t> vertexWords,
+			std::span<const std::uint32_t> fragmentWords);
 		~VulkanColorPipeline();
 
 		VkPipeline Get() const { return m_Pipeline; }
-		void Bind(VkCommandBuffer commands, const ColorPushConstants& constants) const;
+		void Bind(VkCommandBuffer commands, VkDescriptorSet texture) const;
 
 		VulkanColorPipeline(const VulkanColorPipeline&) = delete;
 		VulkanColorPipeline& operator=(const VulkanColorPipeline&) = delete;

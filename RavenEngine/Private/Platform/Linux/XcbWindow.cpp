@@ -192,21 +192,6 @@ namespace Raven
 			}
 		}
 
-		void UpdateButton(ButtonState& state, bool down)
-		{
-			if (down)
-			{
-				if (!state.Down)
-					state.Pressed = true;
-			}
-			else if (state.Down)
-			{
-				state.Released = true;
-			}
-
-			state.Down = down;
-		}
-
 		bool TranslateMouseButton(xcb_button_t button, MouseButton& out)
 		{
 			switch (button)
@@ -517,8 +502,13 @@ namespace Raven
 
 			MouseButton button{};
 			if (TranslateMouseButton(buttonEvent->detail, button))
-				UpdateButton(
-					m_Input.MouseButtons[static_cast<std::size_t>(button)], down);
+			{
+				if (down)
+					m_Input.PressMouseButton({ button, buttonEvent->event_x,
+						buttonEvent->event_y, GetWidth(), GetHeight() });
+				else
+					m_Input.SetMouseButtonDown(button, false);
+			}
 			break;
 		}
 		case XCB_KEY_PRESS:
@@ -533,10 +523,7 @@ namespace Raven
 				reinterpret_cast<const xcb_key_release_event_t*>(event));
 			break;
 		case XCB_FOCUS_OUT:
-			m_Input.ReleaseAllKeys();
-			for (ButtonState& state : m_Input.MouseButtons)
-				UpdateButton(state, false);
-			m_Input.HasCursorPosition = false;
+			m_Input.HandleFocusLost();
 			break;
 		default:
 			break;

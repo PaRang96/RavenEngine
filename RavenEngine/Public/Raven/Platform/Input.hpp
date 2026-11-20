@@ -92,6 +92,16 @@ namespace Raven
 		Modifier Modifiers = Modifier::None;
 	};
 
+	struct MouseButtonPress
+	{
+		MouseButton Button;
+		// Button-down position and size of the source framebuffer in pixels.
+		std::int32_t X;
+		std::int32_t Y;
+		std::uint32_t FramebufferWidth;
+		std::uint32_t FramebufferHeight;
+	};
+
 	struct InputState
 	{
 		static constexpr std::size_t KeyCount = 256;
@@ -102,6 +112,7 @@ namespace Raven
 		std::array<ButtonState, MouseButtonCount> MouseButtons{};
 
 		std::vector<KeyEvent> KeyEvents{};
+		std::vector<MouseButtonPress> MouseButtonPresses{};
 
 		std::int32_t CursorX = 0;
 		std::int32_t CursorY = 0;
@@ -219,6 +230,16 @@ namespace Raven
 				UpdateButtonState(MouseButtons[index], down);
 		}
 
+		void PressMouseButton(MouseButtonPress press)
+		{
+			const auto index = static_cast<std::size_t>(press.Button);
+			if (index >= MouseButtons.size() || MouseButtons[index].Down)
+				return;
+
+			MouseButtonPresses.push_back(press);
+			SetMouseButtonDown(press.Button, true);
+		}
+
 		bool HasMouseButtonDown() const
 		{
 			for (const ButtonState& state : MouseButtons)
@@ -279,6 +300,7 @@ namespace Raven
 			}
 
 			KeyEvents.clear();
+			MouseButtonPresses.clear();
 			CursorDeltaX = 0;
 			CursorDeltaY = 0;
 			ScrollX = 0.0f;

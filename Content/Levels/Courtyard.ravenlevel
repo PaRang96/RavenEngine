@@ -1,0 +1,27 @@
+raven-level 1
+win-sound ef451c5a-02db-4d81-89a1-ec2ea98ed719
+loss-sound 0b47e26c-7486-45d8-968c-f7507a8feb29
+
+cameras courtyard balcony
+moving courier -1 0 0
+order foreground
+player explorer
+goal beacon
+# XZ half-extents in world units
+bounds explorer 0.325 0.325
+bounds courier  0.6   0.6
+bounds beacon   0.45  0.45
+solid platform  1.5   0.3
+
+# camera name | position XYZ | rotation XYZ (radians) | height near far
+camera courtyard   0 -10 0   0 0 0   7 0.1 100
+camera balcony    -3 -12 1   0 0 0   5 0.1 100
+
+# sprite name | texture UUID | blend | position | rotation | scale | tint RGBA | layer order
+sprite courier    a1552d51-3e07-483c-aabd-366e71785a34 opaque   2 -2 0.8     0 0 0    1.2 1 1.2   1 0.85 0.5 1      0 0
+sprite explorer   7a590cee-ec82-4a27-927f-860e64619c19 opaque  -3 -3 -2.4    0 0 0    0.65 1 0.65 0.35 0.95 1 1   0 0
+sprite beacon     7a590cee-ec82-4a27-927f-860e64619c19 opaque   3 -2.8 2.4   0 0 0    0.9 1 0.9   0.25 1 0.25 1   0 0
+sprite platform   638a4a91-4e75-4c27-ae9d-b7f8026cf043 opaque   0 -2.7 -1.2   0 0 0    3   1 0.6   0.75 0.45 1 1     0 0
+sprite marker     a1552d51-3e07-483c-aabd-366e71785a34 opaque  -2.5 1 1.1    0 0.2 0  1.4 1 1.4   0.8 0.7 1 1       0 0
+sprite background 7a590cee-ec82-4a27-927f-860e64619c19 alpha   -0.6 0.3 0.4  0 0 0    2   1 2     1 0.65 0.4 0.45  0 0
+sprite foreground a1552d51-3e07-483c-aabd-366e71785a34 alpha    0.5 -0.3 0   0 0 0    2.4 1 2.4   0.4 0.8 1 0.6    0 0

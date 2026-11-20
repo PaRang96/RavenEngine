@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.24)
 
 # Enable Edit and Continue debug information for MSVC when supported.
 if(POLICY CMP0141)
@@ -8,7 +8,7 @@ if(POLICY CMP0141)
     )
 endif()
 
-project(RavenEngine VERSION 0.1.0 LANGUAGES CXX)
+project(RavenEngine VERSION 0.1.0 LANGUAGES C CXX)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RavenBuildSettings.cmake")
 

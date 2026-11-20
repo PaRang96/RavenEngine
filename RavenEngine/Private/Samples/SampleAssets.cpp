@@ -2,26 +2,29 @@
 
 namespace Raven
 {
-	SampleAssets::SampleAssets(VulkanContext& renderer)
-		: m_Resources(m_Catalog, renderer)
+	SampleAssets::SampleAssets(VulkanContext& renderer, bool development, bool watchMesh, bool watchTexture)
+		: m_Project(renderer, SceneProject::DefaultContentRoot(development || watchMesh || watchTexture),
+			development, watchMesh, development || watchTexture)
 	{
-		m_Catalog.Register(TextureAssetDesc{ GetUVGrid().Id, "Textures/UVGrid.png", TextureColorSpace::SRGB });
-		m_Catalog.Register(TextureAssetDesc{ GetUVGridAlternate().Id,
-			"Textures/UVGridAlternate.png", TextureColorSpace::SRGB });
 	}
 
 	const VulkanTexture& SampleAssets::LoadTexture(AssetRef<TextureAsset> asset)
 	{
-		return m_Resources.LoadTexture(asset);
+		auto found = m_Shared.find(asset.Id);
+		if (found == m_Shared.end())
+			found = m_Shared.emplace(asset.Id, m_Project.GetAssets().Acquire(GetCatalog(), asset.Id, AssetKind::Texture)).first;
+		return found->second.GetTexture();
 	}
 
-	AssetRef<TextureAsset> SampleAssets::GetUVGrid()
+	AssetReloadResult SampleAssets::ApplyReloads() { return m_Project.GetAssets().ApplyReloads(); }
+
+	AssetRef<AudioAsset> SampleAssets::GetWinSound()
 	{
-		return { AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19") };
+		return { AssetId::Parse("ef451c5a-02db-4d81-89a1-ec2ea98ed719") };
 	}
 
-	AssetRef<TextureAsset> SampleAssets::GetUVGridAlternate()
+	AssetRef<AudioAsset> SampleAssets::GetLossSound()
 	{
-		return { AssetId::Parse("a1552d51-3e07-483c-aabd-366e71785a34") };
+		return { AssetId::Parse("0b47e26c-7486-45d8-968c-f7507a8feb29") };
 	}
 }

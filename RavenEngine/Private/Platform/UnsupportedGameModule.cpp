@@ -1,4 +1,5 @@
 #include "Platform/GameModulePlatform.hpp"
+#include "Platform/BuildProcess.hpp"
 #include <stdexcept>
 
 namespace Raven::Platform
@@ -7,9 +8,9 @@ namespace Raven::Platform
 	{ throw std::runtime_error("Game module replacement currently requires Windows"); }
 	GameEntryPoint FindGameEntryPoint(void*, const char*) { return nullptr; }
 	void UnloadGameLibrary(void*) noexcept {}
-	GameBuildProcess* StartGameBuild(const std::filesystem::path&,
+	BuildProcess* StartBuildProcess(const std::filesystem::path&,
 		const std::vector<std::wstring>&, const std::filesystem::path&)
-	{ throw std::runtime_error("Automatic game builds currently require Windows"); }
-	bool PollGameBuild(GameBuildProcess&, int&) { return false; }
-	void DestroyGameBuild(GameBuildProcess*) noexcept {}
+	{ throw std::runtime_error("Background build processes currently require Windows"); }
+	bool PollBuildProcess(BuildProcess&, int&) { return false; }
+	void DestroyBuildProcess(BuildProcess*) noexcept {}
 }

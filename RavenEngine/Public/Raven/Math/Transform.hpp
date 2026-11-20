@@ -1,9 +1,8 @@
 #pragma once
 
 #include <cmath>
+#include <array>
 #include <cstddef>
-#include <limits>
-#include <numbers>
 #include <stdexcept>
 #include <type_traits>
 
@@ -161,104 +160,29 @@ namespace Raven
 		result(1, 1) = cosine;
 		return result;
 	}
-
-	inline Mat4 LookAtRH(Vec3 eye, Vec3 target, Vec3 up)
+	// Inverse transpose of the affine model's linear part, including reflected scale.
+	inline Mat4 NormalMatrix(const Mat4& model)
 	{
-		const Vec3 forward = Normalize(target - eye);
-		const Vec3 right = Normalize(Cross(forward, up));
-		const Vec3 cameraUp = Cross(right, forward);
+		if (model(3, 0) != 0.0f || model(3, 1) != 0.0f || model(3, 2) != 0.0f || model(3, 3) != 1.0f)
+			throw std::invalid_argument("Lit mesh model must be affine");
+		const Vec3 x{ model(0, 0), model(1, 0), model(2, 0) };
+		const Vec3 y{ model(0, 1), model(1, 1), model(2, 1) };
+		const Vec3 z{ model(0, 2), model(1, 2), model(2, 2) };
+		const float determinant = Dot(x, Cross(y, z));
+		if (!std::isfinite(determinant) || determinant == 0.0f)
+			throw std::invalid_argument("Lit mesh transform must be nonsingular");
+		const std::array columns{ Cross(y, z), Cross(z, x), Cross(x, y) };
 		Mat4 result = Mat4::Identity();
-		result(0, 0) = right.X;
-		result(0, 1) = right.Y;
-		result(0, 2) = right.Z;
-		result(0, 3) = -Dot(right, eye);
-		result(1, 0) = cameraUp.X;
-		result(1, 1) = cameraUp.Y;
-		result(1, 2) = cameraUp.Z;
-		result(1, 3) = -Dot(cameraUp, eye);
-		result(2, 0) = -forward.X;
-		result(2, 1) = -forward.Y;
-		result(2, 2) = -forward.Z;
-		result(2, 3) = Dot(forward, eye);
-		return result;
-	}
-
-	inline Mat4 ViewFromPoseRH(Vec3 position, Vec3 rotation)
-	{
-		if (!std::isfinite(position.X) || !std::isfinite(position.Y) || !std::isfinite(position.Z) ||
-			!std::isfinite(rotation.X) || !std::isfinite(rotation.Y) || !std::isfinite(rotation.Z))
-			throw std::invalid_argument("Invalid camera position or rotation");
-		
-		const Mat4 orientation = RotationZ(rotation.Z) * RotationY(rotation.Y) * RotationX(rotation.X);
-
-		const Vec3 forward{
-			orientation(0, 1), orientation(1, 1), orientation(2, 1)
-		};
-
-		const Vec3 up {
-			orientation(0, 2), orientation(1, 2), orientation(2, 2)
-		};
-
-		const Mat4 view = LookAtRH({}, forward, up) *
-			Translation({ -position.X, -position.Y, -position.Z });
-
-		for (const auto& column : view.Columns)
-			for (const float value : column)
-				if (!std::isfinite(value))
-					throw std::invalid_argument("Camera pose exceeds the supported numeric range");
-
-		return view;
-	}
-
-	// Symmetric view region: verticalSize is the full visible height in world units.
-	inline Mat4 OrthographicVulkanRH(float verticalSize, float aspect,
-		float nearPlane, float farPlane)
-	{
-		if (!std::isfinite(verticalSize) || !std::isfinite(aspect) ||
-			!std::isfinite(nearPlane) || !std::isfinite(farPlane) ||
-			verticalSize <= 0.0f || aspect <= 0.0f || nearPlane < 0.0f || farPlane <= nearPlane)
-			throw std::invalid_argument("Invalid orthographic size, aspect, or clipping planes");
-
-		// Use double intermediates so large finite dimensions do not overflow before division.
-		const double depthRange = static_cast<double>(farPlane) - nearPlane;
-		const auto toFloat = [](double value)
+		for (std::size_t column = 0; column < columns.size(); ++column)
 		{
-			if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
-				throw std::invalid_argument("Orthographic parameters exceed the supported numeric range");
-			return static_cast<float>(value);
-		};
-		Mat4 result = Mat4::Identity();
-		result(0, 0) = toFloat(2.0 / (static_cast<double>(verticalSize) * aspect));
-		// Match the perspective path's positive-height Vulkan viewport.
-		result(1, 1) = toFloat(-2.0 / verticalSize);
-		result(2, 2) = toFloat(-1.0 / depthRange);
-		result(2, 3) = toFloat(-static_cast<double>(nearPlane) / depthRange);
-		if (result(0, 0) == 0.0f || result(1, 1) == 0.0f || result(2, 2) == 0.0f)
-			throw std::invalid_argument("Orthographic parameters produce a degenerate projection");
+			const Vec3 value = columns[column] * (1.0f / determinant);
+			if (!std::isfinite(value.X) || !std::isfinite(value.Y) || !std::isfinite(value.Z))
+				throw std::invalid_argument("Mesh normal transform exceeds the supported numeric range");
+			result(0, column) = value.X;
+			result(1, column) = value.Y;
+			result(2, column) = value.Z;
+		}
 		return result;
 	}
 
-	inline Mat4 PerspectiveVulkanRH(float verticalFovRadians, float aspect,
-		float nearPlane, float farPlane)
-	{
-		if (!std::isfinite(verticalFovRadians) || !std::isfinite(aspect) ||
-			!std::isfinite(nearPlane) || !std::isfinite(farPlane) ||
-			verticalFovRadians <= 0.0f || verticalFovRadians >= std::numbers::pi_v<float> ||
-			aspect <= 0.0f || nearPlane <= 0.0f || farPlane <= nearPlane)
-			throw std::invalid_argument("Invalid perspective field of view, aspect, or clipping planes");
-
-		const float focalScale = 1.0f / std::tan(verticalFovRadians * 0.5f);
-		Mat4 result;
-		result(0, 0) = focalScale / aspect;
-		// Positive-height Vulkan viewport: world/camera up must map toward the screen top.
-		result(1, 1) = -focalScale;
-		result(2, 2) = farPlane / (nearPlane - farPlane);
-		result(2, 3) = nearPlane * result(2, 2);
-		result(3, 2) = -1.0f;
-		for (const auto& column : result.Columns)
-			for (const float value : column)
-				if (!std::isfinite(value))
-					throw std::invalid_argument("Perspective parameters exceed the supported numeric range");
-		return result;
-	}
 }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
+#include "Raven/Renderer/SceneLighting.hpp"
+#include "Renderer/Vulkan/VulkanMeshInstance.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
 #include <cstddef>
@@ -11,12 +13,6 @@
 
 namespace Raven
 {
-	struct QueuedColorDraw
-	{
-		const VulkanDraw* Draw;
-		Mat4 ModelViewProjection;
-	};
-
 	struct QueuedTexturedDraw
 	{
 		const VulkanTexturedDraw* Draw;
@@ -50,7 +46,8 @@ namespace Raven
 	// CPU storage is reused; borrowed submissions are used only during the current DrawFrame.
 	struct VulkanDrawQueue
 	{
-		std::vector<QueuedColorDraw> Color;
+		std::vector<const VulkanDraw*> Color;
+		std::vector<MeshInstanceData> MeshInstances;
 		std::vector<QueuedTexturedDraw> OpaqueTexture;
 		std::vector<QueuedTexturedDraw> Transparent;
 		std::vector<TexturedInstanceData> TexturedInstances;
@@ -60,5 +57,5 @@ namespace Raven
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,
 		std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws);
+		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
 }
