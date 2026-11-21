@@ -4,6 +4,7 @@
 #include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameInstance.hpp"
+#include "Raven/Core/GameSystems.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Raven/Platform/Input.hpp"
 #include "GameComponents.hpp"
@@ -132,41 +133,58 @@ namespace
 		scene.Write(entity, transform);
 	}
 
-	Raven::GameUpdateResult Update(Raven::GameInstance& instance, const Raven::InputState& input,
-		const Raven::FrameTime& frame, Raven::GameBindings bindings) noexcept
+	// The first drawable frame after a pause carries a zero delta; long stalls are capped.
+	float Delta(const Raven::SystemContext& context)
 	{
-		try
-		{
-			const float delta = static_cast<float>(std::clamp(frame.DeltaSeconds, 0.0, 0.1));
-			if (bindings.Camera.IsNull())
-				MoveSprites(instance.GetRegistry(), delta);
-			else
-				UpdateFreeFly(bindings.World, bindings.Camera, input, delta);
-			if (!bindings.Mesh.IsNull())
-				RotateMesh(bindings.World, bindings.Mesh, input, delta);
-			Raven::SampleGame::UpdateInteractionGame(bindings, input, delta);
-			if (!bindings.Player.IsNull() && delta > 0.0f)
-				return { GetPlayerDisplacement(input, delta) };
-		}
-		catch (const std::exception& error)
-		{
-			Raven::Log(Raven::LogLevel::Error, error.what());
-		}
-		catch (...)
-		{
-			Raven::Log(Raven::LogLevel::Error, "Unknown game update failure");
-		}
-		return {};
+		return static_cast<float>(std::clamp(context.Time.DeltaSeconds, 0.0, 0.1));
+	}
+
+	// Fixed-step sprite motion for the Orthographic sample; a bound camera means free-fly.
+	void MoveSpritesSystem(Raven::SystemContext& context)
+	{
+		if (context.Bindings.Camera.IsNull())
+			MoveSprites(context.Game.GetRegistry(), Delta(context));
+	}
+
+	// Fixed-step player intent; the host resolves collision in OnGameplayStep.
+	void PlayerMovementSystem(Raven::SystemContext& context)
+	{
+		const float delta = Delta(context);
+		if (!context.Bindings.Player.IsNull() && delta > 0.0f)
+			context.Result.PlayerDisplacement = GetPlayerDisplacement(context.Input, delta);
+	}
+
+	void FreeFlySystem(Raven::SystemContext& context)
+	{
+		if (!context.Bindings.Camera.IsNull())
+			UpdateFreeFly(context.Bindings.World, context.Bindings.Camera, context.Input, Delta(context));
+	}
+
+	void MeshRotationSystem(Raven::SystemContext& context)
+	{
+		if (!context.Bindings.Mesh.IsNull())
+			RotateMesh(context.Bindings.World, context.Bindings.Mesh, context.Input, Delta(context));
+	}
+
+	void InteractionSystem(Raven::SystemContext& context)
+	{
+		Raven::SampleGame::UpdateInteractionGame(context.Bindings, context.Input, Delta(context));
 	}
 }
 
-// These two C-linkage signatures stay fixed. Check the contract before fetching Update.
+// These two C-linkage signatures stay fixed. The host checks the contract before
+// registering systems, and keeps them only while this module generation is loaded.
 extern "C" RAVEN_GAME_API const char* RavenGetGameContract() noexcept
 {
 	return Raven::GameBuild::Contract;
 }
 
-extern "C" RAVEN_GAME_API Raven::GameUpdateFunction RavenGetGameUpdate() noexcept
+extern "C" RAVEN_GAME_API void RavenRegisterSystems(Raven::SystemTable& systems)
 {
-	return &Update;
+	using Raven::SystemPhase;
+	systems.Add({ "MoveSprites", SystemPhase::FixedUpdate, 0, &MoveSpritesSystem });
+	systems.Add({ "PlayerMovement", SystemPhase::FixedUpdate, 10, &PlayerMovementSystem });
+	systems.Add({ "FreeFly", SystemPhase::Update, 0, &FreeFlySystem });
+	systems.Add({ "MeshRotation", SystemPhase::Update, 10, &MeshRotationSystem });
+	systems.Add({ "Interaction", SystemPhase::Update, 20, &InteractionSystem });
 }

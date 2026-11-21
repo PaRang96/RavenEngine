@@ -127,16 +127,15 @@ namespace Raven
 							GameUpdateResult result;
 							const FrameTime step = gameplay.GetStepTime();
 							if (game)
-								result = game->Update(instance, gameplay.GetInput(), step, client->GetGameBindings());
+								result = game->FixedUpdate(instance, gameplay.GetInput(), step, client->GetGameBindings());
 							client->OnGameplayStep(result);
 							gameplay.ConsumeStep();
 						}
 					}
 				}
-				else if (game)
-				{
+				// Variable-rate systems run once per drawable frame, after any fixed steps.
+				if (game)
 					game->Update(instance, input, frameTime, client->GetGameBindings());
-				}
 
 				gameplayTime.End();
 				client->OnFrame(renderer, input, frameTime);
@@ -173,6 +172,21 @@ namespace Raven
 			trace.close();
 			if (!trace)
 				throw std::runtime_error("Cannot write frame timing capture");
+			if (game)
+			{
+				// Per-system host time beside the frame trace, accumulated across reloads.
+				auto systemsPath = config.FrameTracePath;
+				systemsPath.replace_extension(".systems.csv");
+				std::ofstream systems(systemsPath);
+				systems << "system,phase,calls,total_ns,mean_ns\n";
+				for (const auto& stats : game->GetSystemStats())
+					systems << stats.Name << ',' << (stats.Phase == SystemPhase::FixedUpdate ? "fixed" : "update") << ','
+						<< stats.Calls << ',' << stats.Nanoseconds << ','
+						<< (stats.Calls ? stats.Nanoseconds / stats.Calls : 0) << '\n';
+				systems.close();
+				if (!systems)
+					throw std::runtime_error("Cannot write system timing capture");
+			}
 		}
 	}
 }

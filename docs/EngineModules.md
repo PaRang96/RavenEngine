@@ -306,7 +306,14 @@ Application owns a GameInstance containing a Registry. The Registry owns entity 
 - Type-erased callers use `HasComponent`/`AddComponent`/`ReadComponent`/`WriteComponent`/`RemoveComponent` with a `ComponentInfo`.
 - Entity destruction erases stored values before the slot is recycled, without running destructors.
 - GetEntities returns a snapshot; stale handles still need liveness checks.
-- Each component type is one sparse set (M1 step 3): a paged entity-index lookup (4,096 entries per page, allocated on demand), plus dense arrays of owning entity indices and of the values, aligned for the type. Add and Remove are O(1). Remove moves the last element into the gap, so dense order is not stable. Views over the dense arrays follow in M1 step 4.
+- Each component type is one sparse set (M1 step 3): a paged entity-index lookup (4,096 entries per page, allocated on demand), plus dense arrays of owning entity indices and of the values, aligned for the type. Add and Remove are O(1). Remove moves the last element into the gap, so dense order is not stable.
+- Borrowed access (M1 step 4):
+  - `View<A, const B>().Each(fn)` calls `fn(Entity, A&, const B&)` for entities with every listed component. It starts from the smallest pool, and returning `false` stops early.
+  - `TryGet<T>(entity)` returns a pointer or null. `Single<T>()` returns the first component of a type, and `Count<T>()` counts them.
+  - References and pointers are valid only during the current synchronous update, until the next structural change.
+  - While a view iterates, `Add`/`Remove`/`Destroy` are rejected and logged, and `Create` throws `std::logic_error`. `Scene::DestroyEntity` throws before changing its own bookkeeping.
+- Each slot records an owning scene ID set by `Scene::CreateEntity`. `SceneAccess` views, `TryGet`, `Single` and `Count` visit only entities the scene owns. Registry views visit everything.
+- `SceneAccess::Query` still returns the scene's entities in authored order; it tests pool membership directly.
 
 Derive from Component, declare direct fields, then put the shared macro in the public section using the qualified type identifier and every data member in declaration order:
 
@@ -387,6 +394,26 @@ M1 step 3 verification (2026-11-21):
 
 - The compatible DLL reload check passed again. Generation went from 1 to 2 and the rotor speed from 0.65 to 1.30 rad/s, with its phase retained and no scene recreation. Save-to-present was 2.94 s; the longest frame was 33 ms.
 
+M1 step 4 verification (2026-11-21):
+
+- Windows Debug/Release builds pass, and both tests pass in both. `RegistryTests` checks view membership, write-through, early stop, rejected structural changes, and `TryGet`/`Single`/`Count`. `HierarchyTests` checks that scene views skip other scenes and unowned entities.
+- Release `EcsBenchmark` at 100k entities, in two alternating rounds against the step 3 build:
+  - Mutable `View<Transform>` pass: 0.11 ms. The copy-based pass takes 2.1–2.3 ms.
+  - Scene-scoped `View<Rotator, Transform>` over 10k matches: 0.09–0.13 ms. `Query` plus copies takes 1.5–1.6 ms.
+  - `Query` itself improved from 1.5–1.6 to 0.83–0.91 ms.
+- The Debug `Raven3DSmoke` run with Vulkan core and synchronization validation passed with no validation messages. It covered Puzzle and Collection completion through the view-based game code, foreign-entity exclusion, and compatible DLL replacement with retained progress.
+  - `scripts/Test-Windows3D.ps1` needs PowerShell 7 (`pwsh`), which isn't installed on the laptop. Windows PowerShell 5.1 stops at its intentional failed-build step, so the remaining smoke executable step was run directly.
+- The compatible DLL reload check passed: generation 1 to 2, rotor speed 0.65 to 1.30 rad/s, phase retained, no scene recreation. Save-to-present was 3.45 s; the longest frame was 32 ms.
+
+M1 step 5 verification (2026-11-21):
+
+- The game DLL registers MoveSprites and PlayerMovement (FixedUpdate) and FreeFly, MeshRotation and Interaction (Update).
+- Windows Debug/Release builds pass and both tests pass in both.
+- The Debug `Raven3DSmoke` run with Vulkan core and synchronization validation passed with no validation messages, driving the registered Update systems through Puzzle and Collection.
+- The compatible reload check passed: generation 1 to 2, rotor speed 0.65 to 1.30 rad/s, phase retained, no scene recreation. Save-to-present was 2.99 s; the longest frame was 29.5 ms.
+- Its `frames.systems.csv` accumulated FreeFly, MeshRotation and Interaction across both generations. At 500 meshes, Interaction averaged 5.1 µs per frame.
+- The Orthographic/Courtyard fixed-step path was built but not run, following the 3D-only runtime testing direction.
+
 The component records below describe the earlier virtual parent and are historical.
 
 Historical metadata-only refactor validation on 2026-10-19: Debug/Release engine, host, existing game DLL and temporary probe callers built. Component-only checks covered generated names, namespace separation, copied fields, removal and stale slot reuse. An expected compilation failure rejected std::string. Both native samples passed focused GPU checks, with clean Debug core/synchronization diagnostics. Logs remain under ignored `out/validation/game-reload/`: `{debug,release}-component-macro-build.log`, `*-component-macro-probe-build.log`, `*-component-macro-probe.log`, `*-component-macro-render.log` and `component-macro-invalid.log`. That evidence predates the virtual Component parent; it is not the current verification record. The probes remain temporary evidence; no tracked test suite or CTest integration was added.
@@ -432,7 +459,7 @@ Engine implementation follows assistant-suggested, owner-applied snippets as cla
 
 ## Reload scope
 
-`RavenCore.dll` and the host remain loaded. GameModule reserves a unique execution-copy directory beside the game output, copies the DLL, loads it by absolute path, checks the fixed C-linkage contract query, then obtains the typed update function. A valid candidate replaces the old function only between synchronous calls. The previous library and its execution copy are released after activation. Failed copying/loading, missing exports, null updates and contract mismatches leave the active module intact. The build output is never loaded, so the linker can overwrite it.
+`RavenCore.dll` and the host remain loaded. GameModule reserves a unique execution-copy directory beside the game output, copies the DLL, loads it by absolute path, checks the fixed C-linkage contract query, then calls `RavenRegisterSystems` and validates the system table (see [ECSDesign.md](ECSDesign.md#d6--systems-and-schedule)). A valid candidate replaces the old systems only between synchronous calls. The host drops a generation's system table before its library unloads. The previous library and its execution copy are released after activation. Failed copying/loading, missing exports, an invalid or empty system table, a registration exception and contract mismatches leave the active module intact. The build output is never loaded, so the linker can overwrite it.
 
 The [default Windows launch](DevelopmentReload.md) enables source builds for Perspective in free-fly mode. The explicit `--game` and `--watch-game` commands still select Orthographic when used alone. Add `--free-fly` to select Perspective. F5 calls Reload. A worker observes external output contents and metadata after two stable samples, including replacements with equal size and timestamps. Windows directory notifications wake the worker, and a periodic content audit catches missed changes. It watches Public headers, game C++ files, game and root CMake rules, presets, and CMake helpers. A source edit during a build queues a new build. The frame loop accepts a finished result between gameplay updates.
 

@@ -10,9 +10,12 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -98,14 +101,24 @@ namespace Raven
 			return hash;
 		}
 
+		// One registered system of the loaded generation; Run points into its module.
+		struct LoadedSystem
+		{
+			std::string Name;
+			SystemPhase Phase = SystemPhase::Update;
+			std::int32_t Order = 0;
+			SystemFunction Run = nullptr;
+		};
+
 		struct LoadedGame
 		{
 			void* Library = nullptr;
 			std::filesystem::path Copy;
-			GameUpdateFunction Update = nullptr;
+			// Sorted by phase, then order. Cleared before the library unloads.
+			std::vector<LoadedSystem> Systems;
 			~LoadedGame()
 			{
-				Update = nullptr;
+				Systems.clear();
 				Platform::UnloadGameLibrary(Library);
 				std::error_code ignored;
 				if (!Copy.empty())
@@ -128,6 +141,8 @@ namespace Raven
 
 		std::filesystem::path Path;
 		std::unique_ptr<LoadedGame> Active;
+		// Keyed by system name, so timing accumulates across compatible reloads.
+		std::map<std::string, GameSystemStats, std::less<>> Stats;
 		std::uint64_t Generation = 0;
 		std::string Error;
 		bool AutoBuild = false;
@@ -174,7 +189,71 @@ namespace Raven
 
 		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0);
 		void Watch(std::stop_token stop, FileStamp initial);
+		GameUpdateResult RunPhase(SystemPhase phase, GameInstance& game, const InputState& input,
+			const FrameTime& frame, GameBindings bindings);
 	};
+
+	void SystemTable::Add(const SystemDesc& system)
+	{
+		m_Systems.push_back(system);
+	}
+
+	namespace
+	{
+		// Copies names out of the module and rejects an unusable table before activation.
+		std::vector<LoadedSystem> LoadSystems(const SystemTable& table)
+		{
+			std::vector<LoadedSystem> systems;
+			std::set<std::string, std::less<>> names;
+			for (const auto& system : table.GetSystems())
+			{
+				if (!system.Name || !*system.Name || !system.Run)
+					throw std::runtime_error("Game DLL registered a system without a name or function");
+				if (system.Phase != SystemPhase::FixedUpdate && system.Phase != SystemPhase::Update)
+					throw std::runtime_error(std::string("Game system has an unknown phase: ") + system.Name);
+				if (!names.emplace(system.Name).second)
+					throw std::runtime_error(std::string("Game DLL registered a system twice: ") + system.Name);
+				systems.push_back({ system.Name, system.Phase, system.Order, system.Run });
+			}
+			std::stable_sort(systems.begin(), systems.end(), [](const LoadedSystem& left, const LoadedSystem& right)
+			{
+				return left.Phase != right.Phase ? left.Phase < right.Phase : left.Order < right.Order;
+			});
+			return systems;
+		}
+	}
+
+	GameUpdateResult GameModule::Impl::RunPhase(SystemPhase phase, GameInstance& game, const InputState& input,
+		const FrameTime& frame, GameBindings bindings)
+	{
+		GameUpdateResult result;
+		SystemContext context{ game, input, frame, bindings, result };
+		for (const auto& system : Active->Systems)
+		{
+			if (system.Phase != phase)
+				continue;
+			const auto start = Clock::now();
+			try
+			{
+				system.Run(context);
+			}
+			catch (const std::exception& error)
+			{
+				Log(LogLevel::Error, "Game system '" + system.Name + "' failed: " + error.what());
+			}
+			catch (...)
+			{
+				Log(LogLevel::Error, "Game system '" + system.Name + "' failed with an unknown exception");
+			}
+			const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+			auto stats = Stats.find(system.Name);
+			if (stats == Stats.end())
+				stats = Stats.emplace(system.Name, GameSystemStats{ system.Name, system.Phase }).first;
+			++stats->second.Calls;
+			stats->second.Nanoseconds += static_cast<std::uint64_t>(elapsed);
+		}
+		return result;
+	}
 
 	bool GameModule::Impl::Activate(std::optional<FileStamp> expected, std::uint64_t revision)
 	{
@@ -203,11 +282,13 @@ namespace Raven
 			const char* value = contract();
 			if (!value || std::string_view(value) != GameBuild::Contract)
 				throw std::runtime_error("Game contract changed: rebuild and restart the host; existing game remains active");
-			const auto getUpdate = reinterpret_cast<GetGameUpdateFunction>(
-				Platform::FindGameEntryPoint(candidate->Library, GameUpdateEntryPoint));
-			candidate->Update = getUpdate();
-			if (!candidate->Update)
-				throw std::runtime_error("Game DLL returned a null update function");
+			const auto registerSystems = reinterpret_cast<RegisterSystemsFunction>(
+				Platform::FindGameEntryPoint(candidate->Library, RegisterSystemsEntryPoint));
+			SystemTable table;
+			registerSystems(table);
+			candidate->Systems = LoadSystems(table);
+			if (candidate->Systems.empty())
+				throw std::runtime_error("Game DLL registered no systems");
 			if (expected && SourceRevision.load() != revision)
 				return false;
 			Active.swap(candidate);
@@ -398,10 +479,24 @@ namespace Raven
 		}
 	}
 
+	GameUpdateResult GameModule::FixedUpdate(GameInstance& game, const InputState& input, const FrameTime& frame,
+		GameBindings bindings)
+	{
+		return m_Impl->RunPhase(SystemPhase::FixedUpdate, game, input, frame, bindings);
+	}
+
 	GameUpdateResult GameModule::Update(GameInstance& game, const InputState& input, const FrameTime& frame,
 		GameBindings bindings)
 	{
-		return m_Impl->Active->Update(game, input, frame, bindings);
+		return m_Impl->RunPhase(SystemPhase::Update, game, input, frame, bindings);
+	}
+
+	std::vector<GameSystemStats> GameModule::GetSystemStats() const
+	{
+		std::vector<GameSystemStats> stats;
+		for (const auto& [name, value] : m_Impl->Stats)
+			stats.push_back(value);
+		return stats;
 	}
 
 	std::uint64_t GameModule::GetGeneration() const noexcept { return m_Impl->Generation; }

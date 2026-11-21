@@ -121,16 +121,19 @@ AttemptComponent* attempt = registry.TryGet<AttemptComponent>(entity); // borrow
 ```
 
 - **Lifetime:** references, spans and views are valid only during the current synchronous system call or host phase. They must not be stored in components, statics or module state. This is the rule already agreed in `AGENTS.md`.
-- **Structural safety:** while a view iterates, its pools are locked. In Debug, a direct structural change to a locked pool asserts. Systems make structural changes through commands (D5).
-- **Change ticks:** non-const access (`T&` in `Each`, `TryGet`, `Values`) marks the visited element with the current tick. Const access does not. A system that writes conditionally should iterate const and call `registry.Write(entity, value)` or `MarkChanged<T>(entity)` for the elements it actually changes. These ticks drive D7 and the M3 GPU uploads.
+- **Structural safety:** while a view iterates, `Add`/`Remove`/`Destroy` are rejected and logged, and `Create` throws `std::logic_error`. A Debug abort was considered and rejected, because it would end the live session during hot reload. Systems make structural changes through commands (D5).
+- **Change ticks:** non-const access (`T&` in `Each`, `TryGet`, `Values`) marks the visited element with the current tick. Const access does not. A system that writes conditionally should iterate const and call `registry.Write(entity, value)` or `MarkChanged<T>(entity)` for the elements it actually changes. These ticks drive D7 and the M3 GPU uploads. They land with D7 in step 6, their first consumer, rather than in step 4.
 - **Copy API:** `Read`/`Write` copies stay for one-off access and for tools. They become a typed lookup plus one `memcpy`.
 
-### D5 — Deferred structural changes
+### D5 — Deferred structural changes (deferred to first need)
+
+Owner decision (2026-11-21): no current gameplay spawns or despawns entities at runtime, so `Commands` waits for the first feature that does. Until then, views reject structural changes (D4). The planned design:
+
 
 - Systems receive a `Commands` buffer for create, destroy, add and remove.
 - `Commands::Create` reserves an entity slot immediately, so later commands in the same buffer can refer to the new entity.
 - The host applies commands in recorded order at the end of each phase, after all views are released.
-- Host code outside systems (scene loading, SceneSession switching, the tool) keeps direct structural calls. The Debug pool lock catches misuse.
+- Host code outside systems (scene loading, SceneSession switching, the tool) keeps direct structural calls. The view iteration guard rejects misuse.
 - Destroying an entity that belongs to a scene goes through `Scene` so the hierarchy, names and bindings stay consistent. Scene registers a command hook for this.
 
 ### D6 — Systems and schedule
@@ -144,7 +147,17 @@ Phases:
 | `PostUpdate` | host | Apply commands, propagate hierarchy (D7), update audio and other services |
 | `Extract` | host | Read-only render and picking gather from cached data |
 
-Each system is registered with a name, phase, order and declared access (the component types it reads and writes). Each system's run time is recorded in frame traces, for the benchmark.
+Each system is registered with a name, phase and order. Declared read/write access waits for parallel scheduling. Per-system run time is recorded for the benchmark.
+
+**Implemented in step 5 (2026-11-21):**
+
+- `Raven/Core/GameSystems.hpp` defines `SystemPhase` (`FixedUpdate`, `Update`), `SystemContext`, `SystemDesc` and `SystemTable`.
+- The DLL exports `RavenRegisterSystems` in place of `RavenGetGameUpdate`. Activation rejects a table that is empty, has an unnamed system or null function, an unknown phase, or a duplicate name. Systems are stably sorted by phase, then order.
+- `Application` runs `FixedUpdate` once per fixed step for fixed-step clients, then `Update` once per drawable frame for every client. `GameModule::Update` keeps its signature for existing callers such as the smoke test.
+- The host catches exceptions per system and logs the system name.
+- Time and call counts accumulate by system name across reloads, and are written to `<trace>.systems.csv` when a frame trace is enabled.
+- Owner decision (2026-11-21): `GameUpdateResult` stays, as `SystemContext::Result`. A FixedUpdate system writes the player displacement there, and Courtyard's `OnGameplayStep` is unchanged.
+- `PostUpdate` and `Extract` arrive with the host systems in step 6.
 
 **Registration across reload (approved).** The game DLL exports `RavenRegisterSystems(SystemTable&)` next to the existing contract entry point. The host calls it after a candidate passes validation and keeps the function pointers in a table tagged with that module generation. Before the old module unloads, the host clears its table. If a candidate is rejected, the old table stays active.
 
@@ -163,12 +176,17 @@ The existing `GameBindings` (camera, player, mesh, interactions) reach systems t
 - Gameplay `SceneAccess::GetWorldTransform` keeps live composition. Interaction code writes a Transform and checks distances in the same update, so cached values from the previous PostUpdate would be one step stale there. This difference is documented in the API.
 - The draw-time `WorldTransformPass` is removed once Extract uses the cache.
 
-### D8 — Scene membership in a shared Registry (deferred)
+### D8 — Scene membership in a shared Registry (per-slot scene ID, step 4)
 
-One Registry is shared by every scene. `SceneSession` builds a candidate scene and either publishes or discards it within one `Update` call, during the host's frame preparation and before any game code runs ([SceneSession.cpp](../RavenEngine/Private/Scene/SceneSession.cpp)). All entities are created through `Scene`, so whenever systems run, the Registry holds exactly one scene. M1 views therefore iterate the whole Registry without a scene filter.
+One Registry is shared by every scene. `SceneSession` builds a candidate scene and either publishes or discards it within one `Update` call, before any game code runs ([SceneSession.cpp](../RavenEngine/Private/Scene/SceneSession.cpp)). But the Registry can also hold entities that no scene owns, and the 3D smoke test creates one on purpose to check that scene queries skip it ([Windows3DSmoke.cpp](../scripts/Windows3DSmoke.cpp)). An unfiltered scene view would count it, so the original deferral did not hold.
 
-- Add a Debug check that no candidate scene exists while a system phase runs.
-- Revisit when editor and play sessions are designed. The options then are a per-slot world ID in the shared Registry, or one Registry per world.
+**Decision (owner, 2026-11-21):**
+
+- Each Registry slot stores a 32-bit owning scene ID, and `Scene::CreateEntity` sets it.
+- `SceneAccess` views compare it per visited entity, which is one array read. `SceneAccess::TryGet` uses the same check.
+- Host-side `Registry` views stay unfiltered.
+- The "no candidate scene during systems" Debug check is not needed, because scoping no longer depends on how many scenes exist.
+- One Registry per world remains an option when editor and play sessions are designed.
 
 ### D9 — Singletons and threading
 
@@ -246,8 +264,8 @@ Each step is one or a few reviewable snippets, and all samples keep working afte
 1. *(Done 2026-11-21.)* **M0 guards:** add `RegistryTests`, `HierarchyTests` and Registry/world-transform micro-benchmarks against the current code. Record the baseline.
 2. *(Done 2026-11-21, `ae263b9`.)* **D1 + D2:** make `Component` an empty, non-virtual base and have the macro generate static information and typed IDs. Template the Registry API on `T`. Storage stays unchanged internally, apart from replacing the string keys. Run the tests, a host rebuild, and a compatible DLL reload.
 3. *(Done 2026-11-21.)* **D3:** sparse-set pools behind the same API. Run the tests and benchmarks. Archetypes were not needed: the gate measured 2.1 ms for Transform read+write and 15 ns per random read at 100k entities. The remaining cost is per-entity snapshots and copies, which step 4 removes.
-4. **D4 + D9:** views and singletons, plus the D8 Debug check that no candidate scene exists during systems. Port `SceneAccess::Query`, the interaction rotator/door/goal loops and `MoveSprites`.
-5. **D5 + D6:** commands, the system table, phases and per-system timing. Move the game DLL's `Update` contents into registered systems, then retire the single entry point and its `GameUpdateResult` path once Courtyard uses a FixedUpdate system.
+4. *(Done 2026-11-21.)* **D4 + D8 + D9:** views, `TryGet`/`Single`/`Count` and per-slot scene IDs. `SceneAccess::Query` keeps authored order through pool lookups. The interaction rotator/door/goal loops and `MoveSprites` use views. Change ticks move to step 6.
+5. *(Done 2026-11-21.)* **D6:** the system table, `FixedUpdate`/`Update` phases and per-system timing. The game DLL's `Update` became five registered systems, and the single entry point is retired. `GameUpdateResult` stays as the fixed-step result in `SystemContext`. Commands (D5) are deferred to first need.
 6. **D7:** cached world transforms and the hierarchy system. Port draw gathering and picking, and remove `WorldTransformPass`.
 7. **Exit check:** budgets, the 4,000-mesh benchmark, a compatible and a rejected DLL reload with retained state, and Debug Vulkan validation on the 3D path. Update [EngineModules.md](EngineModules.md) and `AGENTS.md`.
 
@@ -274,7 +292,7 @@ Each step is one or a few reviewable snippets, and all samples keep working afte
 | Decision | Outcome |
 | --- | --- |
 | D1 | Approved as an empty, non-virtual `Component` base. A plain struct without a base was declined. |
-| D2–D5, D7, D9 | Approved as written. |
+| D2–D5, D7, D9 | Approved as written. D5 was later deferred to first need (2026-11-21). |
 | D6 | Approved; it states the existing loaded-generation rule for module function pointers. |
-| D8 | Deferred. Only one scene exists while systems run, so M1 adds a Debug check only. |
+| D8 | Deferred on 2026-11-20, then implemented in step 4 (2026-11-21) as per-slot scene IDs after the smoke test's foreign entity showed unfiltered scene views would change gameplay. |
 | Budgets | Set from the M0 baseline; the 4,000-mesh stages are the main measurement. |

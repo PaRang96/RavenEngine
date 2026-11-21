@@ -29,12 +29,8 @@ namespace Raven
 		Vec3 PlayerDisplacement{};
 	};
 
-	// Borrowed only during the synchronous update; no module-owned state survives unload.
-	using GameUpdateFunction = GameUpdateResult (*)(GameInstance&, const InputState&, const FrameTime&,
-		GameBindings bindings) noexcept;
-	using GetGameUpdateFunction = GameUpdateFunction (*)() noexcept;
+	// Entry point every game module exports; the host checks it before registering systems.
 	using GetGameContractFunction = const char* (*)() noexcept;
-	inline constexpr char GameUpdateEntryPoint[] = "RavenGetGameUpdate";
 	inline constexpr char GameContractEntryPoint[] = "RavenGetGameContract";
 
 	class ApplicationClient
