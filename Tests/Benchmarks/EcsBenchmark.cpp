@@ -16,6 +16,15 @@
 #include <random>
 #include <vector>
 
+namespace RavenTests
+{
+	struct BenchmarkSpin : Raven::ECS::Component
+	{
+		float Rate = 0.5f;
+		RAVEN_COMPONENT(RavenTests::BenchmarkSpin, Rate);
+	};
+}
+
 namespace
 {
 	using Raven::Scene;
@@ -100,6 +109,7 @@ namespace
 			meshTransform.Scale = { 0.5f, 0.5f, 0.5f };
 			registry.Add(mesh, meshTransform);
 			scene.SetParent(mesh, pivot);
+			registry.Add(mesh, RavenTests::BenchmarkSpin{});
 			meshes.push_back(mesh);
 		}
 		const std::size_t entities = scene.GetEntities().size();
@@ -153,6 +163,27 @@ namespace
 				[](Entity, RotatorComponent& rotor, TransformComponent& transform)
 				{
 					transform.Rotation.Z += rotor.Rotation.Z * 0.016f;
+				});
+		}));
+
+		// Budget case: half of all entities match (every mesh has Spin and Transform).
+		std::size_t spins = 0;
+		access.View<const RavenTests::BenchmarkSpin, TransformComponent>().Each(
+			[&spins](Entity, const RavenTests::BenchmarkSpin&, TransformComponent&) { ++spins; });
+		Report("Scene View<Spin, Transform> mutable, half match", entities, spins, MedianMilliseconds([&]
+		{
+			access.View<const RavenTests::BenchmarkSpin, TransformComponent>().Each(
+				[](Entity, const RavenTests::BenchmarkSpin& spin, TransformComponent& transform)
+				{
+					transform.Rotation.Z += spin.Rate * 0.016f;
+				});
+		}));
+		Report("Registry View<Spin, Transform> mutable, half match", entities, spins, MedianMilliseconds([&]
+		{
+			registry.View<const RavenTests::BenchmarkSpin, TransformComponent>().Each(
+				[](Entity, const RavenTests::BenchmarkSpin& spin, TransformComponent& transform)
+				{
+					transform.Rotation.Z += spin.Rate * 0.016f;
 				});
 		}));
 

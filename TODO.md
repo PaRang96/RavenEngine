@@ -34,20 +34,20 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 ### Build hygiene
 - [ ] Set `/W4` (MSVC) and `-Wall -Wextra` (Clang/GCC) on engine targets, and fix actionable warnings. Keep third-party code excluded.
 
-## M1 — Data-oriented ECS (next, design first)
+## M1 — Data-oriented ECS (done 2026-11-21)
 
 - [x] Write the design note: [ECSDesign.md](docs/ECSDesign.md) (2026-11-20).
 - [x] Owner review (2026-11-20): D1 keeps an empty, non-virtual `Component` base; D6 approved; D8 deferred to a Debug check; budgets come from the M0 baseline.
-- [ ] Benchmark the chosen storage against the current Registry, using the M0 micro-benchmarks.
+- [x] Benchmark the chosen storage against the current Registry, using the M0 micro-benchmarks (each step's results are in [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload)).
 - [x] Make `Component` an empty, non-virtual base, with the macro generating static information and typed IDs. Template the Registry API on `T`. Applied 2026-11-21; see [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
 - [x] Add dense sparse-set pools behind the current Read/Write API, so the samples don't change. Applied 2026-11-21. At 100k entities, Transform read+write is 2.1 ms and a random read 15 ns, which meets the ≤ 50 ns budget. See [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
 - [x] Add views with borrowed references, `TryGet`/`Single`/`Count` and per-slot scene IDs, then port `SceneAccess::Query` and the gameplay loops. Applied 2026-11-21. A 100k-entity Transform view takes 0.11 ms, which meets the ≤ 0.3 ms budget. Change ticks move to the world-transform step.
 - [x] Add the host system schedule: registered systems, FixedUpdate/Update phases and per-system timing. Applied 2026-11-21. The command buffer is deferred until gameplay first spawns or despawns at runtime.
 - [ ] Run Courtyard (2D, fixed step) once on request, to confirm player movement through the FixedUpdate system. It is built but not run.
 - [x] Add change ticks, a cached world-transform component and the hierarchy update, and port draw gathering. Applied 2026-11-21. Picking stays live. 50k entities with 20% changed take 0.52–0.57 ms; the 4,000-mesh M1 stages take 0.37 ms p95 (target ≤ 1.96 ms).
-- [ ] M1 exit check (step 7): recheck every budget together, including a direct 50k-match view measurement and a rejected DLL reload with retained state.
+- [x] M1 exit check (step 7): every budget passed together, including a 50k-match view at 0.18–0.20 ms. Compatible and rejected reloads keep state in the smoke test and in a live Release session, and Vulkan validation is clean at 4,000 meshes. See [the exit record](docs/ECSDesign.md#m1-exit-record-2026-11-21).
 
-## M2 — Vulkan 1.2 renderer foundation (after M1)
+## M2 — Vulkan 1.2 renderer foundation (next)
 
 - [ ] Raise `apiVersion` and DXC `-fspv-target-env` to Vulkan 1.2. Check required features and extensions at device selection, with clear errors.
 - [ ] Adopt dynamic rendering and synchronization2, and replace the render-pass/framebuffer objects.

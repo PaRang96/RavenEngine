@@ -1,6 +1,6 @@
 # M1 ECS design note
 
-Status: **approved by the owner** (2026-11-20), with these revisions:
+Status: **implemented; M1 complete** (2026-11-21). Approved by the owner on 2026-11-20, with these revisions:
 
 - D1 keeps an empty, non-virtual `Component` base.
 - D6 is the existing loaded-generation rule.
@@ -222,7 +222,7 @@ These are the M1 exit criteria, measured in Release on the minimum-spec laptop. 
 | Typed `Read` of one component, random order, 100k entities | 78 ns | 15–17 ns | ≤ 50 ns |
 | 4,000-mesh benchmark: gameplay ECS + mesh world transforms + remaining scene gather (sum of each stage's median p95) | 3.91 ms (1.77 + 0.82 + 1.33) | 0.37 ms (0.04 + 0.14 + 0.19) | ≤ 1.96 ms (at least 2× faster) |
 
-Step 7 rechecks every row together, including a direct 50k-match view measurement.
+The [exit record](#m1-exit-record-2026-11-21) rechecked every row together on master.
 
 ### M0 baseline record (2026-11-21)
 
@@ -292,6 +292,28 @@ Same command, case, machine and method as the M0 3D baseline, run on the step 6 
 
 The median rose from 114.9 to 162.8 FPS (162.7–162.8), and CPU preparation stayed under 5 ms in 100% of frames. The 165 Hz display now limits the frame rate. The remaining CPU time is mostly renderer preparation and recording (M2). Per-system timing for the same run: Interaction 22.4 µs, FreeFly 3.0 µs, MeshRotation 0.1 µs per frame. Local evidence (ignored): `out/m1-step6/out/benchmark-scale-7n252cng`.
 
+## M1 exit record (2026-11-21)
+
+Measured on master (`0fe3f0a` plus the new benchmark case) on the minimum-spec laptop, on an idle machine. The micro-benchmark rows are two Release `EcsBenchmark` rounds.
+
+| Budget | Result | Target | Status |
+| --- | ---: | ---: | --- |
+| Mutable `View<Transform>` over 100k entities | 0.158 / 0.282 ms | ≤ 0.3 ms | Pass (round 2 close) |
+| Two-component view, 50k matches among 100k (scene-scoped `View<Spin, Transform>`) | 0.175 / 0.199 ms (3.5–4.0 ns per match) | ≤ 0.5 ms | Pass |
+| Same, unfiltered Registry view | 0.159 / 0.166 ms | — | — |
+| World update, 50k entities with 20% changed | 0.580 / 0.624 ms | ≤ 1.0 ms | Pass |
+| Typed random `Read`, 100k entities | 16.7 / 15.8 ns | ≤ 50 ns | Pass |
+| 4,000-mesh gameplay ECS + world + gather, sum of median p95 | 0.381 ms (0.036 + 0.145 + 0.200) | ≤ 1.96 ms | Pass |
+
+- **4,000-mesh run:** RTX 3070 Ti Laptop, mailbox presentation at 2560 × 1440. Three runs gave 162.3–164.1 FPS (median 162.8), with CPU preparation p95 2.27 ms and under 5 ms in 99.5–100% of frames. Evidence: `out/benchmark-scale-zkxsv9ut`.
+- **Reload with retained state:** in the Debug `Raven3DSmoke` run, a compatible edited DLL activated as generation 2 and kept the pickup identity, collected progress and camera selection. A corrupt DLL was rejected without changing the generation, and the edited rule stayed active. Vulkan core and synchronization validation reported nothing. Evidence: `out/validation/windows-3d/x64-debug-bf7bcd47dfcb4d1cb11c9afc7d3cd475`.
+- **Live Release session:** `scripts/Test-Windows3DLive.py x64-release` passed. It covers shader, scene, PNG, FBX and game-rule reloads, and rejection of shader syntax/interface errors, malformed scenes and a failed game build with retained state.
+  - The game-rule edit was visible 3.99 s after saving; the failed build was rejected after 1.09 s.
+  - Its F4 helper now advances until the requested level loads, because the project's scene order includes the benchmark scenes after Collection. Before this fix the script timed out at Benchmark-100, independently of M1.
+  - Evidence: `out/live3d-x64-release-c9d646f`.
+- **Vulkan validation at scale:** `scripts/Benchmark-Windows3D.py validate --meshes 4000` passed. Evidence: `out/benchmark-validate-tfsuzqs7`.
+- **Not run:** the 2D Courtyard fixed-step path. It is built, and the test is on request.
+
 ## Migration steps
 
 Each step is one or a few reviewable snippets, and all samples keep working after each step.
@@ -302,7 +324,7 @@ Each step is one or a few reviewable snippets, and all samples keep working afte
 4. *(Done 2026-11-21.)* **D4 + D8 + D9:** views, `TryGet`/`Single`/`Count` and per-slot scene IDs. `SceneAccess::Query` keeps authored order through pool lookups. The interaction rotator/door/goal loops and `MoveSprites` use views. Change ticks move to step 6.
 5. *(Done 2026-11-21.)* **D6:** the system table, `FixedUpdate`/`Update` phases and per-system timing. The game DLL's `Update` became five registered systems, and the single entry point is retired. `GameUpdateResult` stays as the fixed-step result in `SystemContext`. Commands (D5) are deferred to first need.
 6. *(Done 2026-11-21.)* **D7:** change ticks, cached world transforms and the hierarchy update. Draw gathering uses the cache and `WorldTransformPass` is removed; picking stays live.
-7. **Exit check:** budgets, the 4,000-mesh benchmark, a compatible and a rejected DLL reload with retained state, and Debug Vulkan validation on the 3D path. Update [EngineModules.md](EngineModules.md) and `AGENTS.md`.
+7. *(Done 2026-11-21.)* **Exit check:** budgets, the 4,000-mesh benchmark, a compatible and a rejected DLL reload with retained state, and Debug Vulkan validation on the 3D path. Update [EngineModules.md](EngineModules.md) and `AGENTS.md`.
 
 ## Contract changes, recorded as each step lands
 

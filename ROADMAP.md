@@ -25,49 +25,51 @@ Check an item only when its behavior is shown in a sample, a tracked test, or a 
 | Testing | Start CTest and a Windows CI build now, before the ECS and renderer rewrites. Keep tests minimal: add a tracked test only for behavior an upcoming change rewrites. Rendering and reload stay covered by the existing smoke and benchmark scripts. |
 | Minimum spec | The test laptop (Intel Core i7-12700H, NVIDIA GeForce RTX 3070 Ti Laptop GPU) is both the test machine and the minimum supported spec. Every performance target must be met on it. Faster hardware is not a substitute for meeting a target here. Its Intel iGPU is not part of the minimum spec. |
 
-## Where the engine stands (2026-11-20)
+## Where the engine stands (2026-11-21)
 
 Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (earlier presentation checks also used its Intel iGPU):
 
 - **Platform:** Win32 window, input, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch, XAudio2 one-shots. macOS (Cocoa) and Linux (XCB) windows/input are merged. They have no random-byte hook, game-module loader, native watcher or audio backend yet, and no current native verification.
 - **Vulkan:** a 1.0 renderer with an explicit-lifetime device/swapchain, resize/minimize recovery, depth, color/textured/lit pipelines, managed mesh/texture handles with fence retirement, sprite instancing and CPU frustum culling. Lit meshes use one draw call per object, so 4,000 meshes = 4,004 draws. See [Benchmark3D.md](docs/Benchmark3D.md).
-- **ECS:** generation-checked entities, the reviewed `Component`/`RAVEN_COMPONENT` value contract, and Transform, StaticMesh, Sprite, Camera, Material, Lighting and interaction components. Storage is a string-keyed map of per-entity heap blocks. Queries scan every scene entity, and there is no system scheduling yet.
+- **ECS (M1 done):** components derive from an empty `Component` base and live in sparse-set pools keyed by a compile-time type ID. Scene-scoped views hand out borrowed references; change ticks and cached world transforms are in place. The game DLL registers named systems in `FixedUpdate`/`Update`. Deferred structural commands wait for a first runtime spawn/despawn need. See [ECSDesign.md](docs/ECSDesign.md).
 - **Scenes and assets:** a versioned project catalog, a binary 3D scene codec with hierarchy and atomic saves, SceneSession switching, AssetStore leases, PNG/JPEG, static single-object FBX and PCM WAV. See [SceneWorkflow.md](docs/SceneWorkflow.md) and [AssetSystem.md](docs/AssetSystem.md).
 - **Hot reload:** the game DLL (Windows), scene/project files, PNG, FBX and lit/textured fragment shaders reload with last-good recovery. Save-to-present for a DLL edit is about 3.4–3.6 s. Changing shared component definitions requires a host rebuild and restart. See [EngineModules.md](docs/EngineModules.md) and [DevelopmentReload.md](docs/DevelopmentReload.md).
 - **Samples:** Perspective, Gallery, Assemblies, Puzzle and Collection (3D), Courtyard (2D), benchmark scenes with 100–4,000 meshes, and a Windows player build ([PlayerBuild.md](docs/PlayerBuild.md)).
-- **Quality:** no tracked tests, no CI, and no warning/sanitizer policy. Validation so far has used ignored local probes under `out/`.
+- **Quality:** CTest with `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled), a Windows CI build and CPU tests, and tracked smoke/benchmark scripts. No warning/sanitizer policy yet.
 
 ## Milestones
 
 The milestones are ordered by dependency. M1 and M2 can proceed in parallel after M0. M4 platform work runs in parallel with M1–M3 by platform contributors and closes after M3 and M5. [TODO.md](TODO.md) holds the actionable task list for the current milestones.
 
-### M0 — Safety net and baseline · *current*
+### M0 — Safety net and baseline · *one item left*
 
 Make the existing behavior repeatable before the ECS and renderer change underneath it.
 
-- [ ] Commit the outstanding working tree as reviewed, logically grouped commits.
-- [ ] Add CTest with a minimal set of CPU tests that guard the M1 rewrite: Registry entity/component behavior and hierarchy world transforms. Other areas get tests only when a milestone changes them.
-- [ ] Add a Windows CI workflow: configure plus Debug/Release builds plus CPU tests.
-- [ ] Make the 3D benchmark and smoke scripts a tracked, documented baseline, with results recorded on the minimum-spec machine.
+- [x] Commit the outstanding working tree as reviewed, logically grouped commits.
+- [x] Add CTest with a minimal set of tests that guard the M1 rewrite: `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled). Other areas get tests only when a milestone changes them.
+- [x] Add a Windows CI workflow: configure plus Debug/Release builds plus CPU tests.
+- [x] Make the 3D benchmark and smoke scripts a tracked, documented baseline, with results recorded on the minimum-spec machine ([ECSDesign.md](docs/ECSDesign.md#performance-budgets)).
 - [ ] Set a compiler warning level for engine targets and fix actionable warnings.
 
-**Exit:** `ctest --test-dir out/build/x64-debug` passes locally and in CI. The benchmark baseline for 500/2,000/4,000 meshes is recorded in the repository.
+**Exit:** `ctest --test-dir out/build/x64-debug` passes locally and in CI. The 4,000-mesh benchmark baseline is recorded in the repository; the 500/2,000-mesh runs were dropped under the minimal-test policy. Only the warning level remains.
 
-### M1 — Data-oriented ECS
+### M1 — Data-oriented ECS · *done 2026-11-21*
 
 Replace per-entity heap storage with dense typed pools and real systems while keeping the reload contract. Design: [ECSDesign.md](docs/ECSDesign.md) (approved 2026-11-20).
 
-- [ ] Give each component a stable compile-time type ID derived from `TypeName`, so lookups no longer use strings.
-- [ ] Store each component type in dense byte pools (sparse set or archetype; choose with a benchmark). Pools stay host-owned and reload-safe.
-- [ ] Add views/queries over one or more component types that yield borrowed spans, valid only during the current synchronous update. Iteration cost scales with matching entities, not total entities.
-- [ ] Add deferred structural changes (create/destroy/add/remove) through a command buffer applied at defined sync points.
-- [ ] Add a host-owned system schedule with update phases. The game DLL registers its systems on each load, and they are cleared before unload, so no callback outlives the module.
-- [ ] Store world transforms as a cached component updated by a hierarchy system with change tracking. Rendering and picking read it instead of walking ancestors.
-- [ ] Optional: migrate components by field name when layouts change, so routine component edits no longer need a host restart.
+- [x] Give each component a stable compile-time type ID derived from `TypeName`, so lookups no longer use strings.
+- [x] Store each component type in dense pools (sparse sets; the benchmark did not require archetypes). Pools stay host-owned and reload-safe.
+- [x] Add views over one or more component types that yield borrowed references, valid only during the current synchronous update, scene-scoped through per-slot scene IDs. Iteration cost scales with matching entities, not total entities.
+- [ ] Add deferred structural changes (create/destroy/add/remove) through a command buffer applied at defined sync points. *Deferred until gameplay first spawns or despawns at runtime (owner, 2026-11-21); views reject structural changes meanwhile.*
+- [x] Add a host-owned system schedule with update phases (`FixedUpdate`, `Update`). The game DLL registers its systems on each load, and they are cleared before unload, so no callback outlives the module.
+- [x] Store world transforms as a cached component updated by a hierarchy update with change tracking. Rendering reads it; picking stays live because it runs per click.
+- [ ] Optional: migrate components by field name when layouts change, so routine component edits no longer need a host restart. *Moved to M5.*
 
 **Exit:** iterating Transform over 100k entities and running the hierarchy update over 50k entities meet budgets set in M0. Compatible DLL reload keeps every entity, value and system order. Existing samples behave the same.
 
-### M2 — Vulkan 1.2 renderer foundation
+**Exit result (2026-11-21):** met on the minimum-spec laptop. Every M0 budget passed, and the 4,000-mesh M1 stages fell from 3.91 to 0.38 ms p95 (162.8 FPS). Compatible and rejected reloads keep state, both in the smoke test and in a live Release session, and Vulkan validation is clean at 4,000 meshes. Only the 3D samples were run; the 2D Courtyard fixed-step path is built but not run. See [the exit record](docs/ECSDesign.md#m1-exit-record-2026-11-21).
+
+### M2 — Vulkan 1.2 renderer foundation · *next*
 
 Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win.
 

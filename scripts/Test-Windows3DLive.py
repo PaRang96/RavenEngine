@@ -117,11 +117,18 @@ class Sample:
         self.key(vk, scan, True)
         self.key(vk, scan, False)
 
-    def level(self, name):
+    def level(self, name, limit=16):
+        # F4 cycles the project's scene order, which can include benchmark scenes, so keep
+        # advancing until the requested level loads.
         marker = f"Loaded level '{name}.ravenscene'".encode()
         expected = self.count(marker) + 1
-        self.tap(0x73, 0x3E)
-        self.marker(marker, expected)
+        for _ in range(limit):
+            loads = self.count(b"Loaded level '") + 1
+            self.tap(0x73, 0x3E)
+            self.marker(b"Loaded level '", loads)
+            if self.count(marker) >= expected:
+                return
+        raise RuntimeError(f"F4 did not reach {name} within {limit} levels. See {self.log}")
 
     def resize(self, width, height):
         ow, oh = size(self.window, USER.GetWindowRect)
