@@ -58,10 +58,15 @@ namespace Raven
 		{
 			return ECS::View<T...>(GetViewSource());
 		}
-		template<ECS::ComponentType T>
+		// TryGet<const T> reads without marking the component changed.
+		template<ECS::ViewComponent T>
 		T* TryGet(ECS::Entity entity) const noexcept
 		{
-			return static_cast<T*>(TryGetComponent(entity, ECS::ComponentTraits<T>::Info));
+			const auto& info = ECS::ComponentTraits<std::remove_const_t<T>>::Info;
+			if constexpr (std::is_const_v<T>)
+				return static_cast<T*>(FindComponent(entity, info));
+			else
+				return static_cast<T*>(TryGetComponent(entity, info));
 		}
 		// The first scene-owned component of type T, or null; use for single-instance state.
 		template<ECS::ComponentType T>
@@ -83,7 +88,9 @@ namespace Raven
 			return count;
 		}
 
+		// The mutable form marks the component changed; FindComponent does not.
 		RAVEN_API void* TryGetComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept;
+		RAVEN_API const void* FindComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept;
 		RAVEN_API bool ReadComponent(ECS::Entity entity, const ECS::ComponentInfo& info, void* value) const noexcept;
 		RAVEN_API bool WriteComponent(ECS::Entity entity, const ECS::ComponentInfo& info, const void* value) const noexcept;
 		RAVEN_API std::vector<ECS::Entity> Query(std::span<const ECS::ComponentInfo* const> components) const;

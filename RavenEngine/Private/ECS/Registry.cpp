@@ -114,6 +114,8 @@ namespace Raven::ECS
 		std::vector<std::uint32_t> Owners;
         std::uint32_t FirstFree = NoSlot;
 		std::uint32_t LastSceneId = 0;
+		// Stamped on elements by mutable access; see AdvanceChangeTick.
+		std::uint32_t ChangeTick = 1;
 		// Number of views currently iterating; structural changes wait until it is zero.
 		std::uint32_t Iterating = 0;
 
@@ -131,6 +133,7 @@ namespace Raven::ECS
 			std::uint64_t LayoutHash = 0;
 			std::vector<std::uint32_t*> Pages;
 			std::vector<Entity> Entities;
+			std::vector<std::uint32_t> Ticks;
 			ValueBuffer Values;
 
 			ComponentPool() = default;
@@ -144,7 +147,7 @@ namespace Raven::ECS
 
 			Detail::PoolView GetView() noexcept
 			{
-				return { Entities.data(), Values.Data(), Entities.size(), Size, Pages.data(), Pages.size() };
+				return { Entities.data(), Values.Data(), Ticks.data(), Entities.size(), Size, Pages.data(), Pages.size() };
 			}
 
 			std::uint32_t Find(std::uint32_t entity) const noexcept
@@ -159,7 +162,7 @@ namespace Raven::ECS
 				return dense == Lookup::NoIndex ? nullptr : Values.At(dense);
 			}
 
-			void Insert(Entity entity, const void* value)
+			void Insert(Entity entity, const void* value, std::uint32_t tick)
 			{
 				const auto index = Detail::EntityAccess::Index(entity);
 				const std::size_t page = index >> Lookup::PageShift;
@@ -172,8 +175,15 @@ namespace Raven::ECS
 					Pages[page] = lookup.release();
 				}
 				const auto dense = static_cast<std::uint32_t>(Entities.size());
+				// Reserve everything first so the pushes below cannot fail halfway.
+				const auto grown = std::max<std::size_t>(16, Entities.size() * 2);
+				if (Entities.size() == Entities.capacity())
+					Entities.reserve(grown);
+				if (Ticks.size() == Ticks.capacity())
+					Ticks.reserve(grown);
 				Values.Reserve(Entities.size() + 1);
 				Entities.push_back(entity);
+				Ticks.push_back(tick);
 				std::memcpy(Values.At(dense), value, Size);
 				Pages[page][index & Lookup::PageMask] = dense;
 			}
@@ -189,9 +199,11 @@ namespace Raven::ECS
 					const auto moved = Detail::EntityAccess::Index(Entities[last]);
 					std::memcpy(Values.At(dense), Values.At(last), Size);
 					Entities[dense] = Entities[last];
+					Ticks[dense] = Ticks[last];
 					Pages[moved >> Lookup::PageShift][moved & Lookup::PageMask] = dense;
 				}
 				Entities.pop_back();
+				Ticks.pop_back();
 				Pages[entity >> Lookup::PageShift][entity & Lookup::PageMask] = Lookup::NoIndex;
 				return true;
 			}
@@ -345,7 +357,7 @@ namespace Raven::ECS
 		}
 		if (pool.Find(entity.m_Index) != Detail::PoolView::NoIndex)
 			return false;
-		pool.Insert(entity, value);
+		pool.Insert(entity, value, m_Impl->ChangeTick);
 		return true;
 	}
 
@@ -383,7 +395,22 @@ namespace Raven::ECS
 
 	void* Registry::TryGetComponent(Entity entity, const ComponentInfo& info) noexcept
 	{
-		return const_cast<void*>(std::as_const(*this).TryGetComponent(entity, info));
+		auto* pool = IsAlive(entity) ? m_Impl->FindPool(info) : nullptr;
+		const auto dense = pool ? pool->Find(entity.m_Index) : Detail::PoolView::NoIndex;
+		if (dense == Detail::PoolView::NoIndex)
+			return nullptr;
+		pool->Ticks[dense] = m_Impl->ChangeTick;
+		return pool->Values.At(dense);
+	}
+
+	std::uint32_t Registry::GetChangeTick() const noexcept
+	{
+		return m_Impl->ChangeTick;
+	}
+
+	std::uint32_t Registry::AdvanceChangeTick() noexcept
+	{
+		return m_Impl->ChangeTick++;
 	}
 
 	Detail::PoolView Registry::GetPool(const ComponentInfo& info) noexcept
@@ -394,7 +421,7 @@ namespace Raven::ECS
 
 	Detail::IterationState Registry::GetIterationState() noexcept
 	{
-		return { &m_Impl->Iterating, m_Impl->Owners.data() };
+		return { &m_Impl->Iterating, m_Impl->Owners.data(), m_Impl->ChangeTick };
 	}
 
 	std::uint32_t Registry::AllocateSceneId()

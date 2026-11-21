@@ -1,8 +1,12 @@
 #include "Raven/Scene/Scene.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
+#include "Raven/Components/TransformComponent.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <unordered_map>
+#include <utility>
 #include <stdexcept>
 
 namespace Raven
@@ -26,10 +30,47 @@ namespace Raven
 			return false;
 		}
 
+		void SineCosine(float radians, float& sine, float& cosine)
+		{
+			// Zero angles are exact: sin 0 = 0 and cos 0 = 1.
+			if (radians == 0)
+			{
+				sine = 0;
+				cosine = 1;
+				return;
+			}
+			sine = std::sin(radians);
+			cosine = std::cos(radians);
+		}
+
 		Mat4 AppendLocalTransform(const Mat4& parent, const ECS::TransformComponent& local)
 		{
 			if (local.Rotation.X != 0 || local.Rotation.Y != 0 || local.Rotation.Z != 0)
-				return parent * local.GetMatrix();
+			{
+				// parent * T * Rz * Ry * Rx * S in closed form for an affine parent, matching
+				// TransformComponent::GetMatrix without its four full matrix products.
+				float sx, cx, sy, cy, sz, cz;
+				SineCosine(local.Rotation.X, sx, cx);
+				SineCosine(local.Rotation.Y, sy, cy);
+				SineCosine(local.Rotation.Z, sz, cz);
+				const float rotation[3][3]
+				{
+					{ cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx },
+					{ sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx },
+					{ -sy, cy * sx, cy * cx },
+				};
+				const float scale[3]{ local.Scale.X, local.Scale.Y, local.Scale.Z };
+				Mat4 world = Mat4::Identity();
+				for (std::size_t row = 0; row < 3; ++row)
+				{
+					for (std::size_t column = 0; column < 3; ++column)
+						world(row, column) = (parent(row, 0) * rotation[0][column] + parent(row, 1) * rotation[1][column] +
+							parent(row, 2) * rotation[2][column]) * scale[column];
+					world(row, 3) = parent(row, 0) * local.Position.X + parent(row, 1) * local.Position.Y +
+						parent(row, 2) * local.Position.Z + parent(row, 3);
+				}
+				return world;
+			}
 
 			// Diagonal local scale and translation update the parent's affine columns directly.
 			Mat4 world = parent;
@@ -70,6 +111,7 @@ namespace Raven
 			if (!name.empty())
 				m_Names.emplace(name, entity);
 			m_Entities.push_back(entity);
+			m_WorldOrderDirty = true;
 		}
 		catch (...)
 		{
@@ -131,6 +173,7 @@ namespace Raven
 					throw std::invalid_argument("Scene parenting would create a cycle");
 		}
 		m_Parents.at(entity) = parent;
+		m_WorldOrderDirty = true;
 	}
 
 	void Scene::DestroyEntity(ECS::Entity entity)
@@ -154,6 +197,7 @@ namespace Raven
 			m_Parents.erase(value);
 		}
 		std::erase_if(m_Entities, contains);
+		m_WorldOrderDirty = true;
 		std::erase_if(m_Names, [&contains](const auto& entry) { return contains(entry.second); });
 		if (contains(m_SelectedCamera)) m_SelectedCamera = {};
 		if (contains(m_Bindings.Camera)) m_Bindings.Camera = {};
@@ -161,7 +205,7 @@ namespace Raven
 		if (contains(m_Bindings.Mesh)) m_Bindings.Mesh = {};
 	}
 
-	Mat4 Scene::ComposeTransform(ECS::Entity entity, bool rotationOnly) const
+	Mat4 Scene::ComposeTransformUnchecked(ECS::Entity entity, bool rotationOnly) const
 	{
 		Mat4 result = Mat4::Identity();
 		auto ancestor = entity;
@@ -176,6 +220,12 @@ namespace Raven
 			result = local * result;
 			ancestor = parent;
 		} while (!ancestor.IsNull());
+		return result;
+	}
+
+	Mat4 Scene::ComposeTransform(ECS::Entity entity, bool rotationOnly) const
+	{
+		const auto result = ComposeTransformUnchecked(entity, rotationOnly);
 		if (!IsFiniteTransform(result))
 			throw std::invalid_argument("World transform exceeds the supported numeric range");
 		return result;
@@ -186,48 +236,121 @@ namespace Raven
 		return ComposeTransform(entity, false);
 	}
 
-	Scene::WorldTransformPass::WorldTransformPass(const Scene& scene, WorldTransformStorage& storage)
-		: m_Scene(scene), m_Storage(storage)
+	void Scene::RebuildWorldOrder()
 	{
-		m_Storage.m_Parents.clear();
-	}
-
-	Mat4 Scene::WorldTransformPass::ResolveParent(ECS::Entity parent)
-	{
-		auto& cache = m_Storage.m_Parents;
-		auto& ancestors = m_Storage.m_Ancestors;
-		ancestors.clear();
-		std::optional<Mat4> world;
-		for (auto current = parent; !current.IsNull(); current = m_Scene.GetParent(current))
+		// Depth-sort so parents come first; stable sorting keeps authored order within a
+		// depth. Externally destroyed entities stay in the order, so their descendants are
+		// still recognized as having a missing ancestor.
+		std::unordered_map<ECS::Entity, std::uint32_t, EntityHash> depths;
+		std::vector<ECS::Entity> chain;
+		for (const auto entity : m_Entities)
 		{
-			const auto slot = EntityHash{}(current);
-			if (slot < cache.size() && cache[slot].Entity == current)
+			chain.clear();
+			std::uint32_t base = 0;
+			for (auto current = entity; !current.IsNull();)
 			{
-				world = cache[slot].World;
-				break;
+				if (const auto known = depths.find(current); known != depths.end())
+				{
+					base = known->second + 1;
+					break;
+				}
+				chain.push_back(current);
+				const auto parent = m_Parents.find(current);
+				current = parent == m_Parents.end() ? ECS::Entity{} : parent->second;
 			}
-			ancestors.push_back(current);
+			for (std::size_t index = chain.size(); index-- > 0;)
+				depths.emplace(chain[index], base + static_cast<std::uint32_t>(chain.size() - 1 - index));
 		}
-		ECS::TransformComponent local;
-		for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it)
+		m_WorldOrder = m_Entities;
+		std::stable_sort(m_WorldOrder.begin(), m_WorldOrder.end(), [&depths](ECS::Entity left, ECS::Entity right)
 		{
-			if (!m_Scene.m_Registry.Read(*it, local))
-				throw std::invalid_argument("Scene transform ancestor has no TransformComponent");
-			world = AppendLocalTransform(world.value_or(Mat4::Identity()), local);
-			const auto slot = EntityHash{}(*it);
-			if (slot >= cache.size())
-				cache.resize(slot + 1);
-			cache[slot] = { *it, *world };
+			return depths.at(left) < depths.at(right);
+		});
+		std::unordered_map<ECS::Entity, std::uint32_t, EntityHash> positions;
+		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
+			positions.emplace(m_WorldOrder[index], static_cast<std::uint32_t>(index));
+		m_WorldParents.assign(m_WorldOrder.size(), NoWorldParent);
+		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
+		{
+			const auto parent = m_Parents.find(m_WorldOrder[index]);
+			if (parent != m_Parents.end() && !parent->second.IsNull())
+				if (const auto position = positions.find(parent->second); position != positions.end())
+					m_WorldParents[index] = position->second;
 		}
-		return *world;
+		m_WorldOrderDirty = false;
+		m_WorldFull = true;
 	}
 
-	Mat4 Scene::WorldTransformPass::Get(ECS::Entity entity, const ECS::TransformComponent& local)
+	void Scene::UpdateWorldTransforms()
 	{
-		const auto parent = m_Scene.GetParent(entity);
-		const auto world = AppendLocalTransform(parent.IsNull() ? Mat4::Identity() : ResolveParent(parent), local);
-		// A parent's intermediate scale can overflow or collapse before the child's scale is applied.
-		return IsFiniteTransform(world) && !HasCollapsedAxis(world) ? world : m_Scene.GetWorldTransform(entity);
+		if (m_Registry.IsIterating())
+			throw std::logic_error("World transforms cannot be updated while a view iterates");
+		if (m_WorldOrderDirty)
+			RebuildWorldOrder();
+		const bool full = std::exchange(m_WorldFull, false);
+		const auto since = m_WorldTick;
+		m_WorldTick = m_Registry.AdvanceChangeTick();
+		const auto stamp = m_Registry.GetChangeTick();
+		constexpr auto NoIndex = ECS::Detail::PoolView::NoIndex;
+		const auto& worldInfo = ECS::ComponentTraits<ECS::WorldTransformComponent>::Info;
+		const auto transforms = m_Registry.GetPool(ECS::ComponentTraits<ECS::TransformComponent>::Info);
+		auto worlds = m_Registry.GetPool(worldInfo);
+		const auto findWorld = [&worlds](ECS::Entity entity)
+		{
+			const auto dense = worlds.Find(entity);
+			return dense != NoIndex && worlds.Entities[dense] == entity ? dense : NoIndex;
+		};
+		m_WorldChanged.assign(m_WorldOrder.size(), 0);
+		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
+		{
+			const auto entity = m_WorldOrder[index];
+			auto local = transforms.Find(entity);
+			if (local != NoIndex && !(transforms.Entities[local] == entity))
+				local = NoIndex;
+			const auto world = findWorld(entity);
+			if (local == NoIndex)
+			{
+				// No local transform (or a stale slot): drop a world the entity no longer drives.
+				if (world != NoIndex)
+				{
+					m_Registry.Remove<ECS::WorldTransformComponent>(entity);
+					worlds = m_Registry.GetPool(worldInfo);
+				}
+				continue;
+			}
+			const auto parent = m_WorldParents[index];
+			const bool parentChanged = parent != NoWorldParent && m_WorldChanged[parent];
+			if (!full && world != NoIndex && !parentChanged && transforms.Ticks[local] <= since)
+				continue;
+
+			Mat4 parentWorld = Mat4::Identity();
+			if (parent != NoWorldParent)
+			{
+				const auto parentDense = findWorld(m_WorldOrder[parent]);
+				if (parentDense == NoIndex)
+					throw std::invalid_argument("Scene transform ancestor has no TransformComponent");
+				parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+			}
+			auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
+			// A parent's intermediate scale can overflow or collapse before the child's scale
+			// is applied; recompose in the direct order. Unrepresentable values are kept as-is
+			// so descendants can still recompose; consumers skip non-finite worlds.
+			if (!IsFiniteTransform(value) || HasCollapsedAxis(value))
+				value = ComposeTransformUnchecked(entity, false);
+			if (world == NoIndex)
+			{
+				ECS::WorldTransformComponent component;
+				component.World = value;
+				m_Registry.Add(entity, component);
+				worlds = m_Registry.GetPool(worldInfo);
+			}
+			else
+			{
+				worlds.At<ECS::WorldTransformComponent>(world).World = value;
+				worlds.Ticks[world] = stamp;
+			}
+			m_WorldChanged[index] = 1;
+		}
 	}
 
 	CameraView Scene::GetCameraView(ECS::Entity entity, float aspect) const

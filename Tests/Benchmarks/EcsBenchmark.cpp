@@ -41,6 +41,25 @@ namespace
 		return samples[samples.size() / 2];
 	}
 
+	// Runs setup before each timed run of work; only work is measured.
+	template<typename Setup, typename Work>
+	double MedianMillisecondsAfter(Setup&& setup, Work&& work)
+	{
+		constexpr int Repetitions = 9;
+		setup();
+		work();
+		std::vector<double> samples;
+		for (int index = 0; index < Repetitions; ++index)
+		{
+			setup();
+			const auto start = std::chrono::steady_clock::now();
+			work();
+			samples.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+		}
+		std::sort(samples.begin(), samples.end());
+		return samples[samples.size() / 2];
+	}
+
 	void Report(const char* name, std::size_t entities, std::size_t operations, double milliseconds)
 	{
 		std::printf("| %-48s | %7zu | %9.3f | %8.1f |\n", name, entities, milliseconds,
@@ -137,18 +156,32 @@ namespace
 				});
 		}));
 
-		// Draw-time world transforms for every mesh.
-		Scene::WorldTransformStorage storage;
-		Report("World transforms, draw pass (per mesh)", entities, meshes.size(), MedianMilliseconds([&]
+		// Cached world transforms (M1 step 6). The first update builds every world.
+		scene.UpdateWorldTransforms();
+		Report("World update, nothing changed", entities, entities, MedianMilliseconds([&]
 		{
-			Scene::WorldTransformPass pass(scene, storage);
+			scene.UpdateWorldTransforms();
+		}));
+		// One pivot in five turns, as in the 3D benchmark; its mesh child follows.
+		Report("World update, rotating pivots changed", entities, entities, MedianMillisecondsAfter([&]
+		{
+			access.View<RotatorComponent, TransformComponent>().Each(
+				[](Entity, RotatorComponent& rotor, TransformComponent& transform)
+				{
+					transform.Rotation.Z += rotor.Rotation.Z * 0.016f;
+				});
+		}, [&]
+		{
+			scene.UpdateWorldTransforms();
+		}));
+		Report("Read cached worlds (view, per mesh)", entities, meshes.size(), MedianMilliseconds([&]
+		{
 			float sum = 0.0f;
-			for (const auto mesh : meshes)
-			{
-				TransformComponent local;
-				registry.Read(mesh, local);
-				sum += pass.Get(mesh, local)(0, 3);
-			}
+			access.View<const Raven::ECS::WorldTransformComponent>().Each(
+				[&sum](Entity, const Raven::ECS::WorldTransformComponent& world)
+				{
+					sum += world.World(0, 3);
+				});
 			Sink = sum;
 		}));
 

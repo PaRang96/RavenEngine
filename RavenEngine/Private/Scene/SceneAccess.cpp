@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace Raven
 {
@@ -54,6 +55,13 @@ namespace Raven
 		if (!m_Scene || m_Scene->m_Registry.GetOwner(entity) != m_Scene->m_SceneId)
 			return nullptr;
 		return m_Scene->m_Registry.TryGetComponent(entity, info);
+	}
+
+	const void* SceneAccess::FindComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept
+	{
+		if (!m_Scene || m_Scene->m_Registry.GetOwner(entity) != m_Scene->m_SceneId)
+			return nullptr;
+		return std::as_const(m_Scene->m_Registry).TryGetComponent(entity, info);
 	}
 
 	ECS::Detail::ViewSource SceneAccess::GetViewSource() const noexcept

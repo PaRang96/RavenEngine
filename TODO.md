@@ -44,7 +44,8 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Add views with borrowed references, `TryGet`/`Single`/`Count` and per-slot scene IDs, then port `SceneAccess::Query` and the gameplay loops. Applied 2026-11-21. A 100k-entity Transform view takes 0.11 ms, which meets the ≤ 0.3 ms budget. Change ticks move to the world-transform step.
 - [x] Add the host system schedule: registered systems, FixedUpdate/Update phases and per-system timing. Applied 2026-11-21. The command buffer is deferred until gameplay first spawns or despawns at runtime.
 - [ ] Run Courtyard (2D, fixed step) once on request, to confirm player movement through the FixedUpdate system. It is built but not run.
-- [ ] Add change ticks (non-const view access marks the element), a cached world-transform component and a hierarchy update system. Port draw gathering and picking to it.
+- [x] Add change ticks, a cached world-transform component and the hierarchy update, and port draw gathering. Applied 2026-11-21. Picking stays live. 50k entities with 20% changed take 0.52–0.57 ms; the 4,000-mesh M1 stages take 0.37 ms p95 (target ≤ 1.96 ms).
+- [ ] M1 exit check (step 7): recheck every budget together, including a direct 50k-match view measurement and a rejected DLL reload with retained state.
 
 ## M2 — Vulkan 1.2 renderer foundation (after M1)
 

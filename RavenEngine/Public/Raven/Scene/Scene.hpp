@@ -34,28 +34,11 @@ namespace Raven
 		RAVEN_API void DestroyEntity(ECS::Entity entity);
 		RAVEN_API Mat4 GetWorldTransform(ECS::Entity entity) const;
 
-		class WorldTransformPass;
-		class WorldTransformStorage
-		{
-			friend class WorldTransformPass;
-			struct ParentTransform { ECS::Entity Entity; Mat4 World; };
-			std::vector<ParentTransform> m_Parents;
-			std::vector<ECS::Entity> m_Ancestors;
-		};
-
-		// One read-only gather after gameplay updates. Reuse storage across passes.
-		class WorldTransformPass
-		{
-		public:
-			RAVEN_API WorldTransformPass(const Scene& scene, WorldTransformStorage& storage);
-			RAVEN_API Mat4 Get(ECS::Entity entity, const ECS::TransformComponent& local);
-			WorldTransformPass(const WorldTransformPass&) = delete;
-			WorldTransformPass& operator=(const WorldTransformPass&) = delete;
-		private:
-			Mat4 ResolveParent(ECS::Entity parent);
-			const Scene& m_Scene;
-			WorldTransformStorage& m_Storage;
-		};
+		// Host PostUpdate (docs/ECSDesign.md, D7). Refreshes WorldTransformComponent for owned
+		// entities whose Transform changed since the previous call, whose ancestry changed, or
+		// that have no world yet. Parents are processed before children. Throws when a live
+		// entity's ancestor has no TransformComponent. Not callable while a view iterates.
+		RAVEN_API void UpdateWorldTransforms();
 
 		// Full affine position; rotation-only ancestor chain ignores scale/reflection for axes.
 		RAVEN_API CameraView GetCameraView(ECS::Entity entity, float aspect) const;
@@ -87,6 +70,8 @@ namespace Raven
 		bool OwnsLiveEntity(ECS::Entity entity) const noexcept;
 		void RequireOwned(ECS::Entity entity) const;
 		Mat4 ComposeTransform(ECS::Entity entity, bool rotationOnly) const;
+		Mat4 ComposeTransformUnchecked(ECS::Entity entity, bool rotationOnly) const;
+		void RebuildWorldOrder();
 		std::vector<ECS::Entity> m_Entities;
 		// The index also records membership. Roots have a null parent.
 		std::unordered_map<ECS::Entity, ECS::Entity, EntityHash> m_Parents;
@@ -97,5 +82,14 @@ namespace Raven
 		GameBindings m_Bindings;
 		// Marks owned entities in the registry so scene-scoped views skip foreign ones.
 		std::uint32_t m_SceneId = 0;
+		// Owned entities with parents before children, each parent as an index into the
+		// order. Rebuilt after create, destroy or reparent.
+		static constexpr std::uint32_t NoWorldParent = 0xffffffffu;
+		std::vector<ECS::Entity> m_WorldOrder;
+		std::vector<std::uint32_t> m_WorldParents;
+		std::vector<std::uint8_t> m_WorldChanged;
+		bool m_WorldOrderDirty = true;
+		bool m_WorldFull = true;
+		std::uint32_t m_WorldTick = 0;
 	};
 }

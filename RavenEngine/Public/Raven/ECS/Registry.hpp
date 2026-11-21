@@ -39,6 +39,8 @@ namespace Raven::ECS
 
 			const Entity* Entities = nullptr;
 			std::byte* Values = nullptr;
+			// Change tick per dense element, stamped by mutable access.
+			std::uint32_t* Ticks = nullptr;
 			std::size_t Count = 0;
 			std::size_t Stride = 0;
 			const std::uint32_t* const* Pages = nullptr;
@@ -58,12 +60,14 @@ namespace Raven::ECS
 			}
 		};
 
-		// Registry state a running view uses: the active-iteration counter and one owning
-		// scene ID per entity slot (0 when no scene owns the entity).
+		// Registry state a running view uses: the active-iteration counter, one owning
+		// scene ID per entity slot (0 when no scene owns the entity) and the change tick
+		// that mutable access stamps.
 		struct IterationState
 		{
 			std::uint32_t* Active = nullptr;
 			const std::uint32_t* Owners = nullptr;
+			std::uint32_t Tick = 0;
 		};
 
 		// Where a view reads from. Scene 0 visits every entity in the registry.
@@ -139,10 +143,15 @@ namespace Raven::ECS
 		template<ViewComponent... T>
 			requires (sizeof...(T) > 0)
 		ECS::View<T...> View() noexcept;
-		template<ComponentType T>
+		// TryGet<const T> reads without marking the component changed.
+		template<ViewComponent T>
 		T* TryGet(Entity entity) noexcept
 		{
-			return static_cast<T*>(TryGetComponent(entity, ComponentTraits<T>::Info));
+			const auto& info = ComponentTraits<std::remove_const_t<T>>::Info;
+			if constexpr (std::is_const_v<T>)
+				return static_cast<T*>(std::as_const(*this).TryGetComponent(entity, info));
+			else
+				return static_cast<T*>(TryGetComponent(entity, info));
 		}
 		template<ComponentType T>
 		const T* TryGet(Entity entity) const noexcept
@@ -159,6 +168,13 @@ namespace Raven::ECS
 		}
 		RAVEN_API bool IsIterating() const noexcept;
 
+		// Change ticks (docs/ECSDesign.md, D4/D7). Add, Write, mutable TryGet and mutable view
+		// access stamp the current tick on the element; reads do not. A consumer remembers
+		// the tick AdvanceChangeTick returned and later processes elements stamped after it.
+		RAVEN_API std::uint32_t GetChangeTick() const noexcept;
+		// Closes the current tick and returns it; later stamps use the next value.
+		RAVEN_API std::uint32_t AdvanceChangeTick() noexcept;
+
 		// Type-erased access for generic callers and tools. Values address Info.Size bytes
 		// laid out as the described component. A mismatched layout never matches a pool.
 		RAVEN_API bool HasComponent(Entity entity, const ComponentInfo& info) const noexcept;
@@ -166,6 +182,7 @@ namespace Raven::ECS
 		RAVEN_API bool ReadComponent(Entity entity, const ComponentInfo& info, void* value) const noexcept;
 		RAVEN_API bool WriteComponent(Entity entity, const ComponentInfo& info, const void* value) noexcept;
 		RAVEN_API bool RemoveComponent(Entity entity, const ComponentInfo& info) noexcept;
+		// The mutable form stamps the change tick; the const form does not.
 		RAVEN_API void* TryGetComponent(Entity entity, const ComponentInfo& info) noexcept;
 		RAVEN_API const void* TryGetComponent(Entity entity, const ComponentInfo& info) const noexcept;
 
@@ -256,6 +273,7 @@ namespace Raven::ECS
 				}
 				if (!matched)
 					continue;
+				(MarkChanged<T>(pools[I], positions[I], state.Tick), ...);
 				if constexpr (std::is_same_v<std::invoke_result_t<Function&, Entity, T&...>, bool>)
 				{
 					if (!std::invoke(function, entity, pools[I].template At<T>(positions[I])...))
@@ -266,6 +284,13 @@ namespace Raven::ECS
 					std::invoke(function, entity, pools[I].template At<T>(positions[I])...);
 				}
 			}
+		}
+
+		template<typename U>
+		static void MarkChanged(const Detail::PoolView& pool, std::uint32_t dense, std::uint32_t tick) noexcept
+		{
+			if constexpr (!std::is_const_v<U>)
+				pool.Ticks[dense] = tick;
 		}
 
 		Detail::ViewSource m_Source;

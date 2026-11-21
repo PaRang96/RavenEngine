@@ -283,32 +283,36 @@ namespace Raven
 	{
 		auto* metrics = GetFrameMetrics();
 		FrameSection gather(metrics ? &metrics->SceneGather : nullptr);
-		const auto& registry = m_Game.GetRegistry();
 		auto& level = GetLevel();
-		Scene::WorldTransformPass worldTransforms(level, m_DrawWorldTransforms);
-		ECS::TransformComponent transform;
-		m_Draws.clear();
-		for (const auto entity : level.GetEntities())
 		{
-			ECS::StaticMeshComponent mesh;
-			if (!registry.Read(entity, mesh) || !registry.Read(entity, transform))
-				continue;
-			if (const auto* resource = m_Renderer.ResolveMesh(mesh.Mesh))
+			// Host PostUpdate: refresh cached world transforms changed since the last frame.
+			FrameSection transformTiming(metrics ? &metrics->WorldTransforms : nullptr);
+			level.UpdateWorldTransforms();
+		}
+		const auto isFinite = [](const Mat4& matrix)
+		{
+			for (const auto& column : matrix.Columns)
+				for (const float value : column)
+					if (!std::isfinite(value))
+						return false;
+			return true;
+		};
+		m_Draws.clear();
+		const auto scene = level.GetAccess();
+		scene.View<const ECS::WorldTransformComponent, const ECS::StaticMeshComponent>().Each(
+			[&](ECS::Entity entity, const ECS::WorldTransformComponent& world, const ECS::StaticMeshComponent& mesh)
 			{
-				ECS::MaterialComponent material;
-				registry.Read(entity, material);
+				const auto* resource = m_Renderer.ResolveMesh(mesh.Mesh);
+				if (!resource || !isFinite(world.World))
+					return;
+				const auto* found = scene.TryGet<const ECS::MaterialComponent>(entity);
+				const ECS::MaterialComponent material = found ? *found : ECS::MaterialComponent{};
 				const VulkanTexture* texture = nullptr;
 				if (material.BaseColorTexture.IsValid())
-					texture = &GetLevel().UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
+					texture = &level.UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
 				const Vec4 color{ mesh.Tint.X * material.BaseColor.X, mesh.Tint.Y * material.BaseColor.Y,
 					mesh.Tint.Z * material.BaseColor.Z, mesh.Tint.W * material.BaseColor.W };
-				Mat4 model;
-				{
-					FrameSection transformTiming(metrics ? &metrics->WorldTransforms : nullptr);
-					model = worldTransforms.Get(entity, transform);
-				}
-				m_Draws.push_back({ *resource, model, color, texture, material.Lit });
-			}
-		}
+				m_Draws.push_back({ *resource, world.World, color, texture, material.Lit });
+			});
 	}
 }

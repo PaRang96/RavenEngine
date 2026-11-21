@@ -314,6 +314,13 @@ Application owns a GameInstance containing a Registry. The Registry owns entity 
   - While a view iterates, `Add`/`Remove`/`Destroy` are rejected and logged, and `Create` throws `std::logic_error`. `Scene::DestroyEntity` throws before changing its own bookkeeping.
 - Each slot records an owning scene ID set by `Scene::CreateEntity`. `SceneAccess` views, `TryGet`, `Single` and `Count` visit only entities the scene owns. Registry views visit everything.
 - `SceneAccess::Query` still returns the scene's entities in authored order; it tests pool membership directly.
+- Change ticks (M1 step 6):
+  - `Add`, `Write`, mutable `TryGet` and non-const view types stamp the Registry's current tick. `Read`, `TryGet<const T>` and const view types do not.
+  - `AdvanceChangeTick()` closes the current tick for a consumer.
+- Cached world transforms (M1 step 6):
+  - `Scene::UpdateWorldTransforms()` maintains `WorldTransformComponent` for owned entities with a Transform. It recomputes only changed entities and their descendants, parents first.
+  - Perspective draw gathering calls it, then reads `View<const WorldTransformComponent, const StaticMeshComponent>`.
+  - Gameplay `GetWorldTransform` and picking keep composing live values.
 
 Derive from Component, declare direct fields, then put the shared macro in the public section using the qualified type identifier and every data member in declaration order:
 
@@ -413,6 +420,14 @@ M1 step 5 verification (2026-11-21):
 - The compatible reload check passed: generation 1 to 2, rotor speed 0.65 to 1.30 rad/s, phase retained, no scene recreation. Save-to-present was 2.99 s; the longest frame was 29.5 ms.
 - Its `frames.systems.csv` accumulated FreeFly, MeshRotation and Interaction across both generations. At 500 meshes, Interaction averaged 5.1 µs per frame.
 - The Orthographic/Courtyard fixed-step path was built but not run, following the 3D-only runtime testing direction.
+
+M1 step 6 verification (2026-11-21):
+
+- Windows Debug/Release builds pass, and both tests pass in both. `HierarchyTests` compares cached worlds with live composition after the first update, an idle update, a parent move, a view edit and a reparent.
+- The Debug `Raven3DSmoke` run with Vulkan core and synchronization validation passed with no validation messages. Its hierarchy checks now use the cache: extreme parent scales, detach/reparent, an externally destroyed root rejected, and foreign entities left without a world.
+- Release `EcsBenchmark` at 50k entities, where one pivot in five rotates and its mesh follows: the cached update took 0.52–0.57 ms. The previous draw pass recomputed everything in 2.7–2.8 ms. With nothing changed, the update took 0.15 ms.
+- The compatible reload check passed: generation 1 to 2, rotor speed 0.65 to 1.30 rad/s, phase retained. Save-to-present was 4.19 s; the longest frame was 33.9 ms.
+- The 4,000-mesh benchmark measured gameplay + world + gather at 0.37 ms p95, against 3.91 ms at M0, and 162.8 FPS. See [ECSDesign.md](ECSDesign.md#m1-step-6-3d-record-2026-11-21).
 
 The component records below describe the earlier virtual parent and are historical.
 

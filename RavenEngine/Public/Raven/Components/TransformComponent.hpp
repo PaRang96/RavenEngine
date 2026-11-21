@@ -20,4 +20,14 @@ namespace Raven::ECS
 				RotationX(Rotation.X) * Raven::Scale(Scale);
 		}
 	};
+
+	// Host-managed world matrix (docs/ECSDesign.md, D7). Scene::UpdateWorldTransforms adds and
+	// refreshes it for scene entities with a TransformComponent; game code reads it only.
+	// Gameplay needing a value composed after its own edits uses GetWorldTransform instead.
+	struct WorldTransformComponent : Component
+	{
+		Mat4 World = Mat4::Identity();
+
+		RAVEN_COMPONENT(Raven::ECS::WorldTransformComponent, World);
+	};
 }

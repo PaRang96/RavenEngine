@@ -17,6 +17,7 @@ namespace
 	using Raven::Vec3;
 	using Raven::ECS::Entity;
 	using Raven::ECS::TransformComponent;
+	using Raven::ECS::WorldTransformComponent;
 
 	bool Near(const Mat4& left, const Mat4& right)
 	{
@@ -31,6 +32,13 @@ namespace
 	{
 		return std::abs(world(0, 3) - expected.X) < 1.0e-4f && std::abs(world(1, 3) - expected.Y) < 1.0e-4f &&
 			std::abs(world(2, 3) - expected.Z) < 1.0e-4f;
+	}
+
+	Mat4 CachedWorld(Raven::ECS::Registry& registry, Entity entity)
+	{
+		WorldTransformComponent world;
+		RAVEN_CHECK(registry.Read(entity, world));
+		return world.World;
 	}
 
 	TransformComponent MakeTransform(Vec3 position, Vec3 rotation = {}, Vec3 scale = { 1.0f, 1.0f, 1.0f })
@@ -66,23 +74,40 @@ namespace
 		RAVEN_CHECK(Near(scene.GetWorldTransform(grandchild), expected));
 		RAVEN_CHECK(NearPosition(scene.GetWorldTransform(child), { 1.0f, 2.0f, 0.0f }));
 
-		// The draw-time pass matches direct composition.
-		Scene::WorldTransformStorage storage;
-		{
-			Scene::WorldTransformPass pass(scene, storage);
-			RAVEN_CHECK(Near(pass.Get(grandchild, grandchildLocal), expected));
-			RAVEN_CHECK(Near(pass.Get(child, childLocal), rootLocal.GetMatrix() * childLocal.GetMatrix()));
-		}
+		// The cached world update matches direct composition and adds the component.
+		RAVEN_CHECK(!registry.Has<WorldTransformComponent>(grandchild));
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild), expected));
+		RAVEN_CHECK(Near(CachedWorld(registry, child), rootLocal.GetMatrix() * childLocal.GetMatrix()));
 
-		// Moving a parent moves its descendants on the next query and the next pass.
+		// An unchanged pass keeps cached values and advances the change tick once.
+		const auto beforeTick = registry.GetChangeTick();
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(registry.GetChangeTick() == beforeTick + 1);
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild), expected));
+
+		// Moving a parent moves its descendants on the next query and the next update.
 		rootLocal.Position = { 0.0f, 0.0f, 5.0f };
 		RAVEN_CHECK(registry.Write(root, rootLocal));
 		expected = rootLocal.GetMatrix() * childLocal.GetMatrix() * grandchildLocal.GetMatrix();
 		RAVEN_CHECK(Near(scene.GetWorldTransform(grandchild), expected));
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild), expected));
+
+		// Mutable view access marks the edit; the next update sees it.
+		registry.View<TransformComponent>().Each([&](Entity entity, TransformComponent& transform)
 		{
-			Scene::WorldTransformPass pass(scene, storage);
-			RAVEN_CHECK(Near(pass.Get(grandchild, grandchildLocal), expected));
-		}
+			if (entity == child)
+				transform.Position.Z = 1.0f;
+		});
+		auto movedChild = childLocal;
+		movedChild.Position.Z = 1.0f;
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild),
+			rootLocal.GetMatrix() * movedChild.GetMatrix() * grandchildLocal.GetMatrix()));
+		RAVEN_CHECK(registry.Write(child, childLocal));
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild), expected));
 
 		// Reparenting and detaching keep the local transform.
 		scene.SetParent(grandchild, root);
@@ -90,6 +115,8 @@ namespace
 		RAVEN_CHECK(registry.Read(grandchild, local));
 		RAVEN_CHECK(Near(local.GetMatrix(), grandchildLocal.GetMatrix()));
 		RAVEN_CHECK(Near(scene.GetWorldTransform(grandchild), rootLocal.GetMatrix() * grandchildLocal.GetMatrix()));
+		scene.UpdateWorldTransforms();
+		RAVEN_CHECK(Near(CachedWorld(registry, grandchild), rootLocal.GetMatrix() * grandchildLocal.GetMatrix()));
 		scene.SetParent(grandchild);
 		RAVEN_CHECK(scene.GetParent(grandchild).IsNull());
 		RAVEN_CHECK(Near(scene.GetWorldTransform(grandchild), grandchildLocal.GetMatrix()));

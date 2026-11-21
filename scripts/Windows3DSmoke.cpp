@@ -89,12 +89,15 @@ namespace
 						"Full affine ancestor composition changed");
 		};
 		CheckWorld(scene.GetWorldTransform(child), expected);
-		Scene::WorldTransformStorage storage;
+		const auto Cached = [&registry](ECS::Entity entity)
 		{
-			Scene::WorldTransformPass pass(scene, storage);
-			CheckWorld(pass.Get(child, childLocal), expected);
-			CheckWorld(pass.Get(sibling, siblingLocal), scene.GetWorldTransform(sibling));
-		}
+			ECS::WorldTransformComponent world;
+			Check(registry.Read(entity, world), "Expected a cached world transform");
+			return world.World;
+		};
+		scene.UpdateWorldTransforms();
+		CheckWorld(Cached(child), expected);
+		CheckWorld(Cached(sibling), scene.GetWorldTransform(sibling));
 		for (const float scale : { 1e-30f, 1e30f })
 		{
 			ECS::TransformComponent parentScale, childScale;
@@ -102,9 +105,9 @@ namespace
 			childScale.Scale.X = 1 / scale;
 			Check(registry.Write(root, parentScale) && registry.Write(pivot, parentScale) &&
 				registry.Write(child, childScale), "Could not prepare scaled hierarchy");
-			Scene::WorldTransformPass pass(scene, storage);
+			scene.UpdateWorldTransforms();
 			const auto legacy = scene.GetWorldTransform(child);
-			const auto current = pass.Get(child, childScale);
+			const auto current = Cached(child);
 			Check(legacy(0, 0) != 0 && current(0, 0) == legacy(0, 0),
 				"An intermediate scale lost the representable world transform");
 		}
@@ -125,11 +128,9 @@ namespace
 		Check(detached.X == 1 && detached.Y == 2 && detached.Z == 3, "Detach changed local position");
 		pivotLocal.Rotation.Z = -.3f;
 		Check(registry.Write(pivot, pivotLocal), "Could not update parent rotation");
-		{
-			Scene::WorldTransformPass pass(scene, storage);
-			CheckWorld(pass.Get(child, childLocal), childLocal.GetMatrix());
-			CheckWorld(pass.Get(sibling, siblingLocal), scene.GetWorldTransform(sibling));
-		}
+		scene.UpdateWorldTransforms();
+		CheckWorld(Cached(child), childLocal.GetMatrix());
+		CheckWorld(Cached(sibling), scene.GetWorldTransform(sibling));
 		scene.SetParent(child, pivot);
 		scene.SelectCamera(child);
 		GameBindings bindings;
@@ -139,17 +140,17 @@ namespace
 		const auto replacement = other.CreateEntity("replacement");
 		Check(!scene.GetAccess().IsAlive(root) && !scene.GetAccess().IsAlive(replacement),
 			"Stale or foreign handle was accepted");
+		// Descendants of an externally destroyed root have no valid world, and the other
+		// scene's entity never receives one from this scene.
+		try
 		{
-			Scene::WorldTransformPass pass(scene, storage);
-			const auto RejectWorld = [&](ECS::Entity entity)
-			{
-				try { pass.Get(entity, childLocal); }
-				catch (const std::invalid_argument&) { return; }
-				throw std::runtime_error("Invalid render transform was accepted");
-			};
-			RejectWorld(child);
-			RejectWorld(replacement);
+			scene.UpdateWorldTransforms();
+			throw std::runtime_error("Invalid render transform was accepted");
 		}
+		catch (const std::invalid_argument&)
+		{
+		}
+		Check(!registry.Has<ECS::WorldTransformComponent>(replacement), "A foreign entity received a world transform");
 		scene.DestroyEntity(root);
 		Check(scene.GetEntities().empty() && scene.GetSelectedCamera().IsNull() && scene.GetBindings().Camera.IsNull() &&
 			!registry.IsAlive(child) && !registry.IsAlive(pivot) && registry.IsAlive(replacement),

@@ -51,7 +51,6 @@ namespace Raven
 		AudioPlayer m_Audio;
 		std::unique_ptr<SceneSession> m_Session;
 		std::vector<VulkanDraw> m_Draws;
-		Scene::WorldTransformStorage m_DrawWorldTransforms;
 		std::vector<ECS::Entity> m_PendingInteractions;
 		std::vector<ECS::Entity> m_Interactions;
 		ECS::Entity m_BenchmarkRotor;

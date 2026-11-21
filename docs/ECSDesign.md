@@ -122,7 +122,12 @@ AttemptComponent* attempt = registry.TryGet<AttemptComponent>(entity); // borrow
 
 - **Lifetime:** references, spans and views are valid only during the current synchronous system call or host phase. They must not be stored in components, statics or module state. This is the rule already agreed in `AGENTS.md`.
 - **Structural safety:** while a view iterates, `Add`/`Remove`/`Destroy` are rejected and logged, and `Create` throws `std::logic_error`. A Debug abort was considered and rejected, because it would end the live session during hot reload. Systems make structural changes through commands (D5).
-- **Change ticks:** non-const access (`T&` in `Each`, `TryGet`, `Values`) marks the visited element with the current tick. Const access does not. A system that writes conditionally should iterate const and call `registry.Write(entity, value)` or `MarkChanged<T>(entity)` for the elements it actually changes. These ticks drive D7 and the M3 GPU uploads. They land with D7 in step 6, their first consumer, rather than in step 4.
+- **Change ticks** (implemented in step 6):
+  - Each pool stores one tick per dense element.
+  - `Add`, `Write`, mutable `TryGet` and the non-const types in a view stamp the Registry's current tick. `Read`, `TryGet<const T>` and const view types do not.
+  - A system that writes conditionally should iterate const and call `Write` for the elements it changes.
+  - A consumer remembers the tick that `AdvanceChangeTick()` returned and processes elements stamped after it.
+  - These ticks drive D7 and the M3 GPU uploads.
 - **Copy API:** `Read`/`Write` copies stay for one-off access and for tools. They become a typed lookup plus one `memcpy`.
 
 ### D5 — Deferred structural changes (deferred to first need)
@@ -176,6 +181,17 @@ The existing `GameBindings` (camera, player, mesh, interactions) reach systems t
 - Gameplay `SceneAccess::GetWorldTransform` keeps live composition. Interaction code writes a Transform and checks distances in the same update, so cached values from the previous PostUpdate would be one step stale there. This difference is documented in the API.
 - The draw-time `WorldTransformPass` is removed once Extract uses the cache.
 
+**Implemented in step 6 (2026-11-21):**
+
+- `WorldTransformComponent` lives beside `TransformComponent`. `Scene::UpdateWorldTransforms()` adds it to owned entities that have a Transform, and removes it when the Transform goes away.
+- The update reprocesses everything after a hierarchy change. Otherwise it recomputes an entity only when its Transform tick is newer than the last pass or its parent was recomputed in this pass. Recomputed worlds are stamped with the new tick for later consumers.
+- Rotated local transforms compose in closed form (`parent · T · Rz · Ry · Rx · S`), and zero-angle axes skip their trigonometry. This halved the 20%-changed update. Unrotated transforms keep the exact scale-and-translate path.
+- Extreme scales keep the earlier retry in the direct multiplication order. A world that stays unrepresentable is stored as-is so descendants can still recompose, and draw gathering skips non-finite worlds instead of throwing.
+- A live entity whose ancestor has no Transform (for example, after its root was destroyed outside the Scene) still makes the update throw `std::invalid_argument`, matching the earlier draw path.
+- Differences from the plan:
+  - **Picking** keeps live composition. It runs per click, so its cost doesn't matter, and it already matches the next frame.
+  - **No named host phase:** the Perspective sample calls the update right before its draw gather, instead of a named `PostUpdate`/`Extract` host phase. A shared phase can follow when a second consumer needs it.
+
 ### D8 — Scene membership in a shared Registry (per-slot scene ID, step 4)
 
 One Registry is shared by every scene. `SceneSession` builds a candidate scene and either publishes or discards it within one `Update` call, before any game code runs ([SceneSession.cpp](../RavenEngine/Private/Scene/SceneSession.cpp)). But the Registry can also hold entities that no scene owns, and the 3D smoke test creates one on purpose to check that scene queries skip it ([Windows3DSmoke.cpp](../scripts/Windows3DSmoke.cpp)). An unfiltered scene view would count it, so the original deferral did not hold.
@@ -197,14 +213,16 @@ One Registry is shared by every scene. `SceneSession` builds a candidate scene a
 
 These are the M1 exit criteria, measured in Release on the minimum-spec laptop. The micro-benchmark rows come from [EcsBenchmark](../Tests/Benchmarks/EcsBenchmark.cpp), and the 4,000-mesh row from [the 3D benchmark](Benchmark3D.md#4000-meshes-at-native-resolution). Both M0 baselines are recorded below.
 
-| Operation | M0 baseline (current Registry) | M1 budget |
-| --- | ---: | ---: |
-| Mutable iteration over 100k Transforms | 9.20 ms (read+write copies over a `GetEntities` snapshot) | ≤ 0.3 ms |
-| Two-component view (Rotator + Transform) | 5.96 ms for 10k matches among 100k entities (596 ns per match) | ≤ 0.5 ms for 50k matches among 100k |
-| World transforms for 50k meshes (draw path) | 9.62 ms, all recomputed every frame | ≤ 1.0 ms with 20% changed |
-| World transforms for 50k meshes (gameplay `GetWorldTransform`) | 26.48 ms (530 ns each) | Not budgeted; stays live composition (D7) |
-| Typed `Read` of one component, random order, 100k entities | 78 ns | ≤ 50 ns |
-| 4,000-mesh benchmark: gameplay ECS + mesh world transforms + remaining scene gather (sum of each stage's median p95) | 3.91 ms (1.77 + 0.82 + 1.33) | ≤ 1.96 ms (at least 2× faster) |
+| Operation | M0 baseline (current Registry) | After step 6 | M1 budget |
+| --- | ---: | ---: | ---: |
+| Mutable iteration over 100k Transforms | 9.20 ms (read+write copies over a `GetEntities` snapshot) | 0.11 ms (`View<Transform>`) | ≤ 0.3 ms |
+| Two-component view (Rotator + Transform) | 5.96 ms for 10k matches among 100k entities (596 ns per match) | 0.09–0.13 ms for 10k matches (9–13 ns per match); 50k matches not yet measured | ≤ 0.5 ms for 50k matches among 100k |
+| World transforms with 20% changed | 9.62 ms for 50k meshes, all recomputed every frame | 0.52–0.57 ms for 50k entities | ≤ 1.0 ms |
+| World transforms for 50k meshes (gameplay `GetWorldTransform`) | 26.48 ms (530 ns each) | 24 ms (unchanged, live) | Not budgeted; stays live composition (D7) |
+| Typed `Read` of one component, random order, 100k entities | 78 ns | 15–17 ns | ≤ 50 ns |
+| 4,000-mesh benchmark: gameplay ECS + mesh world transforms + remaining scene gather (sum of each stage's median p95) | 3.91 ms (1.77 + 0.82 + 1.33) | 0.37 ms (0.04 + 0.14 + 0.19) | ≤ 1.96 ms (at least 2× faster) |
+
+Step 7 rechecks every row together, including a direct 50k-match view measurement.
 
 ### M0 baseline record (2026-11-21)
 
@@ -257,6 +275,23 @@ This run is about 6% slower than the [earlier optimized 4,000-mesh record](Bench
 
 Local evidence (ignored): `out/benchmark-scale-u2q92fnr`.
 
+### M1 step 6 3D record (2026-11-21)
+
+Same command, case, machine and method as the M0 3D baseline, run on the step 6 tree.
+
+| Stage | M0 p95 ms | Step 6 p95 ms |
+| --- | ---: | ---: |
+| Gameplay ECS | 1.766 | 0.038 |
+| Mesh world transforms (now the cached update) | 0.818 | 0.143 |
+| Remaining scene gather | 1.330 | 0.193 |
+| Renderer preparation | 0.824 | 0.742 |
+| Recording and submission | 1.033 | 0.921 |
+| GPU pass | 0.757 | 0.575 |
+| CPU preparation | 5.499 | 1.982 |
+| Frame interval | 11.683 | 6.677 |
+
+The median rose from 114.9 to 162.8 FPS (162.7–162.8), and CPU preparation stayed under 5 ms in 100% of frames. The 165 Hz display now limits the frame rate. The remaining CPU time is mostly renderer preparation and recording (M2). Per-system timing for the same run: Interaction 22.4 µs, FreeFly 3.0 µs, MeshRotation 0.1 µs per frame. Local evidence (ignored): `out/m1-step6/out/benchmark-scale-7n252cng`.
+
 ## Migration steps
 
 Each step is one or a few reviewable snippets, and all samples keep working after each step.
@@ -266,7 +301,7 @@ Each step is one or a few reviewable snippets, and all samples keep working afte
 3. *(Done 2026-11-21.)* **D3:** sparse-set pools behind the same API. Run the tests and benchmarks. Archetypes were not needed: the gate measured 2.1 ms for Transform read+write and 15 ns per random read at 100k entities. The remaining cost is per-entity snapshots and copies, which step 4 removes.
 4. *(Done 2026-11-21.)* **D4 + D8 + D9:** views, `TryGet`/`Single`/`Count` and per-slot scene IDs. `SceneAccess::Query` keeps authored order through pool lookups. The interaction rotator/door/goal loops and `MoveSprites` use views. Change ticks move to step 6.
 5. *(Done 2026-11-21.)* **D6:** the system table, `FixedUpdate`/`Update` phases and per-system timing. The game DLL's `Update` became five registered systems, and the single entry point is retired. `GameUpdateResult` stays as the fixed-step result in `SystemContext`. Commands (D5) are deferred to first need.
-6. **D7:** cached world transforms and the hierarchy system. Port draw gathering and picking, and remove `WorldTransformPass`.
+6. *(Done 2026-11-21.)* **D7:** change ticks, cached world transforms and the hierarchy update. Draw gathering uses the cache and `WorldTransformPass` is removed; picking stays live.
 7. **Exit check:** budgets, the 4,000-mesh benchmark, a compatible and a rejected DLL reload with retained state, and Debug Vulkan validation on the 3D path. Update [EngineModules.md](EngineModules.md) and `AGENTS.md`.
 
 ## Contract changes, recorded as each step lands

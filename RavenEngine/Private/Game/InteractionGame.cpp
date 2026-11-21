@@ -106,7 +106,7 @@ namespace Raven::SampleGame
 					}
 					else
 					{
-						const auto* state = scene.TryGet<ECS::SwitchComponent>(scene.Find(Name(rotor.Switch)));
+						const auto* state = scene.TryGet<const ECS::SwitchComponent>(scene.Find(Name(rotor.Switch)));
 						rotor.Progress = Approach(rotor.Progress, state && state->Active, delta, rotor.Duration);
 						transform.Rotation = rotor.BaseRotation + rotor.Rotation * rotor.Progress;
 					}
@@ -117,7 +117,7 @@ namespace Raven::SampleGame
 					bool ready = door.RequiredCount > 0 && door.RequiredCount <= door.RequiredRotators.size();
 					for (std::size_t i = 0; ready && i < door.RequiredCount; ++i)
 					{
-						const auto* rotor = scene.TryGet<ECS::RotatorComponent>(scene.Find(Name(door.RequiredRotators[i])));
+						const auto* rotor = scene.TryGet<const ECS::RotatorComponent>(scene.Find(Name(door.RequiredRotators[i])));
 						ready = rotor && rotor->Progress >= 1;
 					}
 					const auto before = door.Progress;
@@ -135,7 +135,7 @@ namespace Raven::SampleGame
 				{
 					if (!Name(goal.Door).empty())
 					{
-						const auto* door = scene.TryGet<ECS::DoorComponent>(scene.Find(Name(goal.Door)));
+						const auto* door = scene.TryGet<const ECS::DoorComponent>(scene.Find(Name(goal.Door)));
 						if (!door || door->Progress < 1)
 							return true;
 					}
