@@ -40,7 +40,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Owner review (2026-11-20): D1 keeps an empty, non-virtual `Component` base; D6 approved; D8 deferred to a Debug check; budgets come from the M0 baseline.
 - [ ] Benchmark the chosen storage against the current Registry, using the M0 micro-benchmarks.
 - [x] Make `Component` an empty, non-virtual base, with the macro generating static information and typed IDs. Template the Registry API on `T`. Applied 2026-11-21; see [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
-- [ ] Add dense sparse-set pools behind the current Read/Write API, so the samples don't change.
+- [x] Add dense sparse-set pools behind the current Read/Write API, so the samples don't change. Applied 2026-11-21. At 100k entities, Transform read+write is 2.1 ms and a random read 15 ns, which meets the ≤ 50 ns budget. See [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
 - [ ] Add views with borrowed references, `Single<T>`, and the Debug no-candidate-scene check. Then port `SceneAccess::Query` and the rotator/gameplay systems.
 - [ ] Add the command buffer for structural changes, and the host system schedule with phases.
 - [ ] Add a cached world-transform component and a hierarchy update system. Port draw gathering and picking to it.

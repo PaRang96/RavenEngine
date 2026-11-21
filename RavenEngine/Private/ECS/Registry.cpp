@@ -1,10 +1,12 @@
 #include "Raven/ECS/Registry.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -23,10 +25,57 @@ namespace Raven::ECS
             const std::scoped_lock lock(mutex);
 
             if (lastId == std::numeric_limits<std::uint64_t>::max())
-                throw std::overflow_error("Registry idnetity exhausted");
+                throw std::overflow_error("Registry identity exhausted");
 
             return ++lastId;
         }
+
+		// Owns contiguous component values aligned for their type. Components are trivially
+		// copyable, so values relocate with memcpy when the buffer grows.
+		class ValueBuffer
+		{
+		public:
+			ValueBuffer() = default;
+			ValueBuffer(const ValueBuffer&) = delete;
+			ValueBuffer& operator=(const ValueBuffer&) = delete;
+			~ValueBuffer() { Release(); }
+
+			void Configure(std::size_t stride, std::size_t alignment) noexcept
+			{
+				m_Stride = stride;
+				m_Alignment = std::max(alignment, alignof(std::max_align_t));
+			}
+
+			std::byte* At(std::size_t index) noexcept { return m_Data + index * m_Stride; }
+			const std::byte* At(std::size_t index) const noexcept { return m_Data + index * m_Stride; }
+
+			void Reserve(std::size_t count)
+			{
+				if (count <= m_Capacity)
+					return;
+				const std::size_t capacity = std::max(count, std::max<std::size_t>(16, m_Capacity * 2));
+				auto* data = static_cast<std::byte*>(::operator new(capacity * m_Stride, std::align_val_t{ m_Alignment }));
+				if (m_Data)
+					std::memcpy(data, m_Data, m_Capacity * m_Stride);
+				Release();
+				m_Data = data;
+				m_Capacity = capacity;
+			}
+
+		private:
+			void Release() noexcept
+			{
+				if (m_Data)
+					::operator delete(m_Data, std::align_val_t{ m_Alignment });
+				m_Data = nullptr;
+				m_Capacity = 0;
+			}
+
+			std::byte* m_Data = nullptr;
+			std::size_t m_Capacity = 0;
+			std::size_t m_Stride = 0;
+			std::size_t m_Alignment = alignof(std::max_align_t);
+		};
     }
 
     struct Registry::Impl
@@ -45,14 +94,75 @@ namespace Raven::ECS
         std::vector<Slot> Slots;
         std::uint32_t FirstFree = NoSlot;
 
-		// The first registration fixes a type's name and layout. The name is copied, so
-		// pools never refer to a module's static storage.
+		// One sparse set per component type. A paged sparse array maps an entity index to a
+		// dense position; dense arrays hold the owning entity indices and the values in the
+		// same order. Removal moves the last element into the gap, so dense order is unstable.
+		// The first registration fixes the name and layout; the name is copied, so pools
+		// never refer to a module's static storage.
 		struct ComponentPool
 		{
+			static constexpr std::uint32_t PageShift = 12;
+			static constexpr std::uint32_t PageSize = 1u << PageShift;
+			static constexpr std::uint32_t NoIndex = std::numeric_limits<std::uint32_t>::max();
+
 			std::string Name;
 			std::size_t Size = 0;
 			std::uint64_t LayoutHash = 0;
-			std::unordered_map<std::uint32_t, std::vector<std::byte>> Values;
+			std::vector<std::unique_ptr<std::uint32_t[]>> Pages;
+			std::vector<std::uint32_t> Entities;
+			ValueBuffer Values;
+
+			std::uint32_t Find(std::uint32_t entity) const noexcept
+			{
+				const std::size_t page = entity >> PageShift;
+				return page < Pages.size() && Pages[page] ? Pages[page][entity & (PageSize - 1)] : NoIndex;
+			}
+
+			const std::byte* Get(std::uint32_t entity) const noexcept
+			{
+				const auto dense = Find(entity);
+				return dense == NoIndex ? nullptr : Values.At(dense);
+			}
+
+			std::byte* Get(std::uint32_t entity) noexcept
+			{
+				return const_cast<std::byte*>(std::as_const(*this).Get(entity));
+			}
+
+			void Insert(std::uint32_t entity, const void* value)
+			{
+				const std::size_t page = entity >> PageShift;
+				if (page >= Pages.size())
+					Pages.resize(page + 1);
+				if (!Pages[page])
+				{
+					Pages[page] = std::make_unique<std::uint32_t[]>(PageSize);
+					std::fill_n(Pages[page].get(), PageSize, NoIndex);
+				}
+				const auto dense = static_cast<std::uint32_t>(Entities.size());
+				Values.Reserve(Entities.size() + 1);
+				Entities.push_back(entity);
+				std::memcpy(Values.At(dense), value, Size);
+				Pages[page][entity & (PageSize - 1)] = dense;
+			}
+
+			bool Erase(std::uint32_t entity) noexcept
+			{
+				const auto dense = Find(entity);
+				if (dense == NoIndex)
+					return false;
+				const auto last = static_cast<std::uint32_t>(Entities.size() - 1);
+				if (dense != last)
+				{
+					const auto moved = Entities[last];
+					std::memcpy(Values.At(dense), Values.At(last), Size);
+					Entities[dense] = moved;
+					Pages[moved >> PageShift][moved & (PageSize - 1)] = dense;
+				}
+				Entities.pop_back();
+				Pages[entity >> PageShift][entity & (PageSize - 1)] = NoIndex;
+				return true;
+			}
 		};
 		std::unordered_map<std::uint64_t, ComponentPool> Components;
 
@@ -67,24 +177,10 @@ namespace Raven::ECS
 			return pool.Size == info.Size && pool.LayoutHash == info.LayoutHash ? &pool : nullptr;
 		}
 
-		const std::vector<std::byte>* FindValue(std::uint32_t index, const ComponentInfo& info) const noexcept
-		{
-			const auto* pool = FindPool(info);
-			if (!pool)
-				return nullptr;
-			const auto value = pool->Values.find(index);
-			return value == pool->Values.end() ? nullptr : &value->second;
-		}
-
 		// Mutable lookups reuse the const ones; this object itself is never const.
 		ComponentPool* FindPool(const ComponentInfo& info) noexcept
 		{
 			return const_cast<ComponentPool*>(std::as_const(*this).FindPool(info));
-		}
-
-		std::vector<std::byte>* FindValue(std::uint32_t index, const ComponentInfo& info) noexcept
-		{
-			return const_cast<std::vector<std::byte>*>(std::as_const(*this).FindValue(index, info));
 		}
     };
 
@@ -144,7 +240,7 @@ namespace Raven::ECS
         auto &slot = impl.Slots[entity.m_Index];
 
 		for (auto& [id, pool] : impl.Components)
-			pool.Values.erase(entity.m_Index);
+			pool.Erase(entity.m_Index);
 
         slot.Alive = false;
 
@@ -171,7 +267,10 @@ namespace Raven::ECS
 
 	bool Registry::HasComponent(Entity entity, const ComponentInfo& info) const noexcept
 	{
-		return IsAlive(entity) && std::as_const(*m_Impl).FindValue(entity.m_Index, info);
+		if (!IsAlive(entity))
+			return false;
+		const auto* pool = std::as_const(*m_Impl).FindPool(info);
+		return pool && pool->Find(entity.m_Index) != Impl::ComponentPool::NoIndex;
 	}
 
 	bool Registry::AddComponent(Entity entity, const ComponentInfo& info, const void* value)
@@ -185,33 +284,35 @@ namespace Raven::ECS
 			pool.Name = info.Name;
 			pool.Size = info.Size;
 			pool.LayoutHash = info.LayoutHash;
+			pool.Values.Configure(info.Size, info.Alignment);
 		}
 		else if (pool.Name != info.Name || pool.Size != info.Size || pool.LayoutHash != info.LayoutHash)
 		{
 			return false;
 		}
-		if (pool.Values.contains(entity.m_Index))
+		if (pool.Find(entity.m_Index) != Impl::ComponentPool::NoIndex)
 			return false;
-		std::vector<std::byte> bytes(info.Size);
-		std::memcpy(bytes.data(), value, info.Size);
-		return pool.Values.try_emplace(entity.m_Index, std::move(bytes)).second;
+		pool.Insert(entity.m_Index, value);
+		return true;
 	}
 
 	bool Registry::ReadComponent(Entity entity, const ComponentInfo& info, void* value) const noexcept
 	{
-		const auto* bytes = IsAlive(entity) && value ? std::as_const(*m_Impl).FindValue(entity.m_Index, info) : nullptr;
+		const auto* pool = IsAlive(entity) && value ? std::as_const(*m_Impl).FindPool(info) : nullptr;
+		const auto* bytes = pool ? pool->Get(entity.m_Index) : nullptr;
 		if (!bytes)
 			return false;
-		std::memcpy(value, bytes->data(), info.Size);
+		std::memcpy(value, bytes, info.Size);
 		return true;
 	}
 
 	bool Registry::WriteComponent(Entity entity, const ComponentInfo& info, const void* value) noexcept
 	{
-		auto* bytes = IsAlive(entity) && value ? m_Impl->FindValue(entity.m_Index, info) : nullptr;
+		auto* pool = IsAlive(entity) && value ? m_Impl->FindPool(info) : nullptr;
+		auto* bytes = pool ? pool->Get(entity.m_Index) : nullptr;
 		if (!bytes)
 			return false;
-		std::memcpy(bytes->data(), value, info.Size);
+		std::memcpy(bytes, value, info.Size);
 		return true;
 	}
 
@@ -220,6 +321,6 @@ namespace Raven::ECS
 		if (!IsAlive(entity))
 			return false;
 		auto* pool = m_Impl->FindPool(info);
-		return pool && pool->Values.erase(entity.m_Index) != 0;
+		return pool && pool->Erase(entity.m_Index);
 	}
 }

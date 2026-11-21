@@ -243,9 +243,9 @@ Local evidence (ignored): `out/benchmark-scale-u2q92fnr`.
 
 Each step is one or a few reviewable snippets, and all samples keep working after each step.
 
-1. **M0 guards:** add `RegistryTests`, `HierarchyTests` and Registry/world-transform micro-benchmarks against the current code. Record the baseline.
-2. **D1 + D2:** make `Component` an empty, non-virtual base and have the macro generate static information and typed IDs. Template the Registry API on `T`. Storage stays unchanged internally, apart from replacing the string keys. Run the tests, a host rebuild, and a compatible DLL reload.
-3. **D3:** sparse-set pools behind the same API. Run the tests and benchmarks.
+1. *(Done 2026-11-21.)* **M0 guards:** add `RegistryTests`, `HierarchyTests` and Registry/world-transform micro-benchmarks against the current code. Record the baseline.
+2. *(Done 2026-11-21, `ae263b9`.)* **D1 + D2:** make `Component` an empty, non-virtual base and have the macro generate static information and typed IDs. Template the Registry API on `T`. Storage stays unchanged internally, apart from replacing the string keys. Run the tests, a host rebuild, and a compatible DLL reload.
+3. *(Done 2026-11-21.)* **D3:** sparse-set pools behind the same API. Run the tests and benchmarks. Archetypes were not needed: the gate measured 2.1 ms for Transform read+write and 15 ns per random read at 100k entities. The remaining cost is per-entity snapshots and copies, which step 4 removes.
 4. **D4 + D9:** views and singletons, plus the D8 Debug check that no candidate scene exists during systems. Port `SceneAccess::Query`, the interaction rotator/door/goal loops and `MoveSprites`.
 5. **D5 + D6:** commands, the system table, phases and per-system timing. Move the game DLL's `Update` contents into registered systems, then retire the single entry point and its `GameUpdateResult` path once Courtyard uses a FixedUpdate system.
 6. **D7:** cached world transforms and the hierarchy system. Port draw gathering and picking, and remove `WorldTransformPass`.

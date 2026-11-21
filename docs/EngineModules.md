@@ -306,7 +306,7 @@ Application owns a GameInstance containing a Registry. The Registry owns entity 
 - Type-erased callers use `HasComponent`/`AddComponent`/`ReadComponent`/`WriteComponent`/`RemoveComponent` with a `ComponentInfo`.
 - Entity destruction erases stored values before the slot is recycled, without running destructors.
 - GetEntities returns a snapshot; stale handles still need liveness checks.
-- Storage is still one map entry per entity. Dense pools and views follow in M1 steps 3 and 4.
+- Each component type is one sparse set (M1 step 3): a paged entity-index lookup (4,096 entries per page, allocated on demand), plus dense arrays of owning entity indices and of the values, aligned for the type. Add and Remove are O(1). Remove moves the last element into the gap, so dense order is not stable. Views over the dense arrays follow in M1 step 4.
 
 Derive from Component, declare direct fields, then put the shared macro in the public section using the qualified type identifier and every data member in declaration order:
 
@@ -372,6 +372,20 @@ M1 step 2 verification (2026-11-21):
 - Compile probes rejected a virtual function, a missing field and an out-of-order field list.
 - A Release `EcsBenchmark` at 100k entities measured Transform read+write at 5.5–6.2 ms (baseline 9.20 ms), the rotator query at 4.6–4.7 ms (5.96 ms) and a random typed read at 36–69 ns (78 ns). World transforms were unchanged.
 - `python scripts/Benchmark-Windows3D.py reload` passed on the 500-mesh scene with a compatible DLL edit. Generation went from 1 to 2 and the rotor speed from 0.65 to 1.30 rad/s, with its phase retained and no scene recreation. Save-to-present was 3.17 s; the longest frame during reload was 29 ms. Local evidence: `out/benchmark-reload-6fw56bnj`.
+
+M1 step 3 verification (2026-11-21):
+
+- Windows Debug/Release builds pass, and both tests pass in both. `RegistryTests` covers interleaved removal across 1,000 entities.
+- Release `EcsBenchmark` at 100k entities on an idle minimum-spec laptop, in two alternating rounds against the step 2 build:
+
+  | Case | Step 2 | Step 3 |
+  | --- | ---: | ---: |
+  | Transform read+write | 5.0–5.3 ms | 2.1 ms |
+  | Rotator query | 4.2–4.9 ms | 1.57 ms |
+  | World transforms, draw pass | 9.1–9.7 ms | 4.9–5.3 ms |
+  | Random typed read | 35–38 ns | 15–17 ns |
+
+- The compatible DLL reload check passed again. Generation went from 1 to 2 and the rotor speed from 0.65 to 1.30 rad/s, with its phase retained and no scene recreation. Save-to-present was 2.94 s; the longest frame was 33 ms.
 
 The component records below describe the earlier virtual parent and are historical.
 
