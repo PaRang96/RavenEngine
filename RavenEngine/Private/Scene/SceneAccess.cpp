@@ -15,17 +15,17 @@ namespace Raven
 		return m_Scene && m_Scene->OwnsLiveEntity(entity);
 	}
 
-	bool SceneAccess::Read(ECS::Entity entity, ECS::Component& value) const noexcept
+	bool SceneAccess::ReadComponent(ECS::Entity entity, const ECS::ComponentInfo& info, void* value) const noexcept
 	{
-		return IsAlive(entity) && m_Scene->m_Registry.Read(entity, value);
+		return IsAlive(entity) && m_Scene->m_Registry.ReadComponent(entity, info, value);
 	}
 
-	bool SceneAccess::Write(ECS::Entity entity, const ECS::Component& value) const noexcept
+	bool SceneAccess::WriteComponent(ECS::Entity entity, const ECS::ComponentInfo& info, const void* value) const noexcept
 	{
-		return IsAlive(entity) && m_Scene->m_Registry.Write(entity, value);
+		return IsAlive(entity) && m_Scene->m_Registry.WriteComponent(entity, info, value);
 	}
 
-	std::vector<ECS::Entity> SceneAccess::Query(std::span<const ECS::Component* const> components) const
+	std::vector<ECS::Entity> SceneAccess::Query(std::span<const ECS::ComponentInfo* const> components) const
 	{
 		std::vector<ECS::Entity> result;
 		if (!m_Scene)
@@ -33,7 +33,7 @@ namespace Raven
 		for (const auto entity : m_Scene->m_Entities)
 			if (m_Scene->m_Registry.IsAlive(entity) &&
 				std::all_of(components.begin(), components.end(), [this, entity](const auto* component)
-							{ return component && m_Scene->m_Registry.Has(entity, *component); }))
+							{ return component && m_Scene->m_Registry.HasComponent(entity, *component); }))
 				result.push_back(entity);
 		return result;
 	}

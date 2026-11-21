@@ -178,7 +178,7 @@ Validation: Windows x64 Debug and Release builds pass for RavenCore, RavenEngine
 
 ## Static meshes on entities — 2026-10-19
 
-`Public/Raven/Components/TransformComponent.hpp` and `StaticMeshComponent.hpp` define their respective components, both derived from the abstract Component parent. TransformComponent directly holds position, Euler rotation in radians and scale, composing `T * Rz * Ry * Rx * S`; its default matrix is identity. StaticMeshComponent directly holds a runtime MeshHandle and RGBA tint. These are concrete fields, not part of Component. Static describes immutable mesh geometry; entity transforms can still animate. This first path uses the existing unlit ColorVertex meshes; textured/imported mesh assets and materials remain separate work. The current extension with imported normals, UVs, retained materials and lighting is documented in [MeshMaterials.md](MeshMaterials.md).
+`Public/Raven/Components/TransformComponent.hpp` and `StaticMeshComponent.hpp` define their respective components, both derived from the empty Component base. TransformComponent directly holds position, Euler rotation in radians and scale, composing `T * Rz * Ry * Rx * S`; its default matrix is identity. StaticMeshComponent directly holds a runtime MeshHandle and RGBA tint. These are concrete fields, not part of Component. Static describes immutable mesh geometry; entity transforms can still animate. This first path uses the existing unlit ColorVertex meshes; textured/imported mesh assets and materials remain separate work. The current extension with imported normals, UVs, retained materials and lighting is documented in [MeshMaterials.md](MeshMaterials.md).
 
 `VulkanContext::CreateMeshHandle(vertices, indices)` creates renderer-owned geometry and returns a copied value identifying its context and slot. `ResolveMesh(handle)` returns a borrowed resource or null for null/foreign/expired-context handles. Context identities are not reused and mesh slots are not recycled. Handles are runtime identities, not persistent asset references, and do not release geometry when copied or removed. GPU resources live until renderer shutdown after pending work completes. Do not store the resolved pointer in Registry data or serialize the handle for later runs.
 
@@ -190,7 +190,7 @@ The owner requested component implementation before further game-DLL work. The i
 
 ## Sprites on entities — 2026-10-19
 
-SpriteComponent and SpriteBlendMode live in `Public/Raven/Components/SpriteComponent.hpp`; SpriteComponent derives from the same virtual Component parent. It contains AssetRef<TextureAsset>, RGBA Tint, SpriteBlendMode and signed SortLayer/SortOrder. The macro supplies the common type/size/copy implementation. Default mode is Alpha, default tint is white, and a null texture reference produces no draw. Pose and size remain in Transform; the shared quad lies in local XZ, so Scale.X/Scale.Z control width/height. No texture pointer, resource owner or renderer callback enters Registry storage.
+SpriteComponent and SpriteBlendMode live in `Public/Raven/Components/SpriteComponent.hpp`; SpriteComponent derives from the same Component base. It contains AssetRef<TextureAsset>, RGBA Tint, SpriteBlendMode and signed SortLayer/SortOrder. The macro supplies its type identity and field list. Default mode is Alpha, default tint is white, and a null texture reference produces no draw. Pose and size remain in Transform; the shared quad lies in local XZ, so Scale.X/Scale.Z control width/height. No texture pointer, resource owner or renderer callback enters Registry storage.
 
 OrthographicSample initializes the active level's Transform/Sprite entities and gathers matching entities from the Registry snapshot each frame. All sprites share one quad; texture references resolve through the existing catalog/cache. Opaque mode uses the opaque depth-tested path. Alpha uses the existing straight-alpha path, sorted by layer/order then camera depth; higher layer/order draws later. SortLayer/SortOrder apply to Alpha only. Tint alpha supports fading. Runtime additions and edits update submissions without a fixed draw array or per-entity geometry allocation. Missing Transform/Sprite, null textures and unknown blend modes are skipped. A non-null unregistered asset or load failure propagates through the existing asset-service exception path. Registry slot order is not creation order and does not replace explicit transparent ordering.
 
@@ -294,11 +294,21 @@ Each timing run used 14 saves on the RTX 3070 Ti Laptop GPU without screenshot o
 
 The Windows development workflow covers this one self-contained fragment shader and its existing interface. Shader include dependency watching, layout changes, other shader stages, and native macOS and Linux verification remain open. Driver-level pipeline allocation failures were not injected.
 
-## Retained ECS state and game reload — 2026-10-19
+## Retained ECS state and game reload
 
-Application owns a GameInstance containing a Registry. The Registry owns entity slots and minimal component storage in RavenCore. Entity values retain registry/index/generation identity. Every component derives from the abstract Component class in Component.hpp. Its interface is a virtual destructor, GetTypeName, GetDataSize, CopyDataTo and CopyDataFrom; its constructors/assignment operators are protected. Registry add/read/write/remove accept Component references, so generic callers can use the parent. No reference is retained after a synchronous operation. Component has no renderer dependency, per-frame callback or concrete game state. Entity destruction erases retained fields before recycling a slot. GetEntities returns a snapshot; stale handles still require liveness checks. The map-backed storage implementation is unchanged; general queries/storage optimization remains open.
+Current contract as of 2026-11-21 (M1 step 2, [ECSDesign.md](ECSDesign.md) D1/D2).
 
-Derive from Component, declare direct fields, then put the shared macro in the public section using the qualified type identifier and every retained field:
+Application owns a GameInstance containing a Registry. The Registry owns entity slots and component storage in RavenCore, and Entity values carry registry/index/generation identity. Every component derives from the empty, non-virtual `Component` struct in Component.hpp.
+
+- A component is a standard-layout, trivially copyable and trivially destructible value with no virtual functions.
+- Registry stores each component as a whole `T` value, in a pool keyed by its compile-time `TypeId`.
+- Registry `Has`/`Add`/`Read`/`Write`/`Remove` are templates on the component type and copy whole values. No reference into storage escapes a call.
+- Type-erased callers use `HasComponent`/`AddComponent`/`ReadComponent`/`WriteComponent`/`RemoveComponent` with a `ComponentInfo`.
+- Entity destruction erases stored values before the slot is recycled, without running destructors.
+- GetEntities returns a snapshot; stale handles still need liveness checks.
+- Storage is still one map entry per entity. Dense pools and views follow in M1 steps 3 and 4.
+
+Derive from Component, declare direct fields, then put the shared macro in the public section using the qualified type identifier and every data member in declaration order:
 
 ```cpp
 namespace MyGame
@@ -313,32 +323,63 @@ namespace MyGame
 // Inside gameplay code:
 MyGame::Health health;
 health.Current = 80;
-Raven::ECS::Component& base = health;
-base.GetTypeName(); // Virtual call; returns "MyGame::Health".
-registry.Add(entity, base);
-registry.Read(entity, base);
+registry.Add(entity, health);
+registry.Read(entity, health);
 health.Current = 65;
-registry.Write(entity, base);
+registry.Write(entity, health);
 registry.Remove<MyGame::Health>(entity);
+
+// Generic callers and tools:
+const Raven::ECS::ComponentInfo& info = Raven::ECS::ComponentTraits<MyGame::Health>::Info;
+registry.ReadComponent(entity, info, &health); // info.Name is "MyGame::Health"
 ```
 
-The macro stringifies the qualified identifier into TypeName, supplies mutable/const GetFields tuples and implements the virtual type/size/copy interface. Use the canonical qualified spelling; aliases are not separate component identities. It replaces the earlier global metadata-only declaration and ComponentTraits. ComponentType requires a concrete mutable Component descendant with its own declaration and matching mutable/const field lists. Typed Registry arguments that inherit a parent's declaration without declaring their own component are rejected. A Component reference uses the declared virtual interface.
+The macro generates:
+
+- `TypeName` (the stringified qualified identifier) and `TypeId` (its 64-bit FNV-1a hash).
+- `FieldNames`.
+- Mutable and const `GetFields` tuples.
+
+Use the canonical qualified spelling; aliases are not separate component identities. `ComponentType` requires a mutable Component descendant with its own declaration and matching field lists. Typed calls with a type that inherits a parent's declaration without declaring its own are rejected.
+
+`ComponentTraits<T>` checks each type at compile time and rejects these with a static assertion:
+
+- virtual functions
+- non-trivial copy or destruction
+- a field list that doesn't cover every data member in declaration order (compared against `sizeof(T)` and `alignof(T)`)
+
+`ComponentTraits<T>::Info` describes the type: id, name, size, alignment, and a layout hash of the name, field names and field sizes.
 
 Each field must be approved by ComponentValue as well as standard-layout, trivially copyable/destructible and nonvolatile. Arithmetic/enumeration types are allowed; fixed arrays are checked recursively. Approved engine values are Vec3, Vec4, Mat4, Entity, AssetId, AssetRef<T> and MeshHandle. Other class types are rejected by default, including std::string_view, std::span, reference wrappers, pointer wrappers and owning containers. For a custom value struct, explicitly specialize `Raven::ECS::ComponentValue<MyValue> : std::true_type` after reviewing that it contains only self-contained values/IDs. Opt-in never bypasses structural checks. An opted-in class's hidden members require review because this declaration checks the field contract without inspecting its nested implementation. Members must represent values; borrowed/reference members and resource cleanup in retained data remain unsupported.
 
-Polymorphic components are not trivially copyable or aggregates. Add allocates engine-owned storage and synchronously copies the listed fields into it. Read/Write use the virtual copy interface directly, without allocating a temporary byte array on the stack or heap. Buffer-size checks happen before any field changes; failed reads leave the destination unchanged. Remove uses packed field size rather than sizeof(component). Registry owns copied name strings and bytes, with no virtual-table pointers, component objects or retained module callbacks. The caller's virtual code runs only during the synchronous call, while its module remains loaded. Replacement occurs between game updates; local component objects must be destroyed before their module unloads. Deleting a local derived object through Component* invokes its derived destructor, but entity destruction only erases retained bytes. Owning component fields and retained polymorphic object APIs are not implemented.
+Components are aggregates, so `MyGame::Health{}` and designated initializers work.
 
-An empty declaration such as `RAVEN_COMPONENT(MyGame::Selected);` inside a Component-derived Selected type defines a tag. Its data size is zero; Add/Read/Write/Remove and entity destruction still check presence and entity identity. Empty copying performs no memory access. This does not add a concrete tag type to the engine.
+- **Pool registration:** the first Add fixes a pool's name, size and layout hash. Registry copies the name, so no pool refers to a module's string storage. A later call with a different name, size or layout hash fails instead of reading or writing mismatched bytes.
+- **Failure handling:** failed reads leave the destination unchanged.
+- **Retained state:** Registry holds no virtual-table pointers, component objects or module callbacks. Local component objects must be destroyed before their module unloads.
+- **Not supported:** owning component fields and per-type lifecycle hooks.
 
-List every retained field once in the macro, in a consistent order. Adding a retained field requires updating this declaration. This is an in-process value-copy contract, not a persistent file format or automatic layout migration. No manual layout-version counter, per-component storage implementation, new lifecycle callback or global Registry is introduced.
+An empty declaration such as `RAVEN_COMPONENT(MyGame::Selected);` inside an empty Component-derived type defines a tag. It is stored as one byte. Add/Read/Write/Remove and entity destruction still check presence and entity identity.
 
-TransformComponent exposes Position/Rotation/Scale/GetMatrix directly; StaticMeshComponent exposes Mesh/Tint. SampleGame::Velocity exposes Linear. Component keys now include their full qualified type identifiers. Renaming a type changes its key; names and equal byte sizes alone are not layout compatibility proofs. The existing generated shared-header/build contract remains responsible for rejecting unsupported code replacement until a host/game rebuild and restart.
+List every data member once in the macro, in declaration order; the compile-time check enforces this. This is an in-process value contract, not a persistent file format or automatic layout migration. There is no manual layout-version counter.
+
+TransformComponent exposes Position/Rotation/Scale/GetMatrix directly, StaticMeshComponent exposes Mesh/Tint, and SampleGame::Velocity exposes Linear. Component identity is the full qualified type identifier, so renaming a type changes its `TypeId`. The generated shared-header/build contract still rejects incompatible code replacement until a host/game rebuild and restart. The layout hash is a second guard, not a substitute.
+
+M1 step 2 verification (2026-11-21):
+
+- Windows Debug/Release builds pass, and `RegistryTests` and `HierarchyTests` pass in both.
+- Every engine and game-DLL component passes the compile-time layout check.
+- Compile probes rejected a virtual function, a missing field and an out-of-order field list.
+- A Release `EcsBenchmark` at 100k entities measured Transform read+write at 5.5–6.2 ms (baseline 9.20 ms), the rotator query at 4.6–4.7 ms (5.96 ms) and a random typed read at 36–69 ns (78 ns). World transforms were unchanged.
+- `python scripts/Benchmark-Windows3D.py reload` passed on the 500-mesh scene with a compatible DLL edit. Generation went from 1 to 2 and the rotor speed from 0.65 to 1.30 rad/s, with its phase retained and no scene recreation. Save-to-present was 3.17 s; the longest frame during reload was 29 ms. Local evidence: `out/benchmark-reload-6fw56bnj`.
+
+The component records below describe the earlier virtual parent and are historical.
 
 Historical metadata-only refactor validation on 2026-10-19: Debug/Release engine, host, existing game DLL and temporary probe callers built. Component-only checks covered generated names, namespace separation, copied fields, removal and stale slot reuse. An expected compilation failure rejected std::string. Both native samples passed focused GPU checks, with clean Debug core/synchronization diagnostics. Logs remain under ignored `out/validation/game-reload/`: `{debug,release}-component-macro-build.log`, `*-component-macro-probe-build.log`, `*-component-macro-probe.log`, `*-component-macro-render.log` and `component-macro-invalid.log`. That evidence predates the virtual Component parent; it is not the current verification record. The probes remain temporary evidence; no tracked test suite or CTest integration was added.
 
 Historical virtual-parent validation on 2026-10-19: Debug/Release builds and focused inheritance, virtual destruction, field copying, entity lifecycle and GPU checks passed. Retained movement fields survived reloading the same DLL and its final unload. An expected compilation failure rejected std::string. Logs remain at `out/validation/game-reload/{debug,release}-component-base-probe-build.log`, `*-component-base-probe.log`, `*-component-base-render.log` and `component-base-invalid.log`. This record predates the assessment fixes below.
 
-### Component architecture assessment — 2026-10-19
+### Component architecture assessment — 2026-10-19 (historical, virtual parent)
 
 The current engine is a Windows prototype with working rendering/assets and a narrow ECS/game-reload path. The virtual parent and retained value storage serve different lifetimes:
 

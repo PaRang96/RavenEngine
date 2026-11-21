@@ -23,8 +23,8 @@ Test policy (owner, 2026-11-20): keep tests minimal. Add a tracked test only to 
 Not planned unless a milestone changes the area: math/projection, scene binary codec, assets/AssetStore, game-module compatibility, and GPU tests in CTest. The existing `scripts/Test-Windows3D.ps1` smoke and `scripts/Benchmark-Windows3D.py` stay the manual checks for rendering and reload.
 
 ### CI
-- [ ] Confirm the first green run of `.github/workflows/windows.yml` (x64-debug/x64-release build plus `ctest -LE gpu` on `windows-2025` with Vulkan SDK 1.4.309.0). The runner has Visual Studio 2022 (MSVC 19.4x), while local builds use Visual Studio 2026 (19.51), so check C++23 compatibility there or move to a newer runner image.
-- [ ] Cache build outputs if the workflow takes longer than 15 minutes.
+- [x] The first run of `.github/workflows/windows.yml` passed on `15e413a`: x64-debug and x64-release built with the runner's Visual Studio 2022 toolset, and `RegistryTests` passed ([run 44762913227](https://github.com/PaRang96/RavenEngine/actions/runs/44762913227), 2026-11-21).
+- [x] Workflow time is 1.6–3.5 minutes per job, mostly Vulkan SDK installation, so no build caching is needed.
 
 ### Performance baseline
 - [x] Record the 4,000-mesh 3D baseline on the minimum-spec RTX GPU: 114.9 FPS, with gameplay ECS + world + gather at 3.91 ms p95, giving the M1 target ≤ 1.96 ms. See [ECSDesign.md](docs/ECSDesign.md#m0-3d-baseline-record-2026-11-21) (2026-11-21). Under the minimal-test policy, the 500/2,000-mesh runs were dropped.
@@ -39,7 +39,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Write the design note: [ECSDesign.md](docs/ECSDesign.md) (2026-11-20).
 - [x] Owner review (2026-11-20): D1 keeps an empty, non-virtual `Component` base; D6 approved; D8 deferred to a Debug check; budgets come from the M0 baseline.
 - [ ] Benchmark the chosen storage against the current Registry, using the M0 micro-benchmarks.
-- [ ] Make `Component` an empty, non-virtual base, with the macro generating static information and typed IDs. Template the Registry API on `T`.
+- [x] Make `Component` an empty, non-virtual base, with the macro generating static information and typed IDs. Template the Registry API on `T`. Applied 2026-11-21; see [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
 - [ ] Add dense sparse-set pools behind the current Read/Write API, so the samples don't change.
 - [ ] Add views with borrowed references, `Single<T>`, and the Debug no-candidate-scene check. Then port `SceneAccess::Query` and the rotator/gameplay systems.
 - [ ] Add the command buffer for structural changes, and the host system schedule with phases.

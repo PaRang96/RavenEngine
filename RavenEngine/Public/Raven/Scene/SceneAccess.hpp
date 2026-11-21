@@ -8,7 +8,6 @@
 #include <array>
 #include <span>
 #include <string_view>
-#include <tuple>
 #include <vector>
 
 namespace Raven
@@ -27,29 +26,30 @@ namespace Raven
 		}
 		RAVEN_API ECS::Entity Find(std::string_view authoredId) const;
 		RAVEN_API bool IsAlive(ECS::Entity entity) const noexcept;
-		RAVEN_API bool Read(ECS::Entity entity, ECS::Component& value) const noexcept;
-		RAVEN_API bool Write(ECS::Entity entity, const ECS::Component& value) const noexcept;
-		RAVEN_API std::vector<ECS::Entity> Query(std::span<const ECS::Component* const> components) const;
 		RAVEN_API Mat4 GetWorldTransform(ECS::Entity entity) const;
 
-		template<typename T> requires (!ECS::ComponentType<T>)
-		bool Read(ECS::Entity, T&) const = delete;
-		template<typename T> requires (!ECS::ComponentType<T>)
-		bool Write(ECS::Entity, const T&) const = delete;
-
-		template <ECS::ComponentType... T>
+		// Copies whole values of entities owned by this scene.
+		template<ECS::ComponentType T>
+		bool Read(ECS::Entity entity, T& value) const noexcept
+		{
+			return ReadComponent(entity, ECS::ComponentTraits<T>::Info, &value);
+		}
+		template<ECS::ComponentType T>
+		bool Write(ECS::Entity entity, const T& value) const noexcept
+		{
+			return WriteComponent(entity, ECS::ComponentTraits<T>::Info, &value);
+		}
+		template<ECS::ComponentType... T>
 			requires(sizeof...(T) > 0)
 		std::vector<ECS::Entity> Query() const
 		{
-			const std::tuple<T...> values;
-			return std::apply(
-				[this](const auto&... value)
-				{
-					const std::array<const ECS::Component*, sizeof...(T)> components{&value...};
-					return Query(components);
-				},
-				values);
+			const std::array<const ECS::ComponentInfo*, sizeof...(T)> components{ &ECS::ComponentTraits<T>::Info... };
+			return Query(components);
 		}
+
+		RAVEN_API bool ReadComponent(ECS::Entity entity, const ECS::ComponentInfo& info, void* value) const noexcept;
+		RAVEN_API bool WriteComponent(ECS::Entity entity, const ECS::ComponentInfo& info, const void* value) const noexcept;
+		RAVEN_API std::vector<ECS::Entity> Query(std::span<const ECS::ComponentInfo* const> components) const;
 
 	  private:
 		friend class Scene;
