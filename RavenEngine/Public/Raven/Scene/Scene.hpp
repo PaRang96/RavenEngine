@@ -95,5 +95,7 @@ namespace Raven
 		AssetStore& m_Store;
 		ECS::Entity m_SelectedCamera;
 		GameBindings m_Bindings;
+		// Marks owned entities in the registry so scene-scoped views skip foreign ones.
+		std::uint32_t m_SceneId = 0;
 	};
 }

@@ -285,18 +285,14 @@ def live(executable, source, directory, capture=True):
             rejections["malformed-scene"] = (start, time.perf_counter_ns())
             screenshot("scene-retained", warm_image, False)
 
-            original_rule = b"return collected == pickups.size();"
-            edited_rule = b"""for (const auto entity : pickups)
-                {
-                    ECS::PickupComponent state;
-                    ECS::StaticMeshComponent mesh;
-                    if (scene.Read(entity, state) && state.Collected && scene.Read(entity, mesh))
+            original_rule = b"return collected == total;"
+            edited_rule = b"""scene.View<const ECS::PickupComponent, ECS::StaticMeshComponent>().Each(
+                    [](ECS::Entity, const ECS::PickupComponent& state, ECS::StaticMeshComponent& mesh)
                     {
-                        mesh.Tint = {.9f, .15f, .8f, 1};
-                        scene.Write(entity, mesh);
-                    }
-                }
-                return collected + 1 >= pickups.size();"""
+                        if (state.Collected)
+                            mesh.Tint = {.9f, .15f, .8f, 1};
+                    });
+                return collected + 1 >= total;"""
             changed_game = originals[game].replace(original_rule, edited_rule)
             check(changed_game != originals[game], "DLL fixture moved")
             activation = b"Game module activated, generation "

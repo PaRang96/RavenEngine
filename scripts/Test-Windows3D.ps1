@@ -60,8 +60,8 @@ $utf8 = [System.Text.UTF8Encoding]::new($false)
 
 $gameSource = Join-Path $source 'RavenEngine/Private/Game/InteractionGame.cpp'
 $gameBody = [IO.File]::ReadAllText($gameSource)
-$originalRule = 'return collected == pickups.size();'
-$changedRule = 'return collected + 1 >= pickups.size();'
+$originalRule = 'return collected == total;'
+$changedRule = 'return collected + 1 >= total;'
 if (!$gameBody.Contains($originalRule)) { throw 'The collection rule used by this smoke test moved.' }
 $editedBody = $gameBody.Replace($originalRule, $changedRule)
 [IO.File]::WriteAllText($gameSource, $editedBody, $utf8)

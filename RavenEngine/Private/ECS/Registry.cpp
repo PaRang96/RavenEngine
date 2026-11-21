@@ -1,5 +1,7 @@
 #include "Raven/ECS/Registry.hpp"
 
+#include "Raven/Core/Log.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -30,6 +32,22 @@ namespace Raven::ECS
             return ++lastId;
         }
 
+		// A view's references stay valid only while pools keep their shape.
+		bool RejectWhileIterating(std::uint32_t active, const char* operation) noexcept
+		{
+			if (active == 0)
+				return false;
+			try
+			{
+				Log(LogLevel::Error, std::string("Registry ") + operation +
+					" rejected while a view iterates; defer structural changes until it returns");
+			}
+			catch (...)
+			{
+			}
+			return true;
+		}
+
 		// Owns contiguous component values aligned for their type. Components are trivially
 		// copyable, so values relocate with memcpy when the buffer grows.
 		class ValueBuffer
@@ -46,8 +64,8 @@ namespace Raven::ECS
 				m_Alignment = std::max(alignment, alignof(std::max_align_t));
 			}
 
-			std::byte* At(std::size_t index) noexcept { return m_Data + index * m_Stride; }
-			const std::byte* At(std::size_t index) const noexcept { return m_Data + index * m_Stride; }
+			std::byte* Data() const noexcept { return m_Data; }
+			std::byte* At(std::size_t index) const noexcept { return m_Data + index * m_Stride; }
 
 			void Reserve(std::size_t count)
 			{
@@ -92,75 +110,89 @@ namespace Raven::ECS
 
         const std::uint64_t RegistryId = AllocateRegistryId();
         std::vector<Slot> Slots;
+		// Owning scene ID per slot, parallel to Slots; 0 when no scene owns the entity.
+		std::vector<std::uint32_t> Owners;
         std::uint32_t FirstFree = NoSlot;
+		std::uint32_t LastSceneId = 0;
+		// Number of views currently iterating; structural changes wait until it is zero.
+		std::uint32_t Iterating = 0;
 
 		// One sparse set per component type. A paged sparse array maps an entity index to a
-		// dense position; dense arrays hold the owning entity indices and the values in the
-		// same order. Removal moves the last element into the gap, so dense order is unstable.
+		// dense position; dense arrays hold the owning entities and the values in the same
+		// order. Removal moves the last element into the gap, so dense order is unstable.
 		// The first registration fixes the name and layout; the name is copied, so pools
 		// never refer to a module's static storage.
 		struct ComponentPool
 		{
-			static constexpr std::uint32_t PageShift = 12;
-			static constexpr std::uint32_t PageSize = 1u << PageShift;
-			static constexpr std::uint32_t NoIndex = std::numeric_limits<std::uint32_t>::max();
+			using Lookup = Detail::PoolView;
 
 			std::string Name;
 			std::size_t Size = 0;
 			std::uint64_t LayoutHash = 0;
-			std::vector<std::unique_ptr<std::uint32_t[]>> Pages;
-			std::vector<std::uint32_t> Entities;
+			std::vector<std::uint32_t*> Pages;
+			std::vector<Entity> Entities;
 			ValueBuffer Values;
+
+			ComponentPool() = default;
+			ComponentPool(const ComponentPool&) = delete;
+			ComponentPool& operator=(const ComponentPool&) = delete;
+			~ComponentPool()
+			{
+				for (auto* page : Pages)
+					delete[] page;
+			}
+
+			Detail::PoolView GetView() noexcept
+			{
+				return { Entities.data(), Values.Data(), Entities.size(), Size, Pages.data(), Pages.size() };
+			}
 
 			std::uint32_t Find(std::uint32_t entity) const noexcept
 			{
-				const std::size_t page = entity >> PageShift;
-				return page < Pages.size() && Pages[page] ? Pages[page][entity & (PageSize - 1)] : NoIndex;
+				const std::size_t page = entity >> Lookup::PageShift;
+				return page < Pages.size() && Pages[page] ? Pages[page][entity & Lookup::PageMask] : Lookup::NoIndex;
 			}
 
-			const std::byte* Get(std::uint32_t entity) const noexcept
+			std::byte* Get(std::uint32_t entity) const noexcept
 			{
 				const auto dense = Find(entity);
-				return dense == NoIndex ? nullptr : Values.At(dense);
+				return dense == Lookup::NoIndex ? nullptr : Values.At(dense);
 			}
 
-			std::byte* Get(std::uint32_t entity) noexcept
+			void Insert(Entity entity, const void* value)
 			{
-				return const_cast<std::byte*>(std::as_const(*this).Get(entity));
-			}
-
-			void Insert(std::uint32_t entity, const void* value)
-			{
-				const std::size_t page = entity >> PageShift;
+				const auto index = Detail::EntityAccess::Index(entity);
+				const std::size_t page = index >> Lookup::PageShift;
 				if (page >= Pages.size())
-					Pages.resize(page + 1);
+					Pages.resize(page + 1, nullptr);
 				if (!Pages[page])
 				{
-					Pages[page] = std::make_unique<std::uint32_t[]>(PageSize);
-					std::fill_n(Pages[page].get(), PageSize, NoIndex);
+					auto lookup = std::make_unique<std::uint32_t[]>(Lookup::PageMask + 1);
+					std::fill_n(lookup.get(), Lookup::PageMask + 1, Lookup::NoIndex);
+					Pages[page] = lookup.release();
 				}
 				const auto dense = static_cast<std::uint32_t>(Entities.size());
 				Values.Reserve(Entities.size() + 1);
 				Entities.push_back(entity);
 				std::memcpy(Values.At(dense), value, Size);
-				Pages[page][entity & (PageSize - 1)] = dense;
+				Pages[page][index & Lookup::PageMask] = dense;
 			}
 
 			bool Erase(std::uint32_t entity) noexcept
 			{
 				const auto dense = Find(entity);
-				if (dense == NoIndex)
+				if (dense == Lookup::NoIndex)
 					return false;
 				const auto last = static_cast<std::uint32_t>(Entities.size() - 1);
 				if (dense != last)
 				{
-					const auto moved = Entities[last];
+					const auto moved = Detail::EntityAccess::Index(Entities[last]);
 					std::memcpy(Values.At(dense), Values.At(last), Size);
-					Entities[dense] = moved;
-					Pages[moved >> PageShift][moved & (PageSize - 1)] = dense;
+					Entities[dense] = Entities[last];
+					Pages[moved >> Lookup::PageShift][moved & Lookup::PageMask] = dense;
 				}
 				Entities.pop_back();
-				Pages[entity >> PageShift][entity & (PageSize - 1)] = NoIndex;
+				Pages[entity >> Lookup::PageShift][entity & Lookup::PageMask] = Lookup::NoIndex;
 				return true;
 			}
 		};
@@ -194,6 +226,8 @@ namespace Raven::ECS
     Entity Registry::Create()
     {
         auto &impl = *m_Impl;
+		if (impl.Iterating != 0)
+			throw std::logic_error("Registry Create rejected while a view iterates");
 
         if (impl.FirstFree != Impl::NoSlot)
         {
@@ -203,6 +237,7 @@ namespace Raven::ECS
             impl.FirstFree = slot.NextFree;
             slot.NextFree = Impl::NoSlot;
             slot.Alive = true;
+			impl.Owners[index] = 0;
 
             return Entity(impl.RegistryId, index, slot.Generation);
         }
@@ -213,7 +248,16 @@ namespace Raven::ECS
         const auto index =
             static_cast<std::uint32_t>(impl.Slots.size());
 
-        impl.Slots.push_back({1, Impl::NoSlot, true});
+		impl.Owners.push_back(0);
+		try
+		{
+			impl.Slots.push_back({1, Impl::NoSlot, true});
+		}
+		catch (...)
+		{
+			impl.Owners.pop_back();
+			throw;
+		}
 
         return Entity(impl.RegistryId, index, 1);
     }
@@ -237,12 +281,15 @@ namespace Raven::ECS
             return false;
 
         auto &impl = *m_Impl;
+		if (RejectWhileIterating(impl.Iterating, "Destroy"))
+			return false;
         auto &slot = impl.Slots[entity.m_Index];
 
 		for (auto& [id, pool] : impl.Components)
 			pool.Erase(entity.m_Index);
 
         slot.Alive = false;
+		impl.Owners[entity.m_Index] = 0;
 
         if (slot.Generation ==
             std::numeric_limits<std::uint32_t>::max())
@@ -265,17 +312,23 @@ namespace Raven::ECS
 		return entities;
 	}
 
+	bool Registry::IsIterating() const noexcept
+	{
+		return m_Impl->Iterating != 0;
+	}
+
 	bool Registry::HasComponent(Entity entity, const ComponentInfo& info) const noexcept
 	{
 		if (!IsAlive(entity))
 			return false;
 		const auto* pool = std::as_const(*m_Impl).FindPool(info);
-		return pool && pool->Find(entity.m_Index) != Impl::ComponentPool::NoIndex;
+		return pool && pool->Find(entity.m_Index) != Detail::PoolView::NoIndex;
 	}
 
 	bool Registry::AddComponent(Entity entity, const ComponentInfo& info, const void* value)
 	{
-		if (!IsAlive(entity) || info.Name.empty() || info.Size == 0 || !value)
+		if (!IsAlive(entity) || info.Name.empty() || info.Size == 0 || !value ||
+			RejectWhileIterating(m_Impl->Iterating, "Add"))
 			return false;
 		auto [entry, created] = m_Impl->Components.try_emplace(info.Id);
 		auto& pool = entry->second;
@@ -290,16 +343,15 @@ namespace Raven::ECS
 		{
 			return false;
 		}
-		if (pool.Find(entity.m_Index) != Impl::ComponentPool::NoIndex)
+		if (pool.Find(entity.m_Index) != Detail::PoolView::NoIndex)
 			return false;
-		pool.Insert(entity.m_Index, value);
+		pool.Insert(entity, value);
 		return true;
 	}
 
 	bool Registry::ReadComponent(Entity entity, const ComponentInfo& info, void* value) const noexcept
 	{
-		const auto* pool = IsAlive(entity) && value ? std::as_const(*m_Impl).FindPool(info) : nullptr;
-		const auto* bytes = pool ? pool->Get(entity.m_Index) : nullptr;
+		const auto* bytes = value ? TryGetComponent(entity, info) : nullptr;
 		if (!bytes)
 			return false;
 		std::memcpy(value, bytes, info.Size);
@@ -308,8 +360,7 @@ namespace Raven::ECS
 
 	bool Registry::WriteComponent(Entity entity, const ComponentInfo& info, const void* value) noexcept
 	{
-		auto* pool = IsAlive(entity) && value ? m_Impl->FindPool(info) : nullptr;
-		auto* bytes = pool ? pool->Get(entity.m_Index) : nullptr;
+		auto* bytes = value ? TryGetComponent(entity, info) : nullptr;
 		if (!bytes)
 			return false;
 		std::memcpy(bytes, value, info.Size);
@@ -318,9 +369,49 @@ namespace Raven::ECS
 
 	bool Registry::RemoveComponent(Entity entity, const ComponentInfo& info) noexcept
 	{
-		if (!IsAlive(entity))
+		if (!IsAlive(entity) || RejectWhileIterating(m_Impl->Iterating, "Remove"))
 			return false;
 		auto* pool = m_Impl->FindPool(info);
 		return pool && pool->Erase(entity.m_Index);
+	}
+
+	const void* Registry::TryGetComponent(Entity entity, const ComponentInfo& info) const noexcept
+	{
+		const auto* pool = IsAlive(entity) ? std::as_const(*m_Impl).FindPool(info) : nullptr;
+		return pool ? pool->Get(entity.m_Index) : nullptr;
+	}
+
+	void* Registry::TryGetComponent(Entity entity, const ComponentInfo& info) noexcept
+	{
+		return const_cast<void*>(std::as_const(*this).TryGetComponent(entity, info));
+	}
+
+	Detail::PoolView Registry::GetPool(const ComponentInfo& info) noexcept
+	{
+		auto* pool = m_Impl->FindPool(info);
+		return pool ? pool->GetView() : Detail::PoolView{};
+	}
+
+	Detail::IterationState Registry::GetIterationState() noexcept
+	{
+		return { &m_Impl->Iterating, m_Impl->Owners.data() };
+	}
+
+	std::uint32_t Registry::AllocateSceneId()
+	{
+		if (m_Impl->LastSceneId == std::numeric_limits<std::uint32_t>::max())
+			throw std::overflow_error("Registry scene identity exhausted");
+		return ++m_Impl->LastSceneId;
+	}
+
+	void Registry::SetOwner(Entity entity, std::uint32_t scene) noexcept
+	{
+		if (IsAlive(entity))
+			m_Impl->Owners[entity.m_Index] = scene;
+	}
+
+	std::uint32_t Registry::GetOwner(Entity entity) const noexcept
+	{
+		return IsAlive(entity) ? m_Impl->Owners[entity.m_Index] : 0;
 	}
 }

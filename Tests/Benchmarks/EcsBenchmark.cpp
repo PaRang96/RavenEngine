@@ -98,6 +98,15 @@ namespace
 			}
 		}));
 
+		// The same pass through a borrowed Registry view.
+		Report("View<Transform> mutable, all entities", entities, entities, MedianMilliseconds([&]
+		{
+			registry.View<TransformComponent>().Each([](Entity, TransformComponent& transform)
+			{
+				transform.Position.Z += 0.001f;
+			});
+		}));
+
 		// The interaction game's rotator loop: scene query, then copies.
 		const auto access = scene.GetAccess();
 		std::size_t rotors = 0;
@@ -117,6 +126,16 @@ namespace
 			}
 		});
 		Report("Query<Rotator, Transform> + read/write", entities, rotors, rotorTime);
+
+		// The ported rotator loop: a scene-scoped view with borrowed references.
+		Report("Scene View<Rotator, Transform> mutable", entities, rotors, MedianMilliseconds([&]
+		{
+			access.View<RotatorComponent, TransformComponent>().Each(
+				[](Entity, RotatorComponent& rotor, TransformComponent& transform)
+				{
+					transform.Rotation.Z += rotor.Rotation.Z * 0.016f;
+				});
+		}));
 
 		// Draw-time world transforms for every mesh.
 		Scene::WorldTransformStorage storage;

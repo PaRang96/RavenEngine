@@ -7,6 +7,7 @@ namespace Raven { class Scene; }
 namespace Raven::ECS
 {
     class Registry;
+    namespace Detail { struct EntityAccess; }
 
     class Entity
     {
@@ -21,6 +22,7 @@ namespace Raven::ECS
     private:
         friend class Registry;
         friend class ::Raven::Scene;
+        friend struct Detail::EntityAccess;
 
         constexpr Entity(std::uint64_t registryId,
                          std::uint32_t index,

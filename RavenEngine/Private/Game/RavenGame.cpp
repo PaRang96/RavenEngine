@@ -20,22 +20,16 @@ namespace
 	void MoveSprites(Raven::ECS::Registry& registry, float delta)
 	{
 		constexpr float MovementScale = 1.0f;
-		for (const auto entity : registry.GetEntities())
-		{
-			Raven::ECS::TransformComponent transform;
-			Raven::SampleGame::Velocity velocity;
-			if (!registry.Read(entity, velocity) || !registry.Read(entity, transform))
-				continue;
-
-			transform.Position = transform.Position + velocity.Linear * (delta * MovementScale);
-			if (transform.Position.X > 3.0f || transform.Position.X < -3.0f)
+		registry.View<Raven::ECS::TransformComponent, Raven::SampleGame::Velocity>().Each(
+			[delta](Raven::ECS::Entity, Raven::ECS::TransformComponent& transform, Raven::SampleGame::Velocity& velocity)
 			{
-				transform.Position.X = std::clamp(transform.Position.X, -3.0f, 3.0f);
-				velocity.Linear.X = -velocity.Linear.X;
-				registry.Write(entity, velocity);
-			}
-			registry.Write(entity, transform);
-		}
+				transform.Position = transform.Position + velocity.Linear * (delta * MovementScale);
+				if (transform.Position.X > 3.0f || transform.Position.X < -3.0f)
+				{
+					transform.Position.X = std::clamp(transform.Position.X, -3.0f, 3.0f);
+					velocity.Linear.X = -velocity.Linear.X;
+				}
+			});
 	}
 
 	float MovementAxis(const Raven::InputState& input, Raven::Key positive, Raven::Key negative)

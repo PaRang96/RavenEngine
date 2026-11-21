@@ -26,38 +26,34 @@ namespace Raven::SampleGame
 							  1.0f);
 		}
 
-		bool UpdatePickups(const SceneAccess& scene, std::span<const ECS::Entity> pickups,
-						   std::span<const ECS::Entity> interactions)
+		// Collects picked pickups and reports whether every scene pickup is collected.
+		bool UpdatePickups(const SceneAccess& scene, std::span<const ECS::Entity> interactions)
 		{
 			bool changed = false;
 			for (const auto entity : interactions)
 			{
-				ECS::PickupComponent pickup;
-				if (!scene.Read(entity, pickup) || pickup.Collected)
+				auto* pickup = scene.TryGet<ECS::PickupComponent>(entity);
+				if (!pickup || pickup->Collected)
 					continue;
-				pickup.Collected = true;
-				scene.Write(entity, pickup);
-				ECS::StaticMeshComponent mesh;
-				if (scene.Read(entity, mesh))
-				{
-					mesh.Tint = {.25f, .32f, .36f, 1};
-					scene.Write(entity, mesh);
-				}
+				pickup->Collected = true;
+				if (auto* mesh = scene.TryGet<ECS::StaticMeshComponent>(entity))
+					mesh->Tint = {.25f, .32f, .36f, 1};
 				changed = true;
 			}
-			const auto collected = static_cast<std::size_t>(std::count_if(pickups.begin(), pickups.end(),
-				[&](ECS::Entity entity)
-				{
-					ECS::PickupComponent pickup;
-					return scene.Read(entity, pickup) && pickup.Collected;
-				}));
+			std::size_t total = 0;
+			std::size_t collected = 0;
+			scene.View<const ECS::PickupComponent>().Each([&](ECS::Entity, const ECS::PickupComponent& pickup)
+			{
+				++total;
+				collected += pickup.Collected ? 1 : 0;
+			});
 			if (changed)
 			{
-				Log(LogLevel::Info, std::format("Collected {}/{}", collected, pickups.size()));
-				if (collected == pickups.size())
+				Log(LogLevel::Info, std::format("Collected {}/{}", collected, total));
+				if (collected == total)
 					Log(LogLevel::Info, "All pickups collected. Fly to the cyan exit.");
 			}
-			return collected == pickups.size();
+			return collected == total;
 		}
 	}
 
@@ -66,116 +62,92 @@ namespace Raven::SampleGame
 		const auto scene = bindings.World;
 		if (!scene)
 			return;
-		const auto attempts = scene.Query<ECS::AttemptComponent>();
-		if (attempts.empty())
+		auto* const attemptState = scene.Single<ECS::AttemptComponent>();
+		if (!attemptState)
 			return;
-		const auto attemptEntity = attempts.front();
-		ECS::AttemptComponent attempt;
-		if (!scene.Read(attemptEntity, attempt))
-			return;
-		const auto pickups = scene.Query<ECS::PickupComponent>();
+		auto& attempt = *attemptState;
+		const bool hasPickups = scene.Count<ECS::PickupComponent>() != 0;
 		if (!attempt.Announced)
 		{
-			if (!pickups.empty())
+			if (hasPickups)
 				Log(LogLevel::Info, "Collection: left-click the gold pickups, then fly to the cyan exit. F3 restarts.");
-			else if (!scene.Query<ECS::SwitchComponent>().empty())
+			else if (scene.Count<ECS::SwitchComponent>() != 0)
 				Log(LogLevel::Info, "Puzzle: left-click both orange switches, wait for the gate to open, then fly to the cyan goal. F3 restarts.");
 			attempt.Announced = true;
 		}
-		const bool readyToExit =
-			attempt.Completed || pickups.empty() || UpdatePickups(scene, pickups, bindings.Interactions);
+		const bool readyToExit = attempt.Completed || !hasPickups || UpdatePickups(scene, bindings.Interactions);
 		if (input.WasKeyPressed(Key::Space))
 			attempt.Paused = !attempt.Paused;
 		if (!attempt.Completed)
 			for (const auto entity : bindings.Interactions)
 			{
-				ECS::SwitchComponent state;
-				if (!scene.Read(entity, state))
+				auto* state = scene.TryGet<ECS::SwitchComponent>(entity);
+				if (!state)
 					continue;
-				state.Active = !state.Active;
-				scene.Write(entity, state);
+				state->Active = !state->Active;
 				++attempt.SwitchActivations;
-				ECS::StaticMeshComponent mesh;
-				if (scene.Read(entity, mesh))
+				if (auto* mesh = scene.TryGet<ECS::StaticMeshComponent>(entity))
+					mesh->Tint = state->Active ? Vec4{.1f, 1, .15f, 1} : Vec4{1, .4f, .1f, 1};
+				Log(LogLevel::Info, state->Active ? "Switch activated" : "Switch deactivated");
+			}
+		if (!attempt.Paused)
+		{
+			scene.View<ECS::RotatorComponent, ECS::TransformComponent>().Each(
+				[&](ECS::Entity, ECS::RotatorComponent& rotor, ECS::TransformComponent& transform)
 				{
-					mesh.Tint = state.Active ? Vec4{.1f, 1, .15f, 1} : Vec4{1, .4f, .1f, 1};
-					scene.Write(entity, mesh);
-				}
-				Log(LogLevel::Info, state.Active ? "Switch activated" : "Switch deactivated");
-			}
-		for (const auto entity : scene.Query<ECS::RotatorComponent, ECS::TransformComponent>())
-		{
-			ECS::RotatorComponent rotor;
-			ECS::TransformComponent transform;
-			if (!scene.Read(entity, rotor) || !scene.Read(entity, transform) || attempt.Paused)
-				continue;
-			if (Name(rotor.Switch).empty())
-			{
-				constexpr float ContinuousRotationSpeed = 1.0f;
-				const auto offset = rotor.OffsetRotation + rotor.Rotation * (delta * ContinuousRotationSpeed);
-				const float turn = 2.0f * std::numbers::pi_v<float>;
-				rotor.OffsetRotation = {std::remainder(offset.X, turn), std::remainder(offset.Y, turn),
-										std::remainder(offset.Z, turn)};
-				transform.Rotation = rotor.BaseRotation + rotor.OffsetRotation;
-			}
-			else
-			{
-				ECS::SwitchComponent state;
-				const bool active = scene.Read(scene.Find(Name(rotor.Switch)), state) && state.Active;
-				rotor.Progress = Approach(rotor.Progress, active, delta, rotor.Duration);
-				transform.Rotation = rotor.BaseRotation + rotor.Rotation * rotor.Progress;
-			}
-			scene.Write(entity, rotor);
-			scene.Write(entity, transform);
-		}
-		for (const auto entity : scene.Query<ECS::DoorComponent, ECS::TransformComponent>())
-		{
-			ECS::DoorComponent door;
-			ECS::TransformComponent transform;
-			if (!scene.Read(entity, door) || !scene.Read(entity, transform) || attempt.Paused)
-				continue;
-			bool ready = door.RequiredCount > 0 && door.RequiredCount <= door.RequiredRotators.size();
-			for (std::size_t i = 0; ready && i < door.RequiredCount; ++i)
-			{
-				ECS::RotatorComponent rotor;
-				ready = scene.Read(scene.Find(Name(door.RequiredRotators[i])), rotor) && rotor.Progress >= 1;
-			}
-			const auto before = door.Progress;
-			door.Progress = Approach(door.Progress, ready, delta, door.Duration);
-			transform.Position = door.ClosedPosition + door.OpenOffset * door.Progress;
-			scene.Write(entity, door);
-			scene.Write(entity, transform);
-			if (before < 1 && door.Progress >= 1)
-				Log(LogLevel::Info, "Gate opened");
+					if (Name(rotor.Switch).empty())
+					{
+						constexpr float ContinuousRotationSpeed = 1.0f;
+						const auto offset = rotor.OffsetRotation + rotor.Rotation * (delta * ContinuousRotationSpeed);
+						const float turn = 2.0f * std::numbers::pi_v<float>;
+						rotor.OffsetRotation = {std::remainder(offset.X, turn), std::remainder(offset.Y, turn),
+												std::remainder(offset.Z, turn)};
+						transform.Rotation = rotor.BaseRotation + rotor.OffsetRotation;
+					}
+					else
+					{
+						const auto* state = scene.TryGet<ECS::SwitchComponent>(scene.Find(Name(rotor.Switch)));
+						rotor.Progress = Approach(rotor.Progress, state && state->Active, delta, rotor.Duration);
+						transform.Rotation = rotor.BaseRotation + rotor.Rotation * rotor.Progress;
+					}
+				});
+			scene.View<ECS::DoorComponent, ECS::TransformComponent>().Each(
+				[&](ECS::Entity, ECS::DoorComponent& door, ECS::TransformComponent& transform)
+				{
+					bool ready = door.RequiredCount > 0 && door.RequiredCount <= door.RequiredRotators.size();
+					for (std::size_t i = 0; ready && i < door.RequiredCount; ++i)
+					{
+						const auto* rotor = scene.TryGet<ECS::RotatorComponent>(scene.Find(Name(door.RequiredRotators[i])));
+						ready = rotor && rotor->Progress >= 1;
+					}
+					const auto before = door.Progress;
+					door.Progress = Approach(door.Progress, ready, delta, door.Duration);
+					transform.Position = door.ClosedPosition + door.OpenOffset * door.Progress;
+					if (before < 1 && door.Progress >= 1)
+						Log(LogLevel::Info, "Gate opened");
+				});
 		}
 		if (!attempt.Completed && readyToExit && scene.IsAlive(bindings.Camera))
 		{
 			const auto camera = scene.GetWorldTransform(bindings.Camera);
-			for (const auto entity : scene.Query<ECS::GoalComponent, ECS::TransformComponent>())
-			{
-				ECS::GoalComponent goal;
-				if (!scene.Read(entity, goal))
-					continue;
-				if (!Name(goal.Door).empty())
+			scene.View<const ECS::GoalComponent, const ECS::TransformComponent>().Each(
+				[&](ECS::Entity entity, const ECS::GoalComponent& goal, const ECS::TransformComponent&)
 				{
-					ECS::DoorComponent door;
-					if (!scene.Read(scene.Find(Name(goal.Door)), door) || door.Progress < 1)
-						continue;
-				}
-				const auto world = scene.GetWorldTransform(entity);
-				if (std::hypot(camera(0, 3) - world(0, 3), camera(1, 3) - world(1, 3),
-							   camera(2, 3) - world(2, 3)) > goal.Radius)
-					continue;
-				attempt.Completed = true;
-				ECS::StaticMeshComponent mesh;
-				if (scene.Read(entity, mesh))
-				{
-					mesh.Tint = {.12f, 1, .12f, 1};
-					scene.Write(entity, mesh);
-				}
-				break;
-			}
+					if (!Name(goal.Door).empty())
+					{
+						const auto* door = scene.TryGet<ECS::DoorComponent>(scene.Find(Name(goal.Door)));
+						if (!door || door->Progress < 1)
+							return true;
+					}
+					const auto world = scene.GetWorldTransform(entity);
+					if (std::hypot(camera(0, 3) - world(0, 3), camera(1, 3) - world(1, 3),
+								   camera(2, 3) - world(2, 3)) > goal.Radius)
+						return true;
+					attempt.Completed = true;
+					if (auto* mesh = scene.TryGet<ECS::StaticMeshComponent>(entity))
+						mesh->Tint = {.12f, 1, .12f, 1};
+					return false;
+				});
 		}
-		scene.Write(attemptEntity, attempt);
 	}
 }

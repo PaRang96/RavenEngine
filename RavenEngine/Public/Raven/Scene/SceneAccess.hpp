@@ -3,6 +3,7 @@
 #include "Raven/Core/Api.hpp"
 #include "Raven/ECS/Component.hpp"
 #include "Raven/ECS/Entity.hpp"
+#include "Raven/ECS/Registry.hpp"
 #include "Raven/Math/Transform.hpp"
 
 #include <array>
@@ -15,7 +16,8 @@ namespace Raven
 	class Scene;
 
 	// Borrowed for one synchronous game update. Never retain across scene replacement.
-	// This view permits copied component access, not entity/resource ownership changes.
+	// Permits copied or borrowed component access to entities this scene owns, not
+	// entity/resource ownership changes.
 	class SceneAccess
 	{
 	  public:
@@ -47,12 +49,48 @@ namespace Raven
 			return Query(components);
 		}
 
+		// Borrowed access to entities owned by this scene (docs/ECSDesign.md, D4). Views,
+		// references and pointers are valid only during the current synchronous update.
+		// Views visit the scene's entities in unspecified order; Query keeps authored order.
+		template<ECS::ViewComponent... T>
+			requires(sizeof...(T) > 0)
+		ECS::View<T...> View() const noexcept
+		{
+			return ECS::View<T...>(GetViewSource());
+		}
+		template<ECS::ComponentType T>
+		T* TryGet(ECS::Entity entity) const noexcept
+		{
+			return static_cast<T*>(TryGetComponent(entity, ECS::ComponentTraits<T>::Info));
+		}
+		// The first scene-owned component of type T, or null; use for single-instance state.
+		template<ECS::ComponentType T>
+		T* Single() const
+		{
+			T* result = nullptr;
+			View<T>().Each([&result](ECS::Entity, T& value)
+			{
+				result = &value;
+				return false;
+			});
+			return result;
+		}
+		template<ECS::ComponentType T>
+		std::size_t Count() const
+		{
+			std::size_t count = 0;
+			View<const T>().Each([&count](ECS::Entity, const T&) { ++count; });
+			return count;
+		}
+
+		RAVEN_API void* TryGetComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept;
 		RAVEN_API bool ReadComponent(ECS::Entity entity, const ECS::ComponentInfo& info, void* value) const noexcept;
 		RAVEN_API bool WriteComponent(ECS::Entity entity, const ECS::ComponentInfo& info, const void* value) const noexcept;
 		RAVEN_API std::vector<ECS::Entity> Query(std::span<const ECS::ComponentInfo* const> components) const;
 
 	  private:
 		friend class Scene;
+		RAVEN_API ECS::Detail::ViewSource GetViewSource() const noexcept;
 		explicit SceneAccess(Scene& scene) noexcept : m_Scene(&scene)
 		{
 		}

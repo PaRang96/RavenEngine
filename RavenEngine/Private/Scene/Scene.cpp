@@ -45,7 +45,10 @@ namespace Raven
 		}
 	}
 
-	Scene::Scene(ECS::Registry& registry, AssetStore& store) : m_Registry(registry), m_Store(store) {}
+	Scene::Scene(ECS::Registry& registry, AssetStore& store)
+		: m_Registry(registry), m_Store(store), m_SceneId(registry.AllocateSceneId())
+	{
+	}
 
 	Scene::~Scene()
 	{
@@ -63,6 +66,7 @@ namespace Raven
 		try
 		{
 			m_Parents.emplace(entity, ECS::Entity{});
+			m_Registry.SetOwner(entity, m_SceneId);
 			if (!name.empty())
 				m_Names.emplace(name, entity);
 			m_Entities.push_back(entity);
@@ -133,6 +137,8 @@ namespace Raven
 	{
 		if (!m_Parents.contains(entity))
 			throw std::invalid_argument("Cannot destroy an entity owned by another scene");
+		if (m_Registry.IsIterating())
+			throw std::logic_error("Scene entities cannot be destroyed while a view iterates");
 		std::vector<ECS::Entity> removed{ entity };
 		for (std::size_t index = 0; index < removed.size(); ++index)
 			for (const auto& [child, parent] : m_Parents)

@@ -30,12 +30,35 @@ namespace Raven
 		std::vector<ECS::Entity> result;
 		if (!m_Scene)
 			return result;
+		std::vector<ECS::Detail::PoolView> pools;
+		pools.reserve(components.size());
+		for (const auto* component : components)
+		{
+			if (!component)
+				return result;
+			pools.push_back(m_Scene->m_Registry.GetPool(*component));
+			if (pools.back().Count == 0)
+				return result;
+		}
+		// Authored order: walk the scene's entities and test pool membership directly.
 		for (const auto entity : m_Scene->m_Entities)
 			if (m_Scene->m_Registry.IsAlive(entity) &&
-				std::all_of(components.begin(), components.end(), [this, entity](const auto* component)
-							{ return component && m_Scene->m_Registry.HasComponent(entity, *component); }))
+				std::all_of(pools.begin(), pools.end(), [entity](const ECS::Detail::PoolView& pool)
+							{ return pool.Find(entity) != ECS::Detail::PoolView::NoIndex; }))
 				result.push_back(entity);
 		return result;
+	}
+
+	void* SceneAccess::TryGetComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept
+	{
+		if (!m_Scene || m_Scene->m_Registry.GetOwner(entity) != m_Scene->m_SceneId)
+			return nullptr;
+		return m_Scene->m_Registry.TryGetComponent(entity, info);
+	}
+
+	ECS::Detail::ViewSource SceneAccess::GetViewSource() const noexcept
+	{
+		return m_Scene ? ECS::Detail::ViewSource{ &m_Scene->m_Registry, m_Scene->m_SceneId } : ECS::Detail::ViewSource{};
 	}
 
 	Mat4 SceneAccess::GetWorldTransform(ECS::Entity entity) const

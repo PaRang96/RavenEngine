@@ -6,6 +6,7 @@
 #include "Support/Check.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <vector>
 
 namespace RavenTests
@@ -219,6 +220,93 @@ namespace
 		RAVEN_CHECK(mismatches == 0);
 		RAVEN_CHECK(registry.GetEntities().size() == 1000 - 334 + 100);
 	}
+	void Views()
+	{
+		Registry registry;
+		std::vector<Entity> both;
+		for (int index = 0; index < 100; ++index)
+		{
+			const auto entity = registry.Create();
+			Health health;
+			health.Value = static_cast<float>(index);
+			registry.Add(entity, health);
+			if (index % 3 == 0)
+			{
+				TransformComponent transform;
+				transform.Position.X = static_cast<float>(index);
+				registry.Add(entity, transform);
+				both.push_back(entity);
+			}
+		}
+		// Remove one to put dense storage out of creation order.
+		registry.Destroy(both[1]);
+		both.erase(both.begin() + 1);
+
+		// Each visits exactly the entities with every component, and mutable access writes through.
+		std::size_t visited = 0;
+		int mismatches = 0;
+		registry.View<TransformComponent, const Health>().Each(
+			[&](Entity entity, TransformComponent& transform, const Health& health)
+			{
+				++visited;
+				if (!Contains(both, entity) || transform.Position.X != health.Value)
+					++mismatches;
+				transform.Position.Y = health.Value * 2.0f;
+			});
+		RAVEN_CHECK(visited == both.size());
+		RAVEN_CHECK(mismatches == 0);
+		for (const auto entity : both)
+		{
+			TransformComponent transform;
+			RAVEN_CHECK(registry.Read(entity, transform) && transform.Position.Y == transform.Position.X * 2.0f);
+		}
+
+		// Returning false stops early.
+		int seen = 0;
+		registry.View<const Health>().Each([&](Entity, const Health&) { return ++seen < 5; });
+		RAVEN_CHECK(seen == 5);
+
+		// Structural changes are rejected while iterating and allowed afterwards.
+		bool addRejected = false;
+		bool removeRejected = false;
+		bool destroyRejected = false;
+		bool createRejected = false;
+		registry.View<const Health>().Each([&](Entity entity, const Health&)
+		{
+			RAVEN_CHECK(registry.IsIterating());
+			addRejected = !registry.Add(entity, Marker{});
+			removeRejected = !registry.Remove<Health>(entity);
+			destroyRejected = !registry.Destroy(entity);
+			try
+			{
+				registry.Create();
+			}
+			catch (const std::logic_error&)
+			{
+				createRejected = true;
+			}
+			return false;
+		});
+		RAVEN_CHECK(addRejected && removeRejected && destroyRejected && createRejected);
+		RAVEN_CHECK(!registry.IsIterating());
+		RAVEN_CHECK(registry.Add(both.front(), Marker{}));
+
+		// Borrowed single-entity access.
+		auto* health = registry.TryGet<Health>(both.front());
+		RAVEN_CHECK(health && health->Value == 0.0f);
+		if (health)
+			health->Value = 7.0f;
+		Health read;
+		RAVEN_CHECK(registry.Read(both.front(), read) && read.Value == 7.0f);
+		RAVEN_CHECK(registry.TryGet<Marker>(both.back()) == nullptr);
+		RAVEN_CHECK(registry.Count<TransformComponent>() == both.size());
+		RAVEN_CHECK(registry.Single<Marker>() != nullptr);
+
+		Registry empty;
+		std::size_t emptyVisits = 0;
+		empty.View<Health>().Each([&](Entity, Health&) { ++emptyVisits; });
+		RAVEN_CHECK(emptyVisits == 0 && empty.Single<Health>() == nullptr && empty.Count<Health>() == 0);
+	}
 }
 
 int main()
@@ -231,5 +319,6 @@ int main()
 		TagComponents();
 		DestroyErasesComponents();
 		ManyEntitiesKeepTheirValues();
+		Views();
 	});
 }

@@ -106,6 +106,26 @@ namespace
 		RAVEN_CHECK_THROWS(scene.SetParent(stranger, root));
 		RAVEN_CHECK_THROWS(scene.DestroyEntity(stranger));
 
+		// Scene-scoped views and borrowed access skip other scenes and unowned entities.
+		const auto foreign = registry.Create();
+		RAVEN_CHECK(registry.Add(stranger, TransformComponent{}));
+		RAVEN_CHECK(registry.Add(foreign, TransformComponent{}));
+		const auto access = scene.GetAccess();
+		std::size_t owned = 0;
+		bool leaked = false;
+		access.View<const TransformComponent>().Each([&](Entity entity, const TransformComponent&)
+		{
+			++owned;
+			leaked = leaked || entity == stranger || entity == foreign;
+		});
+		RAVEN_CHECK(owned == 3 && !leaked);
+		RAVEN_CHECK(access.Count<TransformComponent>() == 3);
+		RAVEN_CHECK(access.TryGet<TransformComponent>(foreign) == nullptr);
+		RAVEN_CHECK(access.TryGet<TransformComponent>(stranger) == nullptr);
+		RAVEN_CHECK(access.TryGet<TransformComponent>(root) != nullptr);
+		RAVEN_CHECK(access.Query<TransformComponent>().size() == 3);
+		registry.Destroy(foreign);
+
 		// Destroying a root destroys its whole subtree and its names.
 		scene.DestroyEntity(root);
 		RAVEN_CHECK(!registry.IsAlive(root));
