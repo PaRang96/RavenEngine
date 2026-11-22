@@ -389,21 +389,33 @@ namespace Raven
 		const VkRect2D scissor{ { 0, 0 }, m_Extent };
 		vkCmdSetViewport(commands, 0, 1, &viewport);
 		vkCmdSetScissor(commands, 0, 1, &scissor);
-		if (!queue.Color.empty())
-			m_LitPipeline->BindFrame(commands, frame.FrameSet);
-		for (std::size_t index = 0; index < queue.Color.size(); ++index)
+		if (!queue.LitBatches.empty())
 		{
-			const auto& draw = *queue.Color[index];
-			const auto& texture = draw.Texture ? *draw.Texture : white;
-			m_LitPipeline->Bind(commands, texture.GetDescriptorSet());
+			m_LitPipeline->BindFrame(commands, frame.FrameSet);
+			vkCmdBindVertexBuffers(commands, 1, 1, &instanceBuffer, &offsets.Mesh);
+		}
+		// One instanced draw per batch (R5); binds change only with the texture or mesh.
+		const VulkanTexture* boundTexture = nullptr;
+		const VulkanMeshData* boundMesh = nullptr;
+		for (const auto& batch : queue.LitBatches)
+		{
+			const auto* texture = batch.Key.Texture ? batch.Key.Texture : &white;
+			if (texture != boundTexture)
+			{
+				m_LitPipeline->Bind(commands, texture->GetDescriptorSet());
+				boundTexture = texture;
+			}
 			// Released or replaced mesh data is retired, so it outlives this submission (R3).
-			const auto& mesh = *draw.Mesh.GetData();
-			const std::array<VkBuffer, 2> buffers{ mesh.Vertices.Get(), instanceBuffer };
-			const std::array<VkDeviceSize, 2> bufferOffsets{ 0, offsets.Mesh };
-			vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
-				buffers.data(), bufferOffsets.data());
-			vkCmdBindIndexBuffer(commands, mesh.Indices.Get(), 0, VK_INDEX_TYPE_UINT16);
-			vkCmdDrawIndexed(commands, mesh.IndexCount, 1, 0, 0, static_cast<std::uint32_t>(index));
+			const auto& mesh = *batch.Key.Mesh;
+			if (&mesh != boundMesh)
+			{
+				const VkBuffer vertices = mesh.Vertices.Get();
+				const VkDeviceSize vertexOffset = 0;
+				vkCmdBindVertexBuffers(commands, 0, 1, &vertices, &vertexOffset);
+				vkCmdBindIndexBuffer(commands, mesh.Indices.Get(), 0, VK_INDEX_TYPE_UINT16);
+				boundMesh = &mesh;
+			}
+			vkCmdDrawIndexed(commands, mesh.IndexCount, batch.InstanceCount, 0, 0, batch.FirstInstance);
 		}
 		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Opaque,
 			queue.OpaqueBatches);

@@ -486,7 +486,7 @@ namespace Raven
 		if (metrics)
 		{
 			metrics->VisibleMeshes = m_DrawQueue.Color.size();
-			metrics->DrawCalls = m_DrawQueue.Color.size() + m_DrawQueue.OpaqueBatches.size() +
+			metrics->DrawCalls = m_DrawQueue.LitBatches.size() + m_DrawQueue.OpaqueBatches.size() +
 				m_DrawQueue.TransparentBatches.size();
 		}
 		preparation.End();

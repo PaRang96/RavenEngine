@@ -199,7 +199,17 @@ Each step is a reviewed patch, and every sample keeps working.
      - The live Release session passed on its second run: fragment shader reloads in 236–294 ms, and the incompatible-shader rejection still works. The first run's no-layers pass timed out holding W to reach the goal after picking had succeeded; no rendering error was logged.
      - 4,000-mesh benchmark (NVIDIA, mailbox, 3 runs, back to back with step 4): 165.0 FPS steady (step 4 run: 161–174, unsteady); renderer preparation p95 0.64–0.71 ms (0.74–0.77), record/submit p95 0.89–0.92 ms (0.98–1.03), GPU p95 0.40–0.43 ms (0.48–0.61). An earlier step 5 run straight after a build was slower, so run-to-run noise is of the same order as the gain.
      - Not verified: Courtyard (2D) at runtime (on request), MoltenVK and Linux (M4).
-6. **R5:** instanced lit-mesh batching.
+6. *(Done 2026-11-22.)* **R5:** instanced lit-mesh batching.
+   - Visible lit-pipeline draws are grouped by (mesh data, texture). The design key also named the pipeline and the lit flag, but there is one lit pipeline per frame and the lit flag is per-instance data since R4, so neither needs to split a batch.
+   - A reused open-addressing table maps keys to batches in first-seen order. Batches then take consecutive instance ranges and each draw fills the next slot of its batch: O(n), no sort. A first version with `std::unordered_map` cost about 0.05–0.1 ms more at 4,000 draws.
+   - Recording binds the frame set and instance stream once, then rebinds the texture only when it changes and the vertex/index buffers only when the mesh changes; each batch is one `vkCmdDrawIndexed`.
+   - Verification on the minimum-spec laptop:
+     - Debug/Release builds and both tests pass; the Debug 3D smoke with core and synchronization validation reported nothing.
+     - Captures match step 5 exactly (Perspective, Collection and Benchmark-500 bit-identical; 1, 2 and 1 edge outliers in Assemblies, Gallery and Puzzle).
+     - 4,000-mesh benchmark: 7 draws instead of 4,004 (three lit batches plus four textured batches); the benchmark script now expects 7.
+     - Back to back with step 5 at equal frame rate (auto FIFO, NVIDIA, 165 FPS): renderer preparation p95 0.67 ms (0.61), record/submit p95 0.13 ms (0.84), GPU p95 0.44 ms (0.42), CPU preparation p95 1.05 ms (1.71).
+     - NVIDIA mailbox (2 runs each): 193–207 FPS (163); preparation p95 0.79–0.87 ms (0.64–0.66), record/submit p95 0.18 ms (0.87–0.90), GPU p95 0.44–0.52 ms (0.55). Preparation per frame reads higher at the higher frame rate; the FIFO pair isolates the code change.
+     - The live session was not rerun: batching changes neither reload nor resource lifetime, which step 7 exercises.
 7. **R6:** device-local vertex/index pools with 32-bit indices, staging uploads and range retirement.
 8. **R7** cleanups where not already absorbed.
 9. **Exit check:** budgets, image comparison, Debug validation, live reload session, the 10k scene, and Courtyard on your request.

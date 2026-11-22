@@ -260,7 +260,8 @@ def main():
                 check(f"[scale] Present {mode}" in log, "Wrong presentation mode selected")
                 check(f"Swapchain created: {display.width} x {display.height}," in log,
                       "The renderer did not use the selected display resolution")
-                check(row["draw_calls"] == 4004, "Unexpected benchmark draw count")
+                # Three lit batches (textured cube, painted cube, painted sphere) and four textured batches.
+                check(row["draw_calls"] == 7, "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
         result = {"label": args.label, "display": display.name, "hz": display.hz,
