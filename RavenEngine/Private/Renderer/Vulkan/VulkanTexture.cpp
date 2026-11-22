@@ -222,19 +222,25 @@ namespace Raven
 
 			const VulkanBuffer staging(device, physicalDevice, description.Pixels, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 			TextureUpload upload(m_Device, device.GetGraphicsQueue(), physicalDevice.QueueFamilies.Graphics.value());
-			VkImageMemoryBarrier barrier{};
-			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			const auto barrier2 = device.GetCommands().PipelineBarrier2;
+			VkImageMemoryBarrier2KHR barrier{};
+			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+			barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE_KHR;
+			barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
 			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.image = m_Image;
 			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			barrier.subresourceRange.levelCount = 1;
 			barrier.subresourceRange.layerCount = 1;
-			vkCmdPipelineBarrier(upload.Get(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0, 0, nullptr, 0, nullptr, 1, &barrier);
+			VkDependencyInfoKHR dependency{};
+			dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+			dependency.imageMemoryBarrierCount = 1;
+			dependency.pImageMemoryBarriers = &barrier;
+			barrier2(upload.Get(), &dependency);
 
 			VkBufferImageCopy copy{};
 			copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -242,12 +248,13 @@ namespace Raven
 			copy.imageExtent = imageInfo.extent;
 			vkCmdCopyBufferToImage(upload.Get(), staging.Get(), m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
+			barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
+			barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+			barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR;
 			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			vkCmdPipelineBarrier(upload.Get(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
-				0, 0, nullptr, 0, nullptr, 1, &barrier);
+			barrier2(upload.Get(), &dependency);
 			upload.SubmitAndWait();
 		}
 		catch (...)

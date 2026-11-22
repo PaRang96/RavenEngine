@@ -14,6 +14,7 @@ namespace Raven
 			VkExtent2D extent, VkFormat format);
 		~VulkanDepthAttachment();
 
+		VkImage GetImage() const { return m_Image; }
 		VkImageView GetView() const { return m_View; }
 
 		VulkanDepthAttachment(const VulkanDepthAttachment&) = delete;

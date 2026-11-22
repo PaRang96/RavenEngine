@@ -49,38 +49,33 @@ namespace Raven
 		}
 	}
 
-	struct VulkanClearPass::RenderPass
-	{
-		explicit RenderPass(VkDevice device) : Device(device) {}
-		~RenderPass()
-		{
-			if (Handle != VK_NULL_HANDLE)
-				vkDestroyRenderPass(Device, Handle, nullptr);
-		}
-		VkDevice Device;
-		VkRenderPass Handle = VK_NULL_HANDLE;
-	};
-
 	VulkanClearPass::LitPipelineFactory::LitPipelineFactory(const VulkanDevice& device,
-		std::shared_ptr<const RenderPass> pass, VkDescriptorSetLayout textureLayout)
-		: m_Device(device), m_Pass(std::move(pass)), m_TextureLayout(textureLayout)
+		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout)
+		: m_Device(device), m_ColorFormat(colorFormat), m_DepthFormat(depthFormat), m_TextureLayout(textureLayout)
 	{
 	}
 
 	std::shared_ptr<const VulkanColorPipeline> VulkanClearPass::LitPipelineFactory::Create(
 		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment) const
 	{
-		return std::make_shared<VulkanColorPipeline>(m_Device, m_Pass->Handle, m_TextureLayout, vertex, fragment);
+		return std::make_shared<VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
+			vertex, fragment);
 	}
 
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
-		return { m_DeviceOwner, m_RenderPass, m_TextureLayout };
+		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_TextureLayout };
+	}
+
+	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
+	{
+		return { m_LitPipeline, m_TexturedPipelines, m_ColorFormat, m_DepthFormat };
 	}
 
 	bool VulkanClearPass::IsCurrent(const LitPipelineFactory& factory) const noexcept
 	{
-		return factory.m_Pass == m_RenderPass;
+		// A pipeline built before a resize stays valid while the attachment formats match.
+		return factory.m_ColorFormat == m_ColorFormat && factory.m_DepthFormat == m_DepthFormat;
 	}
 
 	void VulkanClearPass::UseLitPipeline(std::shared_ptr<const VulkanColorPipeline> pipeline) noexcept
@@ -89,10 +84,11 @@ namespace Raven
 	}
 
 	VulkanClearPass::TexturedPipelines::TexturedPipelines(const VulkanDevice& device,
-		VkRenderPass renderPass, VkDescriptorSetLayout textureLayout,
+		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
 		const VulkanShaderModule& vertex, const VulkanShaderModule& fragment)
-		: Opaque(device, renderPass, textureLayout, vertex, fragment),
-		  Transparent(device, renderPass, textureLayout, vertex, fragment, TexturePipelineMode::StraightAlpha)
+		: Opaque(device, colorFormat, depthFormat, textureLayout, vertex, fragment),
+		  Transparent(device, colorFormat, depthFormat, textureLayout, vertex, fragment,
+			  TexturePipelineMode::StraightAlpha)
 	{
 	}
 
@@ -101,7 +97,7 @@ namespace Raven
 	{
 		const VulkanShaderModule vertexModule(m_DeviceOwner, vertex);
 		const VulkanShaderModule fragmentModule(m_DeviceOwner, fragment);
-		auto candidate = std::make_shared<TexturedPipelines>(m_DeviceOwner, m_RenderPass->Handle,
+		auto candidate = std::make_shared<TexturedPipelines>(m_DeviceOwner, m_ColorFormat, m_DepthFormat,
 			m_TextureLayout, vertexModule, fragmentModule);
 		if (canPublish && !canPublish())
 			return false;
@@ -113,7 +109,8 @@ namespace Raven
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
 		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
 		std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
-		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment)
+		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+		const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice),
 		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_Extent(swapchain.GetExtent())
 	{
@@ -123,81 +120,29 @@ namespace Raven
 
 		try
 		{
-			const VkFormat depthFormat = VulkanDepthAttachment::SelectFormat(physicalDevice);
-			VkAttachmentDescription color{};
-			color.format = swapchain.GetFormat();
-			color.samples = VK_SAMPLE_COUNT_1_BIT;
-			color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-			color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-			color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-			color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-			VkAttachmentDescription depth{};
-			depth.format = depthFormat;
-			depth.samples = VK_SAMPLE_COUNT_1_BIT;
-			depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-			depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-			depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-			const std::array<VkAttachmentDescription, 2> attachments{ color, depth };
-
-			const VkAttachmentReference colorReference{ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-			const VkAttachmentReference depthReference{ 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-			VkSubpassDescription subpass{};
-			subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-			subpass.colorAttachmentCount = 1;
-			subpass.pColorAttachments = &colorReference;
-			subpass.pDepthStencilAttachment = &depthReference;
-
-			VkSubpassDependency dependency{};
-			dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-			dependency.dstSubpass = 0;
-			dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-				VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-			dependency.dstStageMask = dependency.srcStageMask;
-			dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-				VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-			dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-				VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-			VkRenderPassCreateInfo passInfo{};
-			passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-			passInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-			passInfo.pAttachments = attachments.data();
-			passInfo.subpassCount = 1;
-			passInfo.pSubpasses = &subpass;
-			passInfo.dependencyCount = 1;
-			passInfo.pDependencies = &dependency;
-			m_RenderPass = std::make_shared<RenderPass>(m_Device);
-			CheckClearCreation(vkCreateRenderPass(m_Device, &passInfo, nullptr, &m_RenderPass->Handle),
-				m_RenderPass->Handle, "vkCreateRenderPass");
-			UseLitPipeline(GetLitPipelineFactory().Create(litVertex, litFragment));
-			ReplaceTexturedPipelines(texturedVertex, texturedFragment);
-
-			m_Framebuffers.resize(swapchain.GetImageViews().size(), VK_NULL_HANDLE);
-			m_DepthAttachments.reserve(m_Framebuffers.size());
-			for (std::size_t index = 0; index < m_Framebuffers.size(); ++index)
+			m_ColorFormat = swapchain.GetFormat();
+			m_DepthFormat = VulkanDepthAttachment::SelectFormat(physicalDevice);
+			if (reuse && reuse->Lit && reuse->Textured &&
+				reuse->ColorFormat == m_ColorFormat && reuse->DepthFormat == m_DepthFormat)
 			{
-				m_DepthAttachments.push_back(std::make_unique<VulkanDepthAttachment>(
-					device, physicalDevice, m_Extent, depthFormat));
-				const std::array<VkImageView, 2> views
-				{
-					swapchain.GetImageViews()[index], m_DepthAttachments.back()->GetView()
-				};
-				VkFramebufferCreateInfo framebufferInfo{};
-				framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-				framebufferInfo.renderPass = m_RenderPass->Handle;
-				framebufferInfo.attachmentCount = static_cast<std::uint32_t>(views.size());
-				framebufferInfo.pAttachments = views.data();
-				framebufferInfo.width = m_Extent.width;
-				framebufferInfo.height = m_Extent.height;
-				framebufferInfo.layers = 1;
-				CheckClearCreation(vkCreateFramebuffer(m_Device, &framebufferInfo, nullptr,
-					&m_Framebuffers[index]), m_Framebuffers[index], "vkCreateFramebuffer");
+				// Resizing keeps the attachment formats, so the existing pipelines remain valid.
+				m_LitPipeline = reuse->Lit;
+				m_TexturedPipelines = reuse->Textured;
 			}
+			else
+			{
+				UseLitPipeline(GetLitPipelineFactory().Create(litVertex, litFragment));
+				ReplaceTexturedPipelines(texturedVertex, texturedFragment);
+			}
+
+			m_ColorImages = swapchain.GetImages();
+			m_ColorViews = swapchain.GetImageViews();
+			if (m_ColorImages.size() != m_ColorViews.size())
+				throw std::runtime_error("Swapchain images and views do not match");
+			m_DepthAttachments.reserve(m_ColorImages.size());
+			for (std::size_t index = 0; index < m_ColorImages.size(); ++index)
+				m_DepthAttachments.push_back(std::make_unique<VulkanDepthAttachment>(
+					device, physicalDevice, m_Extent, m_DepthFormat));
 
 			VkCommandPoolCreateInfo poolInfo{};
 			poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -231,7 +176,7 @@ namespace Raven
 					frame.InFlight, "vkCreateFence");
 			}
 
-			m_RenderFinished.resize(m_Framebuffers.size(), VK_NULL_HANDLE);
+			m_RenderFinished.resize(m_ColorImages.size(), VK_NULL_HANDLE);
 			for (auto& semaphore : m_RenderFinished)
 				CheckClearCreation(vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &semaphore),
 					semaphore, "vkCreateSemaphore (present)");
@@ -273,11 +218,7 @@ namespace Raven
 		}
 		m_TexturedPipelines.reset();
 		m_LitPipeline.reset();
-		for (const auto framebuffer : m_Framebuffers)
-			if (framebuffer != VK_NULL_HANDLE)
-				vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
 		m_DepthAttachments.clear();
-		m_RenderPass.reset();
 	}
 
 	void VulkanClearPass::UploadInstances(std::unique_ptr<VulkanBuffer>& buffer,
@@ -362,17 +303,67 @@ namespace Raven
 			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_Timestamps, firstQuery);
 		}
 
-		std::array<VkClearValue, 2> clear{};
-		clear[0].color = { { 0.03f, 0.08f, 0.18f, 1.0f } };
-		clear[1].depthStencil = { 1.0f, 0 };
-		VkRenderPassBeginInfo passInfo{};
-		passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		passInfo.renderPass = m_RenderPass->Handle;
-		passInfo.framebuffer = m_Framebuffers[imageIndex];
-		passInfo.renderArea.extent = m_Extent;
-		passInfo.clearValueCount = static_cast<std::uint32_t>(clear.size());
-		passInfo.pClearValues = clear.data();
-		vkCmdBeginRenderPass(commands, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+		const auto& vk = m_DeviceOwner.GetCommands();
+		const VkImageSubresourceRange colorRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		const VkImageSubresourceRange depthRange{ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+		const auto transition = [&vk, commands](std::span<const VkImageMemoryBarrier2KHR> barriers)
+		{
+			VkDependencyInfoKHR dependency{};
+			dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+			dependency.imageMemoryBarrierCount = static_cast<std::uint32_t>(barriers.size());
+			dependency.pImageMemoryBarriers = barriers.data();
+			vk.PipelineBarrier2(commands, &dependency);
+		};
+
+		// The acquire semaphore is waited at color output, so the color transition starts
+		// there. Depth was last written by an earlier frame's fragment tests on this image.
+		std::array<VkImageMemoryBarrier2KHR, 2> begin{};
+		for (auto& barrier : begin)
+		{
+			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		}
+		begin[0].srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+		begin[0].dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+		begin[0].dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+		begin[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		begin[0].image = m_ColorImages[imageIndex];
+		begin[0].subresourceRange = colorRange;
+		begin[1].srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR |
+			VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT_KHR;
+		begin[1].srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR;
+		begin[1].dstStageMask = begin[1].srcStageMask;
+		begin[1].dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT_KHR |
+			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR;
+		begin[1].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		begin[1].image = m_DepthAttachments[imageIndex]->GetImage();
+		begin[1].subresourceRange = depthRange;
+		transition(begin);
+
+		VkRenderingAttachmentInfoKHR color{};
+		color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		color.imageView = m_ColorViews[imageIndex];
+		color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		color.clearValue.color = { { 0.03f, 0.08f, 0.18f, 1.0f } };
+		VkRenderingAttachmentInfoKHR depth{};
+		depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		depth.imageView = m_DepthAttachments[imageIndex]->GetView();
+		depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depth.clearValue.depthStencil = { 1.0f, 0 };
+		VkRenderingInfoKHR rendering{};
+		rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+		rendering.renderArea.extent = m_Extent;
+		rendering.layerCount = 1;
+		rendering.colorAttachmentCount = 1;
+		rendering.pColorAttachments = &color;
+		rendering.pDepthAttachment = &depth;
+		vk.BeginRendering(commands, &rendering);
 		const VkViewport viewport{ 0.0f, 0.0f, static_cast<float>(m_Extent.width),
 			static_cast<float>(m_Extent.height), 0.0f, 1.0f };
 		const VkRect2D scissor{ { 0, 0 }, m_Extent };
@@ -393,7 +384,22 @@ namespace Raven
 		}
 		RecordTexturedBatches(commands, instanceBuffer, m_TexturedPipelines->Opaque, queue.OpaqueBatches);
 		RecordTexturedBatches(commands, instanceBuffer, m_TexturedPipelines->Transparent, queue.TransparentBatches);
-		vkCmdEndRenderPass(commands);
+		vk.EndRendering(commands);
+
+		// Presentation waits on the render-finished semaphore, which the submission signals
+		// after all commands, so the transition needs no later stage.
+		VkImageMemoryBarrier2KHR present{};
+		present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+		present.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+		present.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+		present.dstStageMask = VK_PIPELINE_STAGE_2_NONE_KHR;
+		present.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		present.image = m_ColorImages[imageIndex];
+		present.subresourceRange = colorRange;
+		transition(std::span(&present, 1));
 		if (timestamps)
 			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_Timestamps, firstQuery + 1);
 		CheckClearResult(vkEndCommandBuffer(commands), "vkEndCommandBuffer");
@@ -447,7 +453,7 @@ namespace Raven
 			return false;
 		if (acquire != VK_SUBOPTIMAL_KHR)
 			CheckClearResult(acquire, "vkAcquireNextImageKHR");
-		if (imageIndex >= m_Framebuffers.size())
+		if (imageIndex >= m_ColorImages.size())
 			throw std::runtime_error("Acquired swapchain image index is out of range");
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);

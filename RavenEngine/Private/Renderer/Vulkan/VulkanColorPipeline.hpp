@@ -10,7 +10,7 @@ namespace Raven
 	class VulkanColorPipeline
 	{
 	public:
-		VulkanColorPipeline(const VulkanDevice& device, VkRenderPass renderPass,
+		VulkanColorPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
 			VkDescriptorSetLayout textureLayout, std::span<const std::uint32_t> vertexWords,
 			std::span<const std::uint32_t> fragmentWords);
 		~VulkanColorPipeline();

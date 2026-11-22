@@ -25,9 +25,10 @@ namespace Raven
 
 	class VulkanClearPass
 	{
-		struct RenderPass;
-
 	public:
+		struct TexturedPipelines;
+
+		// Creates lit pipelines for given attachment formats; usable on a worker thread.
 		class LitPipelineFactory
 		{
 		public:
@@ -36,19 +37,39 @@ namespace Raven
 
 		private:
 			friend class VulkanClearPass;
-			LitPipelineFactory(const VulkanDevice& device, std::shared_ptr<const RenderPass> pass,
+			LitPipelineFactory(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
 				VkDescriptorSetLayout textureLayout);
 			const VulkanDevice& m_Device;
-			std::shared_ptr<const RenderPass> m_Pass;
+			VkFormat m_ColorFormat;
+			VkFormat m_DepthFormat;
 			VkDescriptorSetLayout m_TextureLayout;
+		};
+
+		// Pipelines depend only on attachment formats, so a recreated pass can keep them.
+		struct Pipelines
+		{
+			std::shared_ptr<const VulkanColorPipeline> Lit;
+			std::shared_ptr<const TexturedPipelines> Textured;
+			VkFormat ColorFormat = VK_FORMAT_UNDEFINED;
+			VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
+		};
+
+		struct TexturedPipelines
+		{
+			TexturedPipelines(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
+				VkDescriptorSetLayout textureLayout, const VulkanShaderModule& vertex, const VulkanShaderModule& fragment);
+			VulkanTexturePipeline Opaque;
+			VulkanTexturePipeline Transparent;
 		};
 
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
 			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
 			std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
-			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment);
+			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+			const Pipelines* reuse = nullptr);
 		LitPipelineFactory GetLitPipelineFactory() const;
+		Pipelines GetPipelines() const;
 		bool IsCurrent(const LitPipelineFactory& factory) const noexcept;
 		void UseLitPipeline(std::shared_ptr<const VulkanColorPipeline> pipeline) noexcept;
 		bool ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
@@ -65,14 +86,6 @@ namespace Raven
 		VulkanClearPass& operator=(const VulkanClearPass&) = delete;
 
 	private:
-		struct TexturedPipelines
-		{
-			TexturedPipelines(const VulkanDevice& device, VkRenderPass renderPass, VkDescriptorSetLayout textureLayout,
-				const VulkanShaderModule& vertex, const VulkanShaderModule& fragment);
-			VulkanTexturePipeline Opaque;
-			VulkanTexturePipeline Transparent;
-		};
-
 		struct Frame
 		{
 			VkCommandBuffer Commands = VK_NULL_HANDLE;
@@ -99,14 +112,17 @@ namespace Raven
 		const VulkanDevice& m_DeviceOwner;
 		const VulkanPhysicalDevice& m_PhysicalDevice;
 		VkDevice m_Device = VK_NULL_HANDLE;
-		std::shared_ptr<RenderPass> m_RenderPass;
+		VkFormat m_ColorFormat = VK_FORMAT_UNDEFINED;
+		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
 		std::shared_ptr<const VulkanColorPipeline> m_LitPipeline;
 		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
 		std::shared_ptr<const TexturedPipelines> m_TexturedPipelines;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
 		VkExtent2D m_Extent{};
-		std::vector<VkFramebuffer> m_Framebuffers;
-		// A separate depth image for each framebuffer avoids overlap between in-flight frames.
+		// Swapchain images rendered to with dynamic rendering; the swapchain outlives the pass.
+		std::vector<VkImage> m_ColorImages;
+		std::vector<VkImageView> m_ColorViews;
+		// A separate depth image for each swapchain image avoids overlap between in-flight frames.
 		std::vector<std::unique_ptr<VulkanDepthAttachment>> m_DepthAttachments;
 		std::array<Frame, 2> m_Frames{};
 		VkQueryPool m_Timestamps = VK_NULL_HANDLE;

@@ -172,6 +172,8 @@ namespace Raven
 		};
 		std::optional<FragmentShaderWatch::Candidate> m_LitQueued;
 		std::optional<LitPipelineBuild> m_LitBuild;
+		// Pipelines kept across swapchain recreation while attachment formats match (R2).
+		std::optional<VulkanClearPass::Pipelines> m_RetainedPipelines;
 	};
 
 	VulkanContext::Impl::Impl(const Window& window)
@@ -235,7 +237,9 @@ namespace Raven
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
 				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
-				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment);
+				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment,
+				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
+			m_RetainedPipelines.reset();
 		}
 		catch (...)
 		{
@@ -335,6 +339,8 @@ namespace Raven
 		if (result != VK_SUCCESS)
 			throw std::runtime_error("vkDeviceWaitIdle failed during swapchain recreation: " +
 				std::to_string(result));
+		if (m_ClearPass)
+			m_RetainedPipelines = m_ClearPass->GetPipelines();
 		m_ClearPass.reset();
 		m_Swapchain.reset();
 	}

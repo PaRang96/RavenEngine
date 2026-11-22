@@ -11,13 +11,14 @@
 namespace Raven
 {
 	VulkanTexturePipeline::VulkanTexturePipeline(const VulkanDevice& device,
-		VkRenderPass renderPass, VkDescriptorSetLayout textureLayout,
+		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
 		const VulkanShaderModule& vertex, const VulkanShaderModule& fragment,
 		TexturePipelineMode mode)
 		: m_Device(device.Get())
 	{
-		if (m_Device == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE || textureLayout == VK_NULL_HANDLE)
-			throw std::runtime_error("A device, render pass and texture layout are required for the texture pipeline");
+		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED ||
+			textureLayout == VK_NULL_HANDLE)
+			throw std::runtime_error("A device, attachment formats and texture layout are required for the texture pipeline");
 
 		try
 		{
@@ -119,8 +120,16 @@ namespace Raven
 				throw std::runtime_error("vkCreatePipelineLayout failed: " + std::to_string(result));
 			m_Layout = layout;
 
+			// Dynamic rendering: the pipeline names its attachment formats (R2).
+			VkPipelineRenderingCreateInfoKHR rendering{};
+			rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+			rendering.colorAttachmentCount = 1;
+			rendering.pColorAttachmentFormats = &colorFormat;
+			rendering.depthAttachmentFormat = depthFormat;
+
 			VkGraphicsPipelineCreateInfo info{};
 			info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+			info.pNext = &rendering;
 			info.stageCount = static_cast<std::uint32_t>(stages.size());
 			info.pStages = stages.data();
 			info.pVertexInputState = &vertexInput;
@@ -132,7 +141,7 @@ namespace Raven
 			info.pColorBlendState = &blend;
 			info.pDynamicState = &dynamic;
 			info.layout = m_Layout;
-			info.renderPass = renderPass;
+			info.renderPass = VK_NULL_HANDLE;
 			info.subpass = 0;
 			info.basePipelineIndex = -1;
 			// Pipeline creation can return a valid output even when the call fails.

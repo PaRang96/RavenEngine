@@ -14,7 +14,7 @@ namespace Raven
 	class VulkanTexturePipeline
 	{
 	public:
-		VulkanTexturePipeline(const VulkanDevice& device, VkRenderPass renderPass,
+		VulkanTexturePipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
 			VkDescriptorSetLayout textureLayout, const VulkanShaderModule& vertex, const VulkanShaderModule& fragment,
 			TexturePipelineMode mode = TexturePipelineMode::Opaque);
 		~VulkanTexturePipeline();

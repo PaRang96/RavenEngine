@@ -162,7 +162,17 @@ Each step is a reviewed patch, and every sample keeps working.
      - The SDK profiles layer produced the two rejections: a simulated Vulkan 1.1 device ("supports only Vulkan 1.1") and hidden extensions ("lacks VK_KHR_dynamic_rendering, VK_KHR_synchronization2").
      - The live Release session passed: fragment shader reloads in 236–282 ms, syntax and interface rejections in 220 ms, and PNG, FBX, scene and game reloads as before.
      - MoltenVK and Linux are not verified here (M4).
-3. **R2:** dynamic rendering and synchronization2. Remove the render pass and framebuffers, and add explicit layout transitions.
+3. *(Done 2026-11-22.)* **R2:** dynamic rendering and synchronization2. Remove the render pass and framebuffers, and add explicit layout transitions.
+   - The device loads `vkCmdBeginRenderingKHR`, `vkCmdEndRenderingKHR` and `vkCmdPipelineBarrier2KHR`; a missing command fails device creation.
+   - Lit and textured pipelines are created from the color and depth formats. Swapchain recreation keeps them while those formats match, and a background lit build started before a resize is still published.
+   - Each frame transitions the swapchain image (after the acquire wait at color output) and its depth image, renders, and transitions the image to present. Texture uploads use synchronization2 barriers; sampling waits at the fragment shader, the only stage that binds textures.
+   - Verification on the minimum-spec laptop:
+     - Debug/Release builds and both tests pass.
+     - The Debug 3D smoke with core and synchronization validation reported nothing.
+     - All six captures are bit-identical to the references.
+     - The live Release session passed with six swapchain recreations and no validation messages: fragment shader reloads in 221–284 ms (including across resizes), rejections in 260 ms, and PNG, FBX, scene and game reloads as before.
+     - A Debug minimize/restore/portrait-resize probe with validation recreated the swapchain four times, reported nothing and closed normally.
+     - Not verified: closing while minimized (retained pipelines are destroyed before the device by declaration order), MoltenVK and Linux (M4).
 4. **R3:** timeline-semaphore pacing and the retirement queue, replacing the per-slot fences and keep-alive lists.
 5. **R4:** persistently mapped per-frame rings, the frame uniform, and 112-byte lit instances with the clip transform in the vertex shader.
 6. **R5:** instanced lit-mesh batching.

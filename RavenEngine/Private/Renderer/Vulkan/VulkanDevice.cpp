@@ -73,6 +73,22 @@ namespace Raven
 
 		vkGetDeviceQueue(m_Device, graphicsFamily, 0, &m_GraphicsQueue);
 		vkGetDeviceQueue(m_Device, presentFamily, 0, &m_PresentQueue);
+
+		// The instance targets Vulkan 1.2, so these come from their KHR extensions.
+		const auto load = [this](const char* name)
+		{
+			const auto function = vkGetDeviceProcAddr(m_Device, name);
+			if (!function)
+			{
+				vkDestroyDevice(m_Device, nullptr);
+				m_Device = VK_NULL_HANDLE;
+				throw std::runtime_error(std::string("Vulkan device does not provide ") + name);
+			}
+			return function;
+		};
+		m_Commands.BeginRendering = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(load("vkCmdBeginRenderingKHR"));
+		m_Commands.EndRendering = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(load("vkCmdEndRenderingKHR"));
+		m_Commands.PipelineBarrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2KHR>(load("vkCmdPipelineBarrier2KHR"));
 	}
 
 	VulkanDevice::~VulkanDevice()
