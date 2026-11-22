@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <new>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -80,6 +81,31 @@ namespace Raven::ECS
 
 	template<typename T>
 	concept ViewComponent = ComponentType<std::remove_const_t<T>>;
+
+	// Lifecycle journal (docs/GpuDrivenDesign.md, G1). A subscriber to one component type learns
+	// which entities gained or lost it. Entries live in memory only and are dropped once every
+	// subscriber has read them; value changes stay on change ticks.
+	enum class LifecycleEvent : std::uint8_t
+	{
+		Added,
+		Removed
+	};
+
+	struct LifecycleEntry
+	{
+		Entity Target;
+		LifecycleEvent Event = LifecycleEvent::Added;
+	};
+
+	struct LifecycleBatch
+	{
+		// Valid until the next structural change or the next ReadLifecycle call on the registry.
+		// Entries describe what happened in order; check current state before acting on one.
+		std::span<const LifecycleEntry> Entries;
+		// True on the first read and after the backlog overflowed: rescan the component's
+		// entities once, then follow the entries.
+		bool Resync = false;
+	};
 
 	template<typename... T>
 	class View;
@@ -167,6 +193,22 @@ namespace Raven::ECS
 			return GetPool(ComponentTraits<T>::Info).Count;
 		}
 		RAVEN_API bool IsIterating() const noexcept;
+
+		// Lifecycle journal. Only subscribed types record. A subscriber that leaves more than
+		// maxBacklog entries unread loses them and is told to resync. Returns 0 when the type's
+		// layout conflicts with its pool.
+		static constexpr std::size_t DefaultLifecycleBacklog = std::size_t{ 1 } << 20;
+		template<ComponentType T>
+		std::uint32_t SubscribeLifecycle(std::size_t maxBacklog = DefaultLifecycleBacklog)
+		{
+			return SubscribeLifecycle(ComponentTraits<T>::Info, maxBacklog);
+		}
+		RAVEN_API std::uint32_t SubscribeLifecycle(const ComponentInfo& info,
+			std::size_t maxBacklog = DefaultLifecycleBacklog);
+		RAVEN_API void UnsubscribeLifecycle(std::uint32_t subscription) noexcept;
+		// Returns the entries recorded since this subscriber's last read. Unknown subscriptions
+		// return an empty batch.
+		RAVEN_API LifecycleBatch ReadLifecycle(std::uint32_t subscription) noexcept;
 
 		// Change ticks (docs/ECSDesign.md, D4/D7). Add, Write, mutable TryGet and mutable view
 		// access stamp the current tick on the element; reads do not. A consumer remembers

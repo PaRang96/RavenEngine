@@ -334,6 +334,15 @@ Each step is one or a few reviewable snippets, and all samples keep working afte
 - The host may keep module function pointers only for the loaded generation and clears them before unload.
 - Structural changes inside systems go through `Commands`.
 - `WorldTransformComponent` is host-managed. Gameplay world queries compose live transforms.
+- **Lifecycle journal (M3, 2026-11-23, owner decision Q2 in [GpuDrivenDesign.md](GpuDrivenDesign.md#g1--a-host-owned-render-world-q1-q2)):**
+  - API: `SubscribeLifecycle<T>(maxBacklog)`, `ReadLifecycle(id)` and `UnsubscribeLifecycle(id)`.
+  - Only subscribed types record. `Add` writes `Added(entity)`; `Remove` and `Destroy` write `Removed(entity)`.
+  - A batch is valid until the next structural change or the next read.
+  - Entries are dropped once every subscriber has read them.
+  - The first read, a backlog overflow, or a failed append returns `Resync`, and the subscriber then rescans once.
+  - It lives in memory only and holds no module pointers, so it survives DLL replacement with the Registry.
+  - Copying removed values is not built until a consumer needs it.
+  - `RegistryTests` covers ordering, destroy, multiple subscribers, overflow and unsubscribe.
 
 ## Out of scope for M1
 

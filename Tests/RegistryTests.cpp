@@ -307,6 +307,53 @@ namespace
 		empty.View<Health>().Each([&](Entity, Health&) { ++emptyVisits; });
 		RAVEN_CHECK(emptyVisits == 0 && empty.Single<Health>() == nullptr && empty.Count<Health>() == 0);
 	}
+	// The lifecycle journal (docs/GpuDrivenDesign.md, G1) is a new Registry contract M3 depends on.
+	void LifecycleJournal()
+	{
+		using Raven::ECS::LifecycleEvent;
+		Registry registry;
+		const auto before = registry.Create();
+		RAVEN_CHECK(registry.Add(before, Health{}));
+
+		const auto first = registry.SubscribeLifecycle<Health>();
+		const auto second = registry.SubscribeLifecycle<Health>(2);
+		RAVEN_CHECK(first != 0 && second != 0 && first != second);
+		auto batch = registry.ReadLifecycle(first);
+		RAVEN_CHECK(batch.Resync && batch.Entries.empty());
+		RAVEN_CHECK(registry.ReadLifecycle(second).Resync);
+
+		const auto added = registry.Create();
+		RAVEN_CHECK(registry.Add(added, Health{}) && registry.Add(added, Marker{}));
+		RAVEN_CHECK(registry.Remove<Health>(before));
+		RAVEN_CHECK(registry.Destroy(added));
+		batch = registry.ReadLifecycle(first);
+		RAVEN_CHECK(!batch.Resync && batch.Entries.size() == 3);
+		if (batch.Entries.size() == 3)
+		{
+			RAVEN_CHECK(batch.Entries[0].Target == added && batch.Entries[0].Event == LifecycleEvent::Added);
+			RAVEN_CHECK(batch.Entries[1].Target == before && batch.Entries[1].Event == LifecycleEvent::Removed);
+			RAVEN_CHECK(batch.Entries[2].Target == added && batch.Entries[2].Event == LifecycleEvent::Removed);
+		}
+		RAVEN_CHECK(registry.ReadLifecycle(first).Entries.empty());
+
+		// The second subscriber allows two unread entries, so the third forces a resync.
+		batch = registry.ReadLifecycle(second);
+		RAVEN_CHECK(batch.Resync && batch.Entries.empty());
+		const auto later = registry.Create();
+		RAVEN_CHECK(registry.Add(later, Health{}));
+		batch = registry.ReadLifecycle(second);
+		RAVEN_CHECK(!batch.Resync && batch.Entries.size() == 1 && batch.Entries.front().Target == later);
+		RAVEN_CHECK(registry.ReadLifecycle(first).Entries.size() == 1);
+
+		// Unsubscribed types record nothing, and unknown subscriptions read empty.
+		registry.UnsubscribeLifecycle(first);
+		registry.UnsubscribeLifecycle(second);
+		RAVEN_CHECK(registry.Remove<Health>(later));
+		RAVEN_CHECK(registry.ReadLifecycle(first).Entries.empty() && !registry.ReadLifecycle(first).Resync);
+		const auto marker = registry.SubscribeLifecycle<Marker>();
+		RAVEN_CHECK(registry.Add(later, Marker{}));
+		RAVEN_CHECK(registry.ReadLifecycle(marker).Entries.size() == 1);
+	}
 }
 
 int main()
@@ -320,5 +367,6 @@ int main()
 		DestroyErasesComponents();
 		ManyEntitiesKeepTheirValues();
 		Views();
+		LifecycleJournal();
 	});
 }

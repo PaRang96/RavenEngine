@@ -119,6 +119,31 @@ namespace Raven::ECS
 		// Number of views currently iterating; structural changes wait until it is zero.
 		std::uint32_t Iterating = 0;
 
+		// One journal per subscribed component type (docs/GpuDrivenDesign.md, G1). Base is the
+		// sequence number of Entries[0]; subscriber cursors are sequence numbers.
+		struct LifecycleJournal
+		{
+			std::string Name;
+			std::size_t Size = 0;
+			std::uint64_t LayoutHash = 0;
+			std::vector<LifecycleEntry> Entries;
+			std::uint64_t Base = 0;
+			std::vector<std::uint32_t> Subscribers;
+
+			std::uint64_t End() const noexcept { return Base + Entries.size(); }
+		};
+		struct LifecycleSubscriber
+		{
+			std::uint64_t ComponentId = 0;
+			std::uint64_t Cursor = 0;
+			std::size_t MaxBacklog = 0;
+			bool Resync = true;
+		};
+		// Node-based maps keep journal addresses stable for the pools that point at them.
+		std::unordered_map<std::uint64_t, LifecycleJournal> Journals;
+		std::unordered_map<std::uint32_t, LifecycleSubscriber> Subscribers;
+		std::uint32_t LastSubscription = 0;
+
 		// One sparse set per component type. A paged sparse array maps an entity index to a
 		// dense position; dense arrays hold the owning entities and the values in the same
 		// order. Removal moves the last element into the gap, so dense order is unstable.
@@ -135,6 +160,8 @@ namespace Raven::ECS
 			std::vector<Entity> Entities;
 			std::vector<std::uint32_t> Ticks;
 			ValueBuffer Values;
+			// Set while the type has lifecycle subscribers.
+			LifecycleJournal* Journal = nullptr;
 
 			ComponentPool() = default;
 			ComponentPool(const ComponentPool&) = delete;
@@ -226,6 +253,52 @@ namespace Raven::ECS
 		{
 			return const_cast<ComponentPool*>(std::as_const(*this).FindPool(info));
 		}
+
+		// Drops entries every subscriber has read.
+		void Trim(LifecycleJournal& journal) noexcept
+		{
+			auto oldest = journal.End();
+			for (const auto id : journal.Subscribers)
+				oldest = std::min(oldest, Subscribers.at(id).Cursor);
+			const auto read = static_cast<std::size_t>(oldest - journal.Base);
+			if (read == 0)
+				return;
+			journal.Entries.erase(journal.Entries.begin(), journal.Entries.begin() + static_cast<std::ptrdiff_t>(read));
+			journal.Base = oldest;
+		}
+
+		// Structural changes are noexcept, so a failed append or an overflow turns into a resync.
+		void Record(LifecycleJournal& journal, Entity entity, LifecycleEvent event) noexcept
+		{
+			bool overflowed = false;
+			try
+			{
+				journal.Entries.push_back({ entity, event });
+			}
+			catch (...)
+			{
+				for (const auto id : journal.Subscribers)
+					Subscribers.at(id).MaxBacklog = 0;
+			}
+			for (const auto id : journal.Subscribers)
+			{
+				auto& subscriber = Subscribers.at(id);
+				if (journal.End() - subscriber.Cursor > subscriber.MaxBacklog)
+				{
+					subscriber.Cursor = journal.End();
+					subscriber.Resync = true;
+					overflowed = true;
+				}
+			}
+			if (overflowed)
+				Trim(journal);
+		}
+
+		void Record(ComponentPool& pool, Entity entity, LifecycleEvent event) noexcept
+		{
+			if (pool.Journal)
+				Record(*pool.Journal, entity, event);
+		}
     };
 
     Registry::Registry()
@@ -298,7 +371,8 @@ namespace Raven::ECS
         auto &slot = impl.Slots[entity.m_Index];
 
 		for (auto& [id, pool] : impl.Components)
-			pool.Erase(entity.m_Index);
+			if (pool.Erase(entity.m_Index))
+				impl.Record(pool, entity, LifecycleEvent::Removed);
 
         slot.Alive = false;
 		impl.Owners[entity.m_Index] = 0;
@@ -350,6 +424,9 @@ namespace Raven::ECS
 			pool.Size = info.Size;
 			pool.LayoutHash = info.LayoutHash;
 			pool.Values.Configure(info.Size, info.Alignment);
+			if (const auto journal = m_Impl->Journals.find(info.Id); journal != m_Impl->Journals.end() &&
+				journal->second.LayoutHash == info.LayoutHash && journal->second.Size == info.Size)
+				pool.Journal = &journal->second;
 		}
 		else if (pool.Name != info.Name || pool.Size != info.Size || pool.LayoutHash != info.LayoutHash)
 		{
@@ -358,6 +435,7 @@ namespace Raven::ECS
 		if (pool.Find(entity.m_Index) != Detail::PoolView::NoIndex)
 			return false;
 		pool.Insert(entity, value, m_Impl->ChangeTick);
+		m_Impl->Record(pool, entity, LifecycleEvent::Added);
 		return true;
 	}
 
@@ -384,7 +462,97 @@ namespace Raven::ECS
 		if (!IsAlive(entity) || RejectWhileIterating(m_Impl->Iterating, "Remove"))
 			return false;
 		auto* pool = m_Impl->FindPool(info);
-		return pool && pool->Erase(entity.m_Index);
+		if (!pool || !pool->Erase(entity.m_Index))
+			return false;
+		m_Impl->Record(*pool, entity, LifecycleEvent::Removed);
+		return true;
+	}
+
+	std::uint32_t Registry::SubscribeLifecycle(const ComponentInfo& info, std::size_t maxBacklog)
+	{
+		auto& impl = *m_Impl;
+		if (info.Name.empty() || info.Size == 0)
+			return 0;
+		const auto existing = impl.Components.find(info.Id);
+		if (existing != impl.Components.end() && (existing->second.Name != info.Name ||
+			existing->second.Size != info.Size || existing->second.LayoutHash != info.LayoutHash))
+			return 0;
+		if (impl.LastSubscription == std::numeric_limits<std::uint32_t>::max())
+			throw std::overflow_error("Lifecycle subscriptions exhausted");
+		auto [entry, created] = impl.Journals.try_emplace(info.Id);
+		auto& journal = entry->second;
+		if (created)
+		{
+			journal.Name = info.Name;
+			journal.Size = info.Size;
+			journal.LayoutHash = info.LayoutHash;
+		}
+		else if (journal.Name != info.Name || journal.Size != info.Size || journal.LayoutHash != info.LayoutHash)
+		{
+			return 0;
+		}
+		const auto id = impl.LastSubscription + 1;
+		try
+		{
+			journal.Subscribers.push_back(id);
+			try
+			{
+				impl.Subscribers.emplace(id, Impl::LifecycleSubscriber{ info.Id, journal.End(), maxBacklog, true });
+			}
+			catch (...)
+			{
+				journal.Subscribers.pop_back();
+				throw;
+			}
+		}
+		catch (...)
+		{
+			if (journal.Subscribers.empty())
+				impl.Journals.erase(entry);
+			throw;
+		}
+		impl.LastSubscription = id;
+		if (existing != impl.Components.end())
+			existing->second.Journal = &journal;
+		return id;
+	}
+
+	void Registry::UnsubscribeLifecycle(std::uint32_t subscription) noexcept
+	{
+		auto& impl = *m_Impl;
+		const auto found = impl.Subscribers.find(subscription);
+		if (found == impl.Subscribers.end())
+			return;
+		const auto componentId = found->second.ComponentId;
+		impl.Subscribers.erase(found);
+		auto& journal = impl.Journals.at(componentId);
+		std::erase(journal.Subscribers, subscription);
+		if (!journal.Subscribers.empty())
+		{
+			impl.Trim(journal);
+			return;
+		}
+		if (const auto pool = impl.Components.find(componentId); pool != impl.Components.end())
+			pool->second.Journal = nullptr;
+		impl.Journals.erase(componentId);
+	}
+
+	LifecycleBatch Registry::ReadLifecycle(std::uint32_t subscription) noexcept
+	{
+		auto& impl = *m_Impl;
+		const auto found = impl.Subscribers.find(subscription);
+		if (found == impl.Subscribers.end())
+			return {};
+		auto& subscriber = found->second;
+		auto& journal = impl.Journals.at(subscriber.ComponentId);
+		// Entries handed out by earlier reads are dropped here, which is why a batch is valid only
+		// until the next read.
+		impl.Trim(journal);
+		const auto first = static_cast<std::size_t>(subscriber.Cursor - journal.Base);
+		const LifecycleBatch batch{ std::span<const LifecycleEntry>(journal.Entries).subspan(first), subscriber.Resync };
+		subscriber.Cursor = journal.End();
+		subscriber.Resync = false;
+		return batch;
 	}
 
 	const void* Registry::TryGetComponent(Entity entity, const ComponentInfo& info) const noexcept
