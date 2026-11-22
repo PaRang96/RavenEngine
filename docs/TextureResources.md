@@ -59,7 +59,7 @@ std::array<Raven::VulkanTexturedDraw, 1> draws
 	Raven::VulkanTexturedDraw{mesh, texture}
 };
 draws[0].Tint = {0.8f, 1.0f, 0.8f, 1.0f};
-renderer.DrawFrame(camera, std::span<const Raven::VulkanDraw>{}, draws);
+renderer.DrawFrame(camera, draws);
 ```
 
 Creation copies the CPU geometry. Meshes and textures must belong to the submitting context; foreign resources are rejected before frame submission. Returned references remain valid until context shutdown. The existing `ColorVertex`, `VulkanDraw`, `CreateMesh`, and two-argument `DrawFrame` are unchanged. The new mesh factory and three-argument overload add two DLL exports while retaining all 18 previous exports, for 20 total.

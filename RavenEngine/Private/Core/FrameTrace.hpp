@@ -30,6 +30,8 @@ namespace Raven
 		std::int64_t Presented = 0;
 		std::int64_t GpuFrame = 0; // Timestamp results are delivered by a later frame.
 		double Gpu = 0;
+		// GPU time of the scene upload and culling passes, from the same frame as Gpu.
+		double GpuCull = 0;
 		std::size_t VisibleMeshes = 0;
 		std::size_t DrawCalls = 0;
 		std::uint64_t GameGeneration = 0;

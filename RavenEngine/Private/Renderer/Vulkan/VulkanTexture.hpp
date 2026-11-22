@@ -21,6 +21,9 @@ namespace Raven
 		void SetDescriptorSet(VkDescriptorSet binding);
 		// Same device, with all earlier GPU use completed. Each texture keeps its binding.
 		void SwapImage(VulkanTexture& other) noexcept;
+		// Element of the bindless array; kept by SwapImage like the descriptor set.
+		std::uint32_t GetBindlessIndex() const noexcept { return m_BindlessIndex; }
+		void SetBindlessIndex(std::uint32_t element) noexcept { m_BindlessIndex = element; }
 		VkImageView GetView() const { return m_View; }
 		VkSampler GetSampler() const { return m_Sampler; }
 		VkFormat GetFormat() const { return m_Format; }
@@ -39,6 +42,7 @@ namespace Raven
 		VkImageView m_View = VK_NULL_HANDLE;
 		VkSampler m_Sampler = VK_NULL_HANDLE;
 		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
+		std::uint32_t m_BindlessIndex = 0;
 		VkFormat m_Format = VK_FORMAT_UNDEFINED;
 		VkExtent2D m_Extent{};
 	};

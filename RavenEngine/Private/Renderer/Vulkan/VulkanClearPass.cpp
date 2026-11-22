@@ -49,9 +49,9 @@ namespace Raven
 
 	VulkanClearPass::LitPipelineFactory::LitPipelineFactory(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
-		VkDescriptorSetLayout frameLayout)
+		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout)
 		: m_Device(device), m_ColorFormat(colorFormat), m_DepthFormat(depthFormat), m_TextureLayout(textureLayout),
-		  m_FrameLayout(frameLayout)
+		  m_FrameLayout(frameLayout), m_SceneLayout(sceneLayout)
 	{
 	}
 
@@ -59,12 +59,12 @@ namespace Raven
 		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment) const
 	{
 		return std::make_shared<VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
-			m_FrameLayout, vertex, fragment);
+			m_FrameLayout, m_SceneLayout, vertex, fragment);
 	}
 
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
-		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_TextureLayout, m_FrameLayout };
+		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_BindlessLayout, m_FrameLayout, m_Scene.GetLayout() };
 	}
 
 	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
@@ -110,13 +110,14 @@ namespace Raven
 
 	VulkanClearPass::VulkanClearPass(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
-		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout,
+		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
+		VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene,
 		std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 		VulkanFrameTimeline& timeline, const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
-		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_FrameLayout(frameLayout),
-		  m_Extent(swapchain.GetExtent())
+		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_BindlessLayout(bindlessLayout),
+		  m_FrameLayout(frameLayout), m_Scene(scene), m_Extent(swapchain.GetExtent())
 	{
 		if (m_Device == VK_NULL_HANDLE || swapchain.Get() == VK_NULL_HANDLE ||
 			swapchain.GetImageViews().empty() || m_Extent.width == 0 || m_Extent.height == 0)
@@ -235,13 +236,12 @@ namespace Raven
 		m_DepthAttachments.clear();
 	}
 
-	VulkanClearPass::InstanceOffsets VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
+	VkDeviceSize VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
 	{
 		const auto uniform = std::as_bytes(std::span(&queue.Frame, 1));
-		const auto mesh = std::as_bytes(std::span(queue.MeshInstances));
 		const auto textured = std::as_bytes(std::span(queue.TexturedInstances));
-		const VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(uniform.size()) + mesh.size()) +
-			textured.size();
+		const VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(uniform.size()) + textured.size()) +
+			m_Scene.GetPlannedBytes();
 		if (frame.Ring.Begin(m_DeviceOwner, m_PhysicalDevice, m_Timeline, required))
 		{
 			// The slot's previous submission has completed, so its set is not in use.
@@ -257,10 +257,9 @@ namespace Raven
 		// The frame set names offset 0, so the uniform is always pushed first.
 		if (frame.Ring.Push(uniform) != 0)
 			throw std::logic_error("The frame uniform must start the upload ring");
-		InstanceOffsets offsets;
-		offsets.Mesh = frame.Ring.Push(mesh);
-		offsets.Textured = frame.Ring.Push(textured);
-		return offsets;
+		const auto texturedOffset = frame.Ring.Push(textured);
+		m_Scene.Upload(m_FrameIndex, frame.Ring);
+		return texturedOffset;
 	}
 
 	void VulkanClearPass::PrepareTimestampQueries()
@@ -278,7 +277,7 @@ namespace Raven
 		VkQueryPoolCreateInfo info{};
 		info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
 		info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-		info.queryCount = static_cast<std::uint32_t>(m_Frames.size() * 2);
+		info.queryCount = static_cast<std::uint32_t>(m_Frames.size() * 3);
 		CheckClearCreation(vkCreateQueryPool(m_Device, &info, nullptr, &m_Timestamps),
 			m_Timestamps, "vkCreateQueryPool (frame timestamps)");
 	}
@@ -287,17 +286,18 @@ namespace Raven
 	{
 		if (frame.TimestampFrame == 0)
 			return;
-		const auto first = static_cast<std::uint32_t>(m_FrameIndex * 2);
-		std::array<std::uint64_t, 2> ticks{};
+		const auto first = static_cast<std::uint32_t>(m_FrameIndex * 3);
+		std::array<std::uint64_t, 3> ticks{};
 		// The slot's previous submission has already completed. Never wait on the query itself.
-		const auto result = vkGetQueryPoolResults(m_Device, m_Timestamps, first, 2,
+		const auto result = vkGetQueryPoolResults(m_Device, m_Timestamps, first, 3,
 			sizeof(ticks), ticks.data(), sizeof(ticks[0]), VK_QUERY_RESULT_64_BIT);
 		if (result == VK_SUCCESS)
 		{
 			const auto mask = std::numeric_limits<std::uint64_t>::max() >> (64 - m_TimestampBits);
 			metrics.GpuFrame = frame.TimestampFrame;
-			metrics.Gpu = static_cast<double>((ticks[1] - ticks[0]) & mask) *
-				m_PhysicalDevice.Properties.limits.timestampPeriod;
+			const double period = m_PhysicalDevice.Properties.limits.timestampPeriod;
+			metrics.Gpu = static_cast<double>((ticks[2] - ticks[0]) & mask) * period;
+			metrics.GpuCull = static_cast<double>((ticks[1] - ticks[0]) & mask) * period;
 		}
 		else if (result != VK_NOT_READY)
 			CheckClearResult(result, "vkGetQueryPoolResults");
@@ -305,7 +305,7 @@ namespace Raven
 	}
 
 	void VulkanClearPass::Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-		const VulkanMeshPool& meshes, const VulkanTexture& white, InstanceOffsets offsets, bool timestamps)
+		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps)
 	{
 		const auto commands = frame.Commands;
 		const auto instanceBuffer = frame.Ring.Get();
@@ -314,12 +314,16 @@ namespace Raven
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		CheckClearResult(vkBeginCommandBuffer(commands, &beginInfo), "vkBeginCommandBuffer");
-		const auto firstQuery = static_cast<std::uint32_t>(m_FrameIndex * 2);
+		const auto firstQuery = static_cast<std::uint32_t>(m_FrameIndex * 3);
 		if (timestamps)
 		{
-			vkCmdResetQueryPool(commands, m_Timestamps, firstQuery, 2);
+			vkCmdResetQueryPool(commands, m_Timestamps, firstQuery, 3);
 			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_Timestamps, firstQuery);
 		}
+		// GPU-driven lit meshes: apply this frame's uploads and cull into indirect commands (G5).
+		m_Scene.RecordPrepare(commands, m_FrameIndex, queue.Frame.ViewProjection);
+		if (timestamps)
+			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, m_Timestamps, firstQuery + 1);
 
 		const auto& vk = m_DeviceOwner.GetCommands();
 		const VkImageSubresourceRange colorRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
@@ -387,36 +391,15 @@ namespace Raven
 		const VkRect2D scissor{ { 0, 0 }, m_Extent };
 		vkCmdSetViewport(commands, 0, 1, &viewport);
 		vkCmdSetScissor(commands, 0, 1, &scissor);
-		if (!queue.LitBatches.empty())
-		{
-			m_LitPipeline->BindFrame(commands, frame.FrameSet);
-			// Every lit mesh lives in the two pools, so geometry binds once (R6).
-			const std::array<VkBuffer, 2> buffers{ meshes.GetVertices(), instanceBuffer };
-			const std::array<VkDeviceSize, 2> bufferOffsets{ 0, offsets.Mesh };
-			vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
-				buffers.data(), bufferOffsets.data());
-			vkCmdBindIndexBuffer(commands, meshes.GetIndices(), 0, VK_INDEX_TYPE_UINT32);
-		}
-		// One instanced draw per batch (R5); the texture binds only when it changes.
-		const VulkanTexture* boundTexture = nullptr;
-		for (const auto& batch : queue.LitBatches)
-		{
-			const auto* texture = batch.Key.Texture ? batch.Key.Texture : &white;
-			if (texture != boundTexture)
-			{
-				m_LitPipeline->Bind(commands, texture->GetDescriptorSet());
-				boundTexture = texture;
-			}
-			// Released or replaced mesh data is retired, so its ranges outlive this submission (R3).
-			const auto& ranges = batch.Key.Mesh->Ranges;
-			vkCmdDrawIndexed(commands, ranges.IndexCount, batch.InstanceCount, ranges.FirstIndex,
-				ranges.VertexOffset, batch.FirstInstance);
-		}
-		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Opaque,
+		// Every lit mesh lives in the two pools (R6) and is drawn by the culled indirect commands.
+		m_Scene.RecordDraw(commands, m_FrameIndex, *m_LitPipeline, bindlessTextures, frame.FrameSet,
+			meshes.GetVertices(), meshes.GetIndices());
+		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Opaque,
 			queue.OpaqueBatches);
-		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Transparent,
+		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Transparent,
 			queue.TransparentBatches);
 		vk.EndRendering(commands);
+		m_Scene.RecordReadback(commands, m_FrameIndex);
 
 		// Presentation waits on the render-finished semaphore, which the submission signals
 		// after all commands, so the transition needs no later stage.
@@ -433,13 +416,13 @@ namespace Raven
 		present.subresourceRange = colorRange;
 		transition(std::span(&present, 1));
 		if (timestamps)
-			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_Timestamps, firstQuery + 1);
+			vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_Timestamps, firstQuery + 2);
 		CheckClearResult(vkEndCommandBuffer(commands), "vkEndCommandBuffer");
 	}
 
 	bool VulkanClearPass::Draw(const VulkanSwapchain& swapchain, VkQueue graphics,
 		VkQueue present, const VulkanDrawQueue& queue, const VulkanMeshPool& meshes,
-		const VulkanTexture& white, FrameMetrics* metrics)
+		VkDescriptorSet bindlessTextures, FrameMetrics* metrics)
 	{
 		auto& frame = m_Frames[m_FrameIndex];
 		constexpr auto timeout = std::numeric_limits<std::uint64_t>::max();
@@ -453,9 +436,11 @@ namespace Raven
 		{
 			PrepareTimestampQueries();
 			ReadTimestamps(frame, *metrics);
+			// Culled on the GPU; the slot's last submitted frame reports its visible count.
+			metrics->VisibleMeshes = m_Scene.ReadVisible(m_FrameIndex);
 		}
 		// Write the frame's uniform and instances before acquiring the image.
-		const auto offsets = Upload(frame, queue);
+		const auto texturedOffset = Upload(frame, queue);
 		upload.End();
 
 		std::uint32_t imageIndex = 0;
@@ -472,7 +457,7 @@ namespace Raven
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
-		Record(frame, imageIndex, queue, meshes, white, offsets, timestamps);
+		Record(frame, imageIndex, queue, meshes, bindlessTextures, texturedOffset, timestamps);
 
 		// The binary semaphores serve acquire and present; the timeline value marks this frame.
 		VkSemaphoreSubmitInfoKHR acquired{};
@@ -504,6 +489,7 @@ namespace Raven
 			"vkQueueSubmit2KHR");
 		m_Timeline.MarkSubmitted();
 		frame.Submitted = value;
+		m_Scene.Commit(m_FrameIndex);
 		frame.TimestampFrame = timestamps ? metrics->Start : 0;
 
 		const VkSwapchainKHR handle = swapchain.Get();

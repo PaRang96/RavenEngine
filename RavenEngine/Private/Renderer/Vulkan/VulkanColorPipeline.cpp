@@ -1,6 +1,5 @@
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
 
-#include "Renderer/Vulkan/VulkanMeshInstance.hpp"
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Raven/Renderer/ColorVertex.hpp"
 
@@ -13,12 +12,12 @@ namespace Raven
 {
 	VulkanColorPipeline::VulkanColorPipeline(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
-		VkDescriptorSetLayout frameLayout, std::span<const std::uint32_t> vertexWords,
+		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout, std::span<const std::uint32_t> vertexWords,
 		std::span<const std::uint32_t> fragmentWords)
 		: m_Device(device.Get())
 	{
 		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED ||
-			textureLayout == VK_NULL_HANDLE || frameLayout == VK_NULL_HANDLE)
+			textureLayout == VK_NULL_HANDLE || frameLayout == VK_NULL_HANDLE || sceneLayout == VK_NULL_HANDLE)
 			throw std::runtime_error("A device, attachment formats and set layouts are required for the color pipeline");
 
 		try
@@ -36,24 +35,16 @@ namespace Raven
 			stages[1].module = fragment.Get();
 			stages[1].pName = "PSMain";
 
-			const std::array<VkVertexInputBindingDescription, 2> bindings
+			const std::array<VkVertexInputBindingDescription, 1> bindings
 			{
-				VkVertexInputBindingDescription{ 0, sizeof(ColorVertex), VK_VERTEX_INPUT_RATE_VERTEX },
-				VkVertexInputBindingDescription{ 1, sizeof(MeshInstanceData), VK_VERTEX_INPUT_RATE_INSTANCE }
+				VkVertexInputBindingDescription{ 0, sizeof(ColorVertex), VK_VERTEX_INPUT_RATE_VERTEX }
 			};
-			const std::array<VkVertexInputAttributeDescription, 11> attributes
+			const std::array<VkVertexInputAttributeDescription, 4> attributes
 			{
 				VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Position) },
 				VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Color) },
 				VkVertexInputAttributeDescription{ 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Normal) },
-				VkVertexInputAttributeDescription{ 3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ColorVertex, UV) },
-				VkVertexInputAttributeDescription{ 4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) },
-				VkVertexInputAttributeDescription{ 5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) + 16 },
-				VkVertexInputAttributeDescription{ 6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) + 32 },
-				VkVertexInputAttributeDescription{ 7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) },
-				VkVertexInputAttributeDescription{ 8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) + 16 },
-				VkVertexInputAttributeDescription{ 9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) + 32 },
-				VkVertexInputAttributeDescription{ 10, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, Tint) }
+				VkVertexInputAttributeDescription{ 3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ColorVertex, UV) }
 			};
 			VkPipelineVertexInputStateCreateInfo vertexInput{};
 			vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -101,7 +92,7 @@ namespace Raven
 
 			VkPipelineLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-			const std::array<VkDescriptorSetLayout, 2> setLayouts{ textureLayout, frameLayout };
+			const std::array<VkDescriptorSetLayout, 3> setLayouts{ textureLayout, frameLayout, sceneLayout };
 			layoutInfo.setLayoutCount = static_cast<std::uint32_t>(setLayouts.size());
 			layoutInfo.pSetLayouts = setLayouts.data();
 			VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -160,6 +151,12 @@ namespace Raven
 	{
 		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout,
 			1, 1, &frame, 0, nullptr);
+	}
+
+	void VulkanColorPipeline::BindScene(VkCommandBuffer commands, VkDescriptorSet scene) const
+	{
+		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout,
+			2, 1, &scene, 0, nullptr);
 	}
 
 	VulkanColorPipeline::~VulkanColorPipeline()

@@ -219,7 +219,9 @@ def live(executable, source, directory, capture=True):
     metadata = source / "Content/Project.ravenproject"
     mesh = source / "Content/Meshes/Cube.fbx"
     png = source / "Content/Textures/UVGridAlternate.png"
-    originals = {path: path.read_bytes() for path in (shader, game, scene, metadata, mesh, png)}
+    # Lit shaders reload when the engine material header changes (docs/GpuDrivenDesign.md, G4).
+    header = shader.parent / "Raven/Material.hlsli"
+    originals = {path: path.read_bytes() for path in (shader, header, game, scene, metadata, mesh, png)}
     measurements = {}
     rejections = {}
     try:
@@ -248,9 +250,9 @@ def live(executable, source, directory, capture=True):
                 measurements[name] = (start, int(lines[-1]), "presentation clock")
                 return screenshot(name, previous, True)
 
-            baseline = b"albedo * illumination, 1.0"
-            warm = originals[shader].replace(baseline, b"albedo * illumination * float3(1.0, 0.54, 0.36), 1.0")
-            cool = originals[shader].replace(baseline, b"albedo * illumination * float3(0.45, 0.74, 1.0), 1.0")
+            baseline = b"RavenApplyLighting(input, albedo), 1.0"
+            warm = originals[shader].replace(baseline, b"RavenApplyLighting(input, albedo) * float3(1.0, 0.54, 0.36), 1.0")
+            cool = originals[shader].replace(baseline, b"RavenApplyLighting(input, albedo) * float3(0.45, 0.74, 1.0), 1.0")
             check(warm != originals[shader] and cool != originals[shader], "Shader fixture moved")
             warm_image = change_shader("shader-warm", warm, original_image)
             generation = app.count(shader_marker)
@@ -261,7 +263,11 @@ def live(executable, source, directory, capture=True):
             rejections["shader-syntax"] = (start, time.perf_counter_ns())
             screenshot("syntax-retained", warm_image, False)
             check(app.count(shader_marker) == generation, "Failed shader was activated")
-            incompatible = cool.replace(b"vk::binding(0, 0)", b"vk::binding(2, 0)")
+            # An extra stage input is outside the lit interface the vertex shader provides.
+            incompatible = cool.replace(b"float4 PSMain(RavenFragmentInput input) : SV_Target0",
+                b"float4 PSMain(RavenFragmentInput input, [[vk::location(7)]] float4 extra : TEXCOORD7) : SV_Target0").replace(
+                b"float3(0.45, 0.74, 1.0), 1.0", b"float3(0.45, 0.74, 1.0) + extra.rgb, 1.0")
+            check(incompatible.count(b"extra") == 2, "Incompatible shader fixture moved")
             start = save(shader, incompatible)
             app.marker(b"Incompatible fragment shader:")
             rejections["shader-interface"] = (start, time.perf_counter_ns())
@@ -284,6 +290,21 @@ def live(executable, source, directory, capture=True):
             lines = re.findall(rb"Lit fragment reload presented:.*?clock (\d+) ns", app.log.read_bytes())
             measurements["shader-superseded-save"] = (start, int(lines[-1]), "presentation clock")
             warm_image = change_shader("shader-restored-warm", warm, original_image)
+
+            header_base = b"return albedo * (input.AmbientAndLit.rgb + input.LightColor * diffuse);"
+            header_green = originals[header].replace(header_base,
+                b"return albedo * (input.AmbientAndLit.rgb + input.LightColor * diffuse) * float3(0.6, 1.0, 0.6);")
+            check(header_green != originals[header], "Material header fixture moved")
+            count = app.count(shader_marker) + 1
+            start = save(header, header_green)
+            app.marker(shader_marker, count)
+            lines = re.findall(rb"Lit fragment reload presented:.*?clock (\d+) ns", app.log.read_bytes())
+            measurements["shader-header"] = (start, int(lines[-1]), "presentation clock")
+            screenshot("shader-header", warm_image, True)
+            count = app.count(shader_marker) + 1
+            save(header, originals[header])
+            app.marker(shader_marker, count)
+            screenshot("shader-header-restored", warm_image, False)
 
             rejected = b"Cannot replace scene/project; keeping active world"
             count = app.count(rejected) + 1

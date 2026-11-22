@@ -16,8 +16,8 @@ namespace Raven
 		enum class Op : std::uint16_t
 		{
 			Extension = 10, EntryPoint = 15, ExecutionMode = 16, Capability = 17,
-			TypeFloat = 22, TypeVector = 23, TypeImage = 25, TypeSampler = 26,
-			TypePointer = 32, Variable = 59, Decorate = 71, DecorationGroup = 73
+			TypeInt = 21, TypeFloat = 22, TypeVector = 23, TypeImage = 25, TypeSampler = 26,
+			TypeRuntimeArray = 29, TypePointer = 32, Variable = 59, Decorate = 71, DecorationGroup = 73
 		};
 
 		enum class Storage : std::uint32_t
@@ -66,7 +66,9 @@ namespace Raven
 	void CheckFragmentShaderInterface(std::span<const std::uint32_t> words, FragmentShaderKind kind)
 	{
 		constexpr std::array<std::uint32_t, 2> texturedWidths{ 2, 4 };
-		constexpr std::array<std::uint32_t, 6> litWidths{ 3, 2, 3, 4, 3, 3 };
+		// Lit location 6 is a flat uint texture index (docs/GpuDrivenDesign.md, G4); width 1 marks it.
+		constexpr std::array<std::uint32_t, 7> litWidths{ 3, 2, 3, 4, 3, 3, 1 };
+		constexpr std::uint32_t LitTextureLocation = 6;
 		const bool lit = kind == FragmentShaderKind::Lit;
 		const std::span<const std::uint32_t> widths = lit ? std::span<const std::uint32_t>(litWidths)
 			: std::span<const std::uint32_t>(texturedWidths);
@@ -96,10 +98,20 @@ namespace Raven
 			switch (opcode)
 			{
 			case Op::Capability:
-				if (size != 2 || instruction[1] != ShaderCapability)
+				// Bindless lit shaders index a runtime texture array non-uniformly.
+				if (size != 2 || (instruction[1] != ShaderCapability && !(lit && (instruction[1] == 5301 ||
+					instruction[1] == 5302 || instruction[1] == 5307))))
 					Reject("requires capabilities beyond the existing shader");
 				break;
 			case Op::Extension:
+			{
+				// "SPV_EXT_descriptor_indexing" as a null-terminated literal in seven words.
+				constexpr std::array<std::uint32_t, 7> descriptorIndexing{ 0x5f565053, 0x5f545845, 0x63736564,
+					0x74706972, 0x695f726f, 0x7865646e, 0x00676e69 };
+				if (lit && size == 8 && std::ranges::equal(instruction.subspan(1), descriptorIndexing))
+					break;
+				Reject("extensions and decoration groups are outside the reload interface");
+			}
 			case Op::DecorationGroup:
 				Reject("extensions and decoration groups are outside the reload interface");
 			case Op::EntryPoint:
@@ -114,6 +126,8 @@ namespace Raven
 					Reject("unexpected fragment execution mode");
 				origin = instruction[1];
 				break;
+			case Op::TypeInt:
+			case Op::TypeRuntimeArray:
 			case Op::TypeFloat:
 			case Op::TypeVector:
 			case Op::TypeImage:
@@ -177,7 +191,9 @@ namespace Raven
 					Reject("expected only texture and sampler at set 0 bindings 0 and 1");
 				if (*decoration.Binding == 0)
 				{
-					const auto image = Type(types, valueType, Op::TypeImage, 9);
+					// Lit shaders sample one bindless array; textured shaders one texture.
+					const auto imageId = lit ? Type(types, valueType, Op::TypeRuntimeArray, 3)[2] : valueType;
+					const auto image = Type(types, imageId, Op::TypeImage, 9);
 					const auto sample = Type(types, image[2], Op::TypeFloat, 3);
 					if (sample[2] != 32 || image[3] != 1 || image[4] == 1 ||
 						image[5] != 0 || image[6] != 0 || image[7] != 1 || image[8] != 0)
@@ -193,6 +209,14 @@ namespace Raven
 			}
 			if (decoration.Set || decoration.Binding || !decoration.Location)
 				Reject("stage variables require a location");
+			if (lit && variable.Class == Storage::Input && *decoration.Location == LitTextureLocation)
+			{
+				const auto integer = Type(types, valueType, Op::TypeInt, 4);
+				if (integer[2] != 32 || integer[3] != 0 || !decoration.Flat || inputs[LitTextureLocation] != 0)
+					Reject("location 6 requires one flat uint texture index");
+				inputs[LitTextureLocation] = variable.Id;
+				continue;
+			}
 			const auto vector = Type(types, valueType, Op::TypeVector, 4);
 			const auto scalar = Type(types, vector[2], Op::TypeFloat, 3);
 			if (scalar[2] != 32)

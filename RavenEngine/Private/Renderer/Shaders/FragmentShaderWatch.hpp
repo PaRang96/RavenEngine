@@ -20,6 +20,8 @@ namespace Raven
 		{
 			std::vector<std::uint32_t> Words;
 			std::vector<std::byte> Source;
+			// Raven/Material.hlsli for lit shaders, which reload when it changes (G4).
+			std::vector<std::byte> Header;
 			std::chrono::duration<double, std::milli> CompileTime;
 		};
 
@@ -33,6 +35,8 @@ namespace Raven
 		void Run(std::stop_token stop);
 
 		const std::filesystem::path m_Source;
+		// Empty for shaders without an engine header dependency.
+		const std::filesystem::path m_Header;
 		const FragmentShaderKind m_Kind;
 		std::mutex m_Mutex;
 		std::optional<Candidate> m_Ready;

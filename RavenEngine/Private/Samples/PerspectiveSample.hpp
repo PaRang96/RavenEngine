@@ -7,7 +7,7 @@
 
 #include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/ECS/Entity.hpp"
-#include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
+#include "Raven/Renderer/RenderWorld.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
@@ -35,7 +35,6 @@ namespace Raven
 			const InputState& input, const FrameTime& frameTime) override;
 		void Update(const InputState& input, const FrameTime& frameTime);
 
-		std::span<const VulkanDraw> GetDraws() const { return m_Draws; }
 		std::span<const VulkanTexturedDraw> GetTexturedDraws() const { return m_TexturedDraws; }
 		std::span<const VulkanTransparentDraw> GetTransparentDraws() const { return m_TransparentDraws; }
 
@@ -50,7 +49,8 @@ namespace Raven
 		SampleAssets m_Assets;
 		AudioPlayer m_Audio;
 		std::unique_ptr<SceneSession> m_Session;
-		std::vector<VulkanDraw> m_Draws;
+		// Lit meshes for GPU-driven rendering (docs/GpuDrivenDesign.md, G1); synced after world transforms.
+		RenderWorld m_RenderWorld;
 		std::vector<ECS::Entity> m_PendingInteractions;
 		std::vector<ECS::Entity> m_Interactions;
 		ECS::Entity m_BenchmarkRotor;

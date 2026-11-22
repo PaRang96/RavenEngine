@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
@@ -13,6 +12,7 @@
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
+#include "Renderer/Vulkan/VulkanGpuScene.hpp"
 
 #include <array>
 #include <cstdint>
@@ -40,12 +40,13 @@ namespace Raven
 		private:
 			friend class VulkanClearPass;
 			LitPipelineFactory(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-				VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout);
+				VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout);
 			const VulkanDevice& m_Device;
 			VkFormat m_ColorFormat;
 			VkFormat m_DepthFormat;
 			VkDescriptorSetLayout m_TextureLayout;
 			VkDescriptorSetLayout m_FrameLayout;
+			VkDescriptorSetLayout m_SceneLayout;
 		};
 
 		// Pipelines depend only on attachment formats, so a recreated pass can keep them.
@@ -67,8 +68,8 @@ namespace Raven
 
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
-			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout,
-			std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
+			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
+			VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene, std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
 		LitPipelineFactory GetLitPipelineFactory() const;
@@ -80,8 +81,9 @@ namespace Raven
 		~VulkanClearPass();
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
+		// The GPU scene was planned for this frame; lit meshes come only from it (G7).
 		bool Draw(const VulkanSwapchain& swapchain, VkQueue graphics, VkQueue present,
-			const VulkanDrawQueue& queue, const VulkanMeshPool& meshes, const VulkanTexture& white,
+			const VulkanDrawQueue& queue, const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures,
 			FrameMetrics* metrics);
 
 		VulkanClearPass(const VulkanClearPass&) = delete;
@@ -102,16 +104,10 @@ namespace Raven
 			std::int64_t TimestampFrame = 0;
 		};
 
-		// Ring offsets of one frame's instance arrays.
-		struct InstanceOffsets
-		{
-			VkDeviceSize Mesh = 0;
-			VkDeviceSize Textured = 0;
-		};
-
-		InstanceOffsets Upload(Frame& frame, const VulkanDrawQueue& queue);
+		// Returns the ring offset of the textured instances.
+		VkDeviceSize Upload(Frame& frame, const VulkanDrawQueue& queue);
 		void Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-			const VulkanMeshPool& meshes, const VulkanTexture& white, InstanceOffsets offsets, bool timestamps);
+			const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps);
 		void PrepareTimestampQueries();
 		void ReadTimestamps(Frame& frame, FrameMetrics& metrics);
 		void Destroy() noexcept;
@@ -125,7 +121,10 @@ namespace Raven
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
 		std::shared_ptr<const VulkanColorPipeline> m_LitPipeline;
 		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_BindlessLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FrameLayout = VK_NULL_HANDLE;
+		// Owned by the context; outlives the pass.
+		VulkanGpuScene& m_Scene;
 		std::shared_ptr<const TexturedPipelines> m_TexturedPipelines;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
 		VkDescriptorPool m_FramePool = VK_NULL_HANDLE;

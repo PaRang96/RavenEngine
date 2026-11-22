@@ -158,7 +158,7 @@ namespace Raven
 		{
 			std::ofstream trace(config.FrameTracePath);
 			trace << "start_ns,work_ns,drawable,gameplay_ns,scene_gather_ns,world_ns,render_prepare_ns,record_submit_ns,"
-				"fence_wait_ns,acquire_wait_ns,present_wait_ns,presented_ns,gpu_frame_ns,gpu_ns,visible_meshes,draw_calls,"
+				"fence_wait_ns,acquire_wait_ns,present_wait_ns,presented_ns,gpu_frame_ns,gpu_ns,gpu_cull_ns,visible_meshes,draw_calls,"
 				"game_generation,delta_seconds,benchmark_phase,scene_replaced\n" << std::setprecision(10);
 			for (const auto& sample : samples)
 			{
@@ -166,7 +166,7 @@ namespace Raven
 				trace << m.Start << ',' << sample.Work << ',' << sample.Drawable << ',' << m.Gameplay
 					<< ',' << m.SceneGather << ',' << m.WorldTransforms << ',' << m.RenderPrepare << ',' << m.RecordSubmit
 					<< ',' << m.FenceWait << ',' << m.AcquireWait << ',' << m.PresentWait << ',' << m.Presented
-					<< ',' << m.GpuFrame << ',' << m.Gpu << ',' << m.VisibleMeshes << ',' << m.DrawCalls
+					<< ',' << m.GpuFrame << ',' << m.Gpu << ',' << m.GpuCull << ',' << m.VisibleMeshes << ',' << m.DrawCalls
 					<< ',' << m.GameGeneration << ',' << m.DeltaSeconds << ',' << m.BenchmarkPhase << ',' << m.SceneReplaced << '\n';
 			}
 			trace.close();

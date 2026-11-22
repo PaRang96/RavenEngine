@@ -84,17 +84,24 @@ Raise the API baseline and restructure frame data for scale. CPU-side mesh insta
 
 **Exit result (2026-11-23):** met. The 10k scene takes 7 draws, the samples render within the approved tolerance, and Debug validation is clean at 10k. One budget was recorded as missed instead of optimized: renderer preparation + record/submit read 0.88–1.01 ms against 0.8 ms, and M3 removes that code. See [the exit record](docs/RendererDesign.md#m2-exit-record-2026-11-23).
 
-### M3 — GPU-driven rendering at scale · *next*
+### M3 — GPU-driven rendering at scale · *done 2026-11-23*
 
-Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (owner decisions Q1–Q7 recorded 2026-11-23; no code yet).
+Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (owner decisions Q1–Q7, 2026-11-22/23).
 
-- [ ] Keep a GPU-resident object/transform buffer updated incrementally from ECS changes, uploading dirty ranges only.
-- [ ] Make materials and textures bindless through descriptor indexing.
-- [ ] Add compute frustum culling that writes indirect draw arguments. Use draw-indirect-count where supported, with a fixed-count fallback that zeroes culled instance counts (for example on MoltenVK).
-- [ ] Add Hi-Z occlusion culling if the measurements justify it.
-- [ ] Record GPU and CPU timings per stage in the benchmark build, and add a stress sample with thousands of moving objects driven by reloadable ECS systems.
+- [x] Keep a GPU-resident object/transform buffer updated incrementally from ECS changes, uploading dirty ranges only.
+- [x] Make materials and textures bindless through descriptor indexing. *Lit path; sprites follow in M6 (Q5).*
+- [x] Add compute frustum culling that writes indirect draw arguments. Use draw-indirect-count where supported, with a fixed-count fallback that zeroes culled instance counts (for example on MoltenVK).
+- [x] Add Hi-Z occlusion culling if the measurements justify it. *Not justified: GPU p95 is 2.2 ms at 50k and 4.0 ms at 100k static.*
+- [x] Record GPU and CPU timings per stage in the benchmark build, and add a stress sample with thousands of moving objects driven by reloadable ECS systems.
 
 **Exit (proposed targets, measured on the minimum-spec machine):** 50,000 lit meshes with 20% animated run at ≥ 60 FPS at 2560 × 1440 on the RTX 3070 Ti Laptop, with CPU frame preparation ≤ 4 ms. 100,000 static meshes stay ≥ 60 FPS. A DLL edit to the animating system reloads without frame-time spikes above 100 ms.
+
+**Exit result (2026-11-23):** met on the minimum-spec laptop.
+- 50k lit meshes with 20% animated run at 126.5 FPS at 2560 × 1440, with CPU frame preparation of 3.53 ms p95.
+- 100k static meshes run at 121.3 FPS.
+- A DLL edit to the animating system peaks at a 46.5 ms frame.
+
+Captures match M2, and Debug validation is clean at 50k. See [the exit record](docs/GpuDrivenDesign.md#m3-exit-record-2026-11-23).
 
 ### M4 — Cross-platform parity
 

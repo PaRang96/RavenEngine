@@ -2,7 +2,7 @@
 
 Status:
 - Drafted 2026-11-22. The owner decided Q1–Q7 on 2026-11-22/23; see [Owner decisions](#owner-decisions).
-- **No M3 code exists.** Implementation starts on an explicit owner request, after the M2 exit check.
+- **Implemented and exit-checked 2026-11-23**; see the [M3 exit record](#m3-exit-record-2026-11-23).
 - Each decision below states how it serves the v1 goals in [ROADMAP.md](../ROADMAP.md).
 
 ## Goals and fixed constraints
@@ -202,16 +202,54 @@ The Registry gains a general, opt-in journal of structural events. It serves the
 
 ## Migration steps
 
-0. **M2 exit check** (M2 step 9), still pending.
-1. **G6 baseline:** extend the scene tool to 10k/50k/100k and measure the M2 path.
-2. **Lifecycle journal (G1, Q2):** the Registry addition, its `ECSDesign.md` record and the `RegistryTests` case.
-3. **G4:** bindless texture array, material table, the engine header with reload dependency, the ported lit shader and interface check. Lit batches drop the texture from their key.
-4. **G1 + G2 + G3 + G5 + G7 together:** the render world and sync, the resident object buffer and scatter, the mesh table, compute culling and fixed-count indirect draws.
+0. *(Done 2026-11-23.)* **M2 exit check** (M2 step 9).
+1. *(Done 2026-11-23.)* **G6 baseline:** extend the scene tool to 10k/50k/100k and measure the M2 path ([RendererDesign.md](RendererDesign.md#m2-exit-record-2026-11-23)).
+2. *(Done 2026-11-23.)* **Lifecycle journal (G1, Q2):** the Registry addition, its `ECSDesign.md` record and the `RegistryTests` case.
+3. *(Done 2026-11-23, together with step 4.)* **G4:** bindless texture array, material table, the engine header with reload dependency, the ported lit shader and interface check. Lit batches drop the texture from their key.
+4. *(Done 2026-11-23.)* **G1 + G2 + G3 + G5 + G7 together:** the render world and sync, the resident object buffer and scatter, the mesh table, compute culling and fixed-count indirect draws.
    - Lit spans leave `DrawFrame`, and the samples' lit gathering and CPU lit batching are deleted.
    - This is one step, so no temporary CPU-culled path is ever written.
-5. **G6 stress sample:** the reloadable animating system and the reload-spike measurement.
-6. **Conditional, only if measured:** compaction with `DrawIndexedIndirectCount`, and Hi-Z.
-7. **Exit check.**
+5. *(Done 2026-11-23.)* **G6 stress sample:** the benchmark scenes are the stress sample. Their rotators run in the reloadable game DLL, and `Benchmark-Windows3D.py reload --meshes 50000` measures the reload spike.
+6. **Conditional, only if measured:** compaction with `DrawIndexedIndirectCount`, and Hi-Z. Not needed; see the exit record.
+7. *(Done 2026-11-23.)* **Exit check.**
+
+## M3 exit record (2026-11-23)
+
+Measured on the minimum-spec laptop, Release, 2560 × 1440 on the 165 Hz panel, one run per case:
+- Rotators move 20% of the meshes, through a system registered by the reloadable game DLL.
+- A 4K 60 Hz external monitor was attached during these runs, which capped the FIFO cases at about 60 FPS. The uncapped NVIDIA mailbox case is the reference.
+
+| Measure | M2 path | Target | M3 | Result |
+| --- | ---: | ---: | ---: | --- |
+| FPS, 50k lit meshes, 20% animated | 85.8 | ≥ 60 (aim ≥ 120) | 126.5 | Met |
+| CPU frame preparation p95, 50k, 20% animated | 12.34 ms | ≤ 4 ms | 3.53 ms (FIFO 3.18 ms) | Met |
+| FPS, 100k static | — | ≥ 60 | 121.3 (CPU preparation 1.71 ms) | Met |
+| FPS, 100k, 20% animated (no target) | 43.2 | — | 78.0 (CPU preparation 6.66 ms) | — |
+| Renderer CPU (preparation + record/submit) p95, 50k | 8.74 ms | ≤ 1.5 ms, flat for static scenes | 0.53 ms; 0.16 ms at 100k static | Met |
+| Draw commands | 7 | one per unique mesh + immediate batches | 6 (2 indirect mesh commands + 4 textured batches) | Met |
+| GPU p95, 50k | 3.18 ms | ≤ 8 ms | 2.15 ms (upload + culling 0.17 ms) | Met |
+| DLL reload frame spike, 50k | — | ≤ 100 ms | longest frame 46.5 ms; save-to-present 3.08 s | Met |
+| 4,000 meshes (M2 exit case) | 193 FPS, CPU 1.35–1.54 ms | — | 275 FPS, CPU 0.41 ms | — |
+
+- **Images:** the six captures match the M2 references exactly as at M2 exit: three bit-identical, and 1, 2 and 1 edge outliers in Assemblies, Gallery and Puzzle. GPU culling, bindless textures and indirect draws reproduce the CPU path's images.
+- **Validation:**
+  - The Debug 3D smoke with core and synchronization validation reported nothing.
+  - `Benchmark-Windows3D.py validate --meshes 50000` passed Vulkan validation.
+- **Live Release session:** passed. It covers:
+  - DLL, scene, PNG, FBX and lit-shader reloads, with the lit shader ported to `Raven/Material.hlsli`
+  - a reload triggered by editing the header, then restored
+  - an incompatible shader with an extra stage input, rejected with the last good shader kept
+- **Tracked test:** `RegistryTests` covers the lifecycle journal.
+- **What remains on the CPU at 50k:** world transforms (1.5–1.7 ms p95) and the render-world sync inside scene gather (1.1–1.3 ms), both ECS-side. A faster `UpdateWorldTransforms` would be the next lever if the budget tightens; nothing in M3 needs it.
+- **Not run:** Courtyard (2D), which needs an owner request. Its path is unchanged apart from the shared upload ring and the descriptor refactor, and the 3D captures cover the textured demonstration draws. MoltenVK and Linux (M4).
+
+### Deviations from the decisions above
+
+- **Steps 3 and 4 landed as one change.** On its own, bindless (step 3) would have needed a temporary material path on the CPU instance records, which the no-throwaway rule rules out.
+- **Per-texture fallback (G4) not built.** M3 requires descriptor indexing (including update-after-bind sampled images), `multiDrawIndirect` and `drawIndirectFirstInstance`, and reports a missing one as an unsupported-device error. No device here lacks them. If MoltenVK needs the fallback, M4 builds it behind the same header.
+- **Uploads:** a full upload (new world, scene switch, journal resync or buffer growth) copies whole buffers. Incremental frames scatter only dirty records with a compute pass. Material, mesh-table and command uploads are small copies every frame.
+- **Removed-value copies (Q2)** and **compaction or Hi-Z (G5, Q6)** were not needed. There are only two unique meshes in the stress scenes, and GPU time is 2.2 ms at 50k and 4.0 ms at 100k static.
+- **GPU timing:** the benchmark records total GPU time and the upload-plus-culling prepass (`gpu_cull_ns`). The visible count comes from a delayed readback of the indirect commands.
 
 ## Owner decisions
 

@@ -40,6 +40,84 @@ namespace Raven
 		CheckDescriptorResult(vkCreateDescriptorSetLayout(m_Device, &info, nullptr, &layout),
 			"vkCreateDescriptorSetLayout (texture)");
 		m_Layout = layout;
+
+		try
+		{
+			// Elements change only after the frames that used them retire, so updates never
+			// touch a descriptor a pending frame reads (update-after-bind, unused while pending).
+			const std::array<VkDescriptorSetLayoutBinding, 2> bindless
+			{
+				VkDescriptorSetLayoutBinding{ 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+					BindlessCapacity, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+				VkDescriptorSetLayoutBinding{ 1, VK_DESCRIPTOR_TYPE_SAMPLER,
+					1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
+			};
+			const std::array<VkDescriptorBindingFlags, 2> flags
+			{
+				VkDescriptorBindingFlags{ VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+					VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT },
+				VkDescriptorBindingFlags{ 0 }
+			};
+			VkDescriptorSetLayoutBindingFlagsCreateInfo flagInfo{};
+			flagInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+			flagInfo.bindingCount = static_cast<std::uint32_t>(flags.size());
+			flagInfo.pBindingFlags = flags.data();
+			VkDescriptorSetLayoutCreateInfo bindlessInfo{};
+			bindlessInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+			bindlessInfo.pNext = &flagInfo;
+			bindlessInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+			bindlessInfo.bindingCount = static_cast<std::uint32_t>(bindless.size());
+			bindlessInfo.pBindings = bindless.data();
+			CheckDescriptorResult(vkCreateDescriptorSetLayout(m_Device, &bindlessInfo, nullptr, &m_BindlessLayout),
+				"vkCreateDescriptorSetLayout (bindless textures)");
+
+			const std::array<VkDescriptorPoolSize, 2> sizes
+			{
+				VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, BindlessCapacity },
+				VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
+			};
+			VkDescriptorPoolCreateInfo poolInfo{};
+			poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+			poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+			poolInfo.maxSets = 1;
+			poolInfo.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+			poolInfo.pPoolSizes = sizes.data();
+			CheckDescriptorResult(vkCreateDescriptorPool(m_Device, &poolInfo, nullptr, &m_BindlessPool),
+				"vkCreateDescriptorPool (bindless textures)");
+			VkDescriptorSetAllocateInfo allocation{};
+			allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			allocation.descriptorPool = m_BindlessPool;
+			allocation.descriptorSetCount = 1;
+			allocation.pSetLayouts = &m_BindlessLayout;
+			CheckDescriptorResult(vkAllocateDescriptorSets(m_Device, &allocation, &m_BindlessSet),
+				"vkAllocateDescriptorSets (bindless textures)");
+
+			VkSamplerCreateInfo samplerInfo{};
+			samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+			samplerInfo.magFilter = VK_FILTER_LINEAR;
+			samplerInfo.minFilter = VK_FILTER_LINEAR;
+			samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+			samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+			samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+			samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+			samplerInfo.maxLod = 0.0f;
+			CheckDescriptorResult(vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_Sampler),
+				"vkCreateSampler (bindless textures)");
+			const VkDescriptorImageInfo sampler{ m_Sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED };
+			VkWriteDescriptorSet write{};
+			write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			write.dstSet = m_BindlessSet;
+			write.dstBinding = 1;
+			write.descriptorCount = 1;
+			write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+			write.pImageInfo = &sampler;
+			vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+		}
+		catch (...)
+		{
+			Destroy();
+			throw;
+		}
 	}
 
 	void VulkanTextureDescriptors::AddPage()
@@ -64,8 +142,10 @@ namespace Raven
 		m_Pages.push_back({ pool, 0 });
 	}
 
-	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(const VulkanTexture& texture)
+	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(VulkanTexture& texture)
 	{
+		if (m_FreeElements.empty() && m_NextElement == BindlessCapacity)
+			throw std::length_error("The bindless texture array is full");
 		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE ||
 			texture.GetSampler() == VK_NULL_HANDLE)
 			throw std::invalid_argument("Texture descriptors require a texture from the same device");
@@ -97,12 +177,33 @@ namespace Raven
 			throw;
 		}
 		++page->Used;
-		WriteBinding(set, texture);
+		WriteSet(set, texture);
+		std::uint32_t element = m_NextElement;
+		if (!m_FreeElements.empty())
+		{
+			element = m_FreeElements.back();
+			m_FreeElements.pop_back();
+		}
+		else
+		{
+			++m_NextElement;
+		}
+		texture.SetBindlessIndex(element);
+		WriteElement(element, texture);
 		return set;
 	}
 
-	void VulkanTextureDescriptors::ReleaseBinding(VkDescriptorSet binding) noexcept
+	void VulkanTextureDescriptors::ReleaseBinding(const VulkanTexture& texture) noexcept
 	{
+		try
+		{
+			m_FreeElements.push_back(texture.GetBindlessIndex());
+		}
+		catch (...)
+		{
+			// The element stays unused until shutdown.
+		}
+		auto binding = texture.GetDescriptorSet();
 		const auto found = m_Bindings.find(binding);
 		if (found == m_Bindings.end())
 			return;
@@ -114,7 +215,27 @@ namespace Raven
 		}
 	}
 
-	void VulkanTextureDescriptors::WriteBinding(VkDescriptorSet set, const VulkanTexture& texture) const noexcept
+	void VulkanTextureDescriptors::WriteBinding(const VulkanTexture& target, const VulkanTexture& contents) const noexcept
+	{
+		WriteSet(target.GetDescriptorSet(), contents);
+		WriteElement(target.GetBindlessIndex(), contents);
+	}
+
+	void VulkanTextureDescriptors::WriteElement(std::uint32_t element, const VulkanTexture& contents) const noexcept
+	{
+		const VkDescriptorImageInfo image{ VK_NULL_HANDLE, contents.GetView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = m_BindlessSet;
+		write.dstBinding = 0;
+		write.dstArrayElement = element;
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		write.pImageInfo = &image;
+		vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+	}
+
+	void VulkanTextureDescriptors::WriteSet(VkDescriptorSet set, const VulkanTexture& texture) const noexcept
 	{
 		const VkDescriptorImageInfo image{ VK_NULL_HANDLE, texture.GetView(),
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
@@ -146,6 +267,15 @@ namespace Raven
 		for (const auto& page : m_Pages)
 			vkDestroyDescriptorPool(m_Device, page.Pool, nullptr);
 		m_Pages.clear();
+		if (m_Sampler != VK_NULL_HANDLE)
+			vkDestroySampler(m_Device, m_Sampler, nullptr);
+		m_Sampler = VK_NULL_HANDLE;
+		if (m_BindlessPool != VK_NULL_HANDLE)
+			vkDestroyDescriptorPool(m_Device, m_BindlessPool, nullptr);
+		m_BindlessPool = VK_NULL_HANDLE;
+		if (m_BindlessLayout != VK_NULL_HANDLE)
+			vkDestroyDescriptorSetLayout(m_Device, m_BindlessLayout, nullptr);
+		m_BindlessLayout = VK_NULL_HANDLE;
 		if (m_Layout != VK_NULL_HANDLE)
 		{
 			vkDestroyDescriptorSetLayout(m_Device, m_Layout, nullptr);

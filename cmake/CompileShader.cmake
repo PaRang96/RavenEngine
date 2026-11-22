@@ -1,6 +1,11 @@
 # Shared by the normal build and the development watcher.
+# INCLUDE names the engine shader directory, which holds GpuScene.hlsli and Raven/Material.hlsli.
+set(include_arguments)
+if(DEFINED INCLUDE)
+    set(include_arguments -I "${INCLUDE}")
+endif()
 execute_process(
-    COMMAND "${DXC}" -spirv -fspv-target-env=vulkan1.2 -WX "${OPTIMIZATION}"
+    COMMAND "${DXC}" -spirv -fspv-target-env=vulkan1.2 -WX "${OPTIMIZATION}" ${include_arguments}
         -T "${PROFILE}" -E "${ENTRY}" "${SOURCE}" -Fo "${OUTPUT}"
     RESULT_VARIABLE compile_result
 )

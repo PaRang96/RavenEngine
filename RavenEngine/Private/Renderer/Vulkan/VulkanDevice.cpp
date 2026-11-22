@@ -62,10 +62,22 @@ namespace Raven
 		vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 		vulkan12.pNext = &dynamicRendering;
 		vulkan12.timelineSemaphore = VK_TRUE;
+		// Bindless textures and GPU-driven draws (docs/GpuDrivenDesign.md, G4/G5), required at selection.
+		vulkan12.descriptorIndexing = VK_TRUE;
+		vulkan12.runtimeDescriptorArray = VK_TRUE;
+		vulkan12.descriptorBindingPartiallyBound = VK_TRUE;
+		vulkan12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+		vulkan12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+		vulkan12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+		VkPhysicalDeviceFeatures2 core{};
+		core.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		core.pNext = &vulkan12;
+		core.features.multiDrawIndirect = VK_TRUE;
+		core.features.drawIndirectFirstInstance = VK_TRUE;
 
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		createInfo.pNext = &vulkan12;
+		createInfo.pNext = &core;
 		createInfo.queueCreateInfoCount = queueInfoCount;
 		createInfo.pQueueCreateInfos = queueInfos.data();
 		createInfo.enabledExtensionCount =

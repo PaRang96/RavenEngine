@@ -3,13 +3,13 @@
 #include "Raven/Core/Api.hpp"
 
 #include "Raven/Renderer/ColorVertex.hpp"
+#include "Raven/Renderer/MeshHandle.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
 #include "Raven/Renderer/OrthographicCamera.hpp"
 #include "Raven/Renderer/TextureDesc.hpp"
 #include "Raven/Renderer/TextureHandle.hpp"
 #include "Raven/Renderer/TexturedVertex.hpp"
-#include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 #include "Raven/Renderer/CameraView.hpp"
@@ -25,6 +25,8 @@ namespace Raven
 {
 	class Window;
 	class VulkanTexture;
+	class VulkanMesh;
+	class RenderWorld;
 
 	struct VulkanResourceStats
 	{
@@ -105,26 +107,16 @@ namespace Raven
 		using CameraViewBuilder = std::function<std::optional<CameraView>(
 			std::uint32_t width, std::uint32_t height)>;
 		
-		RAVEN_API void DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> draws);
-		
-		// Opaque color draws precede opaque textured draws; depth resolves visibility.
-		// All submitted resources must belong to this context.
-		RAVEN_API void DrawFrame(const PerspectiveCamera& camera,
-			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> texturedDraws);
-		
+		// Camera overloads draw only textured and transparent draws; lit meshes come from a RenderWorld.
 		// Visible opaque draws precede transparent draws. Transparent order is ascending
 		// layer/order, then far-to-near camera depth, with submission order breaking ties.
+		// All submitted resources must belong to this context.
 		RAVEN_API void DrawFrame(const PerspectiveCamera& camera,
-			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws);
-		
-		// Orthographic rendering shares the same resource, depth, visibility and ordering rules.
-		RAVEN_API void DrawFrame(const OrthographicCamera& camera, std::span<const VulkanDraw> draws);
+			std::span<const VulkanTexturedDraw> opaqueDraws = {},
+			std::span<const VulkanTransparentDraw> transparentDraws = {});
 		RAVEN_API void DrawFrame(const OrthographicCamera& camera,
-			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> texturedDraws);
-		RAVEN_API void DrawFrame(const OrthographicCamera& camera,
-			std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws);
+			std::span<const VulkanTexturedDraw> opaqueDraws = {},
+			std::span<const VulkanTransparentDraw> transparentDraws = {});
 		struct RenderedCameraView
 		{
 			CameraView Camera;
@@ -133,8 +125,10 @@ namespace Raven
 		};
 
 		// Returns the camera and drawable extent used to present this frame.
+		// Lit meshes come from world, culled and drawn on the GPU (docs/GpuDrivenDesign.md, G5);
+		// null draws none. The world's mesh handles and textures must belong to this context.
 		RAVEN_API std::optional<RenderedCameraView> DrawFrame(const CameraViewBuilder& buildView,
-			std::span<const VulkanDraw> draws,
+			RenderWorld* world,
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
 

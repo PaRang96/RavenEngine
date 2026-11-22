@@ -56,7 +56,9 @@ namespace Raven
 	public:
 		static constexpr VkDeviceSize Alignment = 16;
 		static constexpr VkBufferUsageFlags Usage =
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+			// GPU scene uploads are copied or scattered from the ring (docs/GpuDrivenDesign.md, G2).
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
 		static constexpr VkDeviceSize Align(VkDeviceSize value) noexcept
 		{

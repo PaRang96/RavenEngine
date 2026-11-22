@@ -1,3 +1,4 @@
+#include "Raven/Renderer/RenderWorld.hpp"
 #include "PerspectiveLevel.hpp"
 #include "Raven/Components/InteractionComponents.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
@@ -159,25 +160,20 @@ namespace
 
 	void Render(Window& window, VulkanContext& renderer, PerspectiveLevel& level)
 	{
-		const auto scene = level.GetAccess();
-		std::vector<VulkanDraw> draws;
-		for (const auto entity : scene.Query<ECS::StaticMeshComponent, ECS::TransformComponent>())
+		level.UpdateWorldTransforms();
+		RenderWorld world;
+		world.Sync(level, [&](ECS::Entity, const ECS::MaterialComponent& material) -> const VulkanTexture*
 		{
-			const auto mesh = Read<ECS::StaticMeshComponent>(scene, entity);
-			const auto* resource = renderer.ResolveMesh(mesh.Mesh);
-			Check(resource != nullptr, "Expected a live scene mesh");
-			const auto material = Read<ECS::MaterialComponent>(scene, entity);
-			const auto* texture = material.BaseColorTexture.IsValid()
-				? &level.GetAsset(material.BaseColorTexture.Id).GetTexture() : nullptr;
-			draws.push_back({*resource, level.GetWorldTransform(entity), mesh.Tint, texture, material.Lit});
-		}
+			return material.BaseColorTexture.IsValid() ? &level.GetAsset(material.BaseColorTexture.Id).GetTexture() : nullptr;
+		});
+		Check(world.GetObjectCount() > 0, "Expected live scene meshes");
 		WaitFor(window, [&]
 		{
 			return renderer.DrawFrame([&](std::uint32_t width, std::uint32_t height)
 			{
 				return level.GetCameraView(level.GetSelectedCamera(),
 					static_cast<float>(width) / static_cast<float>(height));
-			}, draws, {}, {}, level.GetLighting()).has_value();
+			}, &world, {}, {}, level.GetLighting()).has_value();
 		}, "No 3D frame presented");
 	}
 

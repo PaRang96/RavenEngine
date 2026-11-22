@@ -1,8 +1,7 @@
 #pragma once
 
-#include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
+#include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
-#include "Renderer/Vulkan/VulkanMeshInstance.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
@@ -14,51 +13,6 @@
 
 namespace Raven
 {
-	struct VulkanMeshData;
-
-	// Lit-pipeline draws that share mesh data and texture become one instanced draw (R5). There
-	// is one lit pipeline per frame and the lit flag is per-instance data, so neither splits a batch.
-	struct LitBatchKey
-	{
-		const VulkanMeshData* Mesh;
-		// Null selects the white texture while recording.
-		const VulkanTexture* Texture;
-		bool operator==(const LitBatchKey&) const = default;
-	};
-
-	// Open-addressing table from key to batch index, reused across frames (R5).
-	class LitBatchTable
-	{
-	public:
-		void Clear() noexcept;
-		// Returns the batch for the key, or stores nextBatch and returns it for a new key.
-		std::uint32_t Find(LitBatchKey key, std::uint32_t nextBatch);
-
-	private:
-		struct Slot
-		{
-			LitBatchKey Key{};
-			std::uint32_t Batch = Empty;
-		};
-		static constexpr std::uint32_t Empty = ~0u;
-		void Grow();
-		std::vector<Slot> m_Slots;
-		std::size_t m_Count = 0;
-	};
-
-	struct LitBatch
-	{
-		LitBatchKey Key;
-		std::uint32_t FirstInstance;
-		std::uint32_t InstanceCount;
-	};
-
-	struct QueuedColorDraw
-	{
-		const VulkanDraw* Draw;
-		std::uint32_t Batch;
-	};
-
 	struct QueuedTexturedDraw
 	{
 		const VulkanTexturedDraw* Draw;
@@ -93,13 +47,7 @@ namespace Raven
 	struct VulkanDrawQueue
 	{
 		FrameUniformData Frame{};
-		// Visible lit-pipeline draws in submission order, with the batch each joined.
-		std::vector<QueuedColorDraw> Color;
-		// Batches in first-seen order; each owns a contiguous range of MeshInstances.
-		std::vector<LitBatch> LitBatches;
-		std::vector<MeshInstanceData> MeshInstances;
-		// Cleared every frame: keys name mesh data and textures that may be released afterwards.
-		LitBatchTable LitBatchIndex;
+		// Lit meshes are GPU-driven (docs/GpuDrivenDesign.md, G7); this queue holds the textured path.
 		std::vector<QueuedTexturedDraw> OpaqueTexture;
 		std::vector<QueuedTexturedDraw> Transparent;
 		std::vector<TexturedInstanceData> TexturedInstances;
@@ -108,6 +56,6 @@ namespace Raven
 	};
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,
-		std::span<const VulkanDraw> colorDraws, std::span<const VulkanTexturedDraw> opaqueDraws,
+		std::span<const VulkanTexturedDraw> opaqueDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
 }

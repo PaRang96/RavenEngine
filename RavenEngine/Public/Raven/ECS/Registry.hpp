@@ -20,6 +20,7 @@ namespace Raven
 {
 	class Scene;
 	class SceneAccess;
+	class RenderWorldSync;
 }
 
 namespace Raven::ECS
@@ -237,6 +238,8 @@ namespace Raven::ECS
     private:
 		friend class ::Raven::Scene;
 		friend class ::Raven::SceneAccess;
+		// Reads change ticks of whole pools, like Scene (docs/GpuDrivenDesign.md, G1).
+		friend class ::Raven::RenderWorldSync;
 		template<typename... T>
 		friend class ::Raven::ECS::View;
 

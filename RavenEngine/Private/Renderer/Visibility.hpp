@@ -62,6 +62,9 @@ namespace Raven
 			}
 		}
 
+		// Normalized planes, also uploaded for GPU culling (docs/GpuDrivenDesign.md, G5).
+		const std::array<std::array<double, 4>, 6>& GetPlanes() const noexcept { return m_Planes; }
+
 		bool Intersects(const MeshBounds& world) const
 		{
 			for (const auto& plane : m_Planes)

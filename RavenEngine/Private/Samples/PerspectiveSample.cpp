@@ -157,7 +157,7 @@ namespace Raven
 				ReportCameraUnavailable(m_CameraViewUnavailable, error.what());
 			}
 			return view;
-		}, m_Draws, m_TexturedDraws, m_TransparentDraws, GetLevel().GetLighting());
+		}, &m_RenderWorld, m_TexturedDraws, m_TransparentDraws, GetLevel().GetLighting());
 
 		if (m_MeshReloadAwaitingPresent)
 		{
@@ -289,30 +289,12 @@ namespace Raven
 			FrameSection transformTiming(metrics ? &metrics->WorldTransforms : nullptr);
 			level.UpdateWorldTransforms();
 		}
-		const auto isFinite = [](const Mat4& matrix)
+		// Only new objects and changed materials resolve their texture (G1).
+		m_RenderWorld.Sync(level, [&](ECS::Entity, const ECS::MaterialComponent& material) -> const VulkanTexture*
 		{
-			for (const auto& column : matrix.Columns)
-				for (const float value : column)
-					if (!std::isfinite(value))
-						return false;
-			return true;
-		};
-		m_Draws.clear();
-		const auto scene = level.GetAccess();
-		scene.View<const ECS::WorldTransformComponent, const ECS::StaticMeshComponent>().Each(
-			[&](ECS::Entity entity, const ECS::WorldTransformComponent& world, const ECS::StaticMeshComponent& mesh)
-			{
-				const auto* resource = m_Renderer.ResolveMesh(mesh.Mesh);
-				if (!resource || !isFinite(world.World))
-					return;
-				const auto* found = scene.TryGet<const ECS::MaterialComponent>(entity);
-				const ECS::MaterialComponent material = found ? *found : ECS::MaterialComponent{};
-				const VulkanTexture* texture = nullptr;
-				if (material.BaseColorTexture.IsValid())
-					texture = &level.UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
-				const Vec4 color{ mesh.Tint.X * material.BaseColor.X, mesh.Tint.Y * material.BaseColor.Y,
-					mesh.Tint.Z * material.BaseColor.Z, mesh.Tint.W * material.BaseColor.W };
-				m_Draws.push_back({ *resource, world.World, color, texture, material.Lit });
-			});
+			if (!material.BaseColorTexture.IsValid())
+				return nullptr;
+			return &level.UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
+		});
 	}
 }

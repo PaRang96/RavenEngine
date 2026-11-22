@@ -29,6 +29,8 @@ namespace Raven
 			bool Synchronization2 = false;
 			bool DescriptorIndexing = false;
 			bool DrawIndirectCount = false;
+			bool MultiDrawIndirect = false;
+			bool DrawIndirectFirstInstance = false;
 		};
 
 		// Extension feature structures are chained only when the extension is present.
@@ -61,10 +63,16 @@ namespace Raven
 				vulkan12.timelineSemaphore == VK_TRUE,
 				dynamicRendering.dynamicRendering == VK_TRUE,
 				synchronization2.synchronization2 == VK_TRUE,
+				// The bindless texture array (docs/GpuDrivenDesign.md, G4).
 				vulkan12.descriptorIndexing == VK_TRUE && vulkan12.runtimeDescriptorArray == VK_TRUE &&
 					vulkan12.descriptorBindingPartiallyBound == VK_TRUE &&
-					vulkan12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+					vulkan12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
+					vulkan12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+					vulkan12.descriptorBindingUpdateUnusedWhilePending == VK_TRUE,
 				vulkan12.drawIndirectCount == VK_TRUE,
+				// One fixed-count indirect draw whose commands start at their mesh's region (G5).
+				features.features.multiDrawIndirect == VK_TRUE,
+				features.features.drawIndirectFirstInstance == VK_TRUE,
 			};
 		}
 
@@ -199,6 +207,9 @@ namespace Raven
 			require(support.TimelineSemaphore, "timelineSemaphore");
 			require(hasDynamicRendering && support.DynamicRendering, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 			require(hasSynchronization2 && support.Synchronization2, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+			require(support.DescriptorIndexing, "descriptor indexing for bindless textures");
+			require(support.MultiDrawIndirect, "multiDrawIndirect");
+			require(support.DrawIndirectFirstInstance, "drawIndirectFirstInstance");
 			if (!missing.empty())
 			{
 				rejected.push_back(name + " lacks " + missing);

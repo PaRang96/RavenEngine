@@ -63,6 +63,7 @@ namespace Raven
 
 	private:
 		friend class SceneAccess;
+		friend class RenderWorld;
 		struct EntityHash
 		{
 			std::size_t operator()(ECS::Entity entity) const noexcept;

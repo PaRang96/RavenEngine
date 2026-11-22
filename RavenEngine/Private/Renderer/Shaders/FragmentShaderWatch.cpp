@@ -29,19 +29,22 @@ namespace Raven
 		struct Snapshot
 		{
 			std::vector<std::byte> Bytes;
+			std::vector<std::byte> Header;
 			std::string Error;
 			bool operator==(const Snapshot&) const = default;
 		};
 
-		Snapshot ReadSource(const std::filesystem::path& source)
+		Snapshot ReadSource(const std::filesystem::path& source, const std::filesystem::path& header)
 		{
 			try
 			{
-				return { Files::ReadBinary(source, MaxSourceBytes), {} };
+				auto bytes = Files::ReadBinary(source, MaxSourceBytes);
+				auto included = header.empty() ? std::vector<std::byte>{} : Files::ReadBinary(header, MaxSourceBytes);
+				return { std::move(bytes), std::move(included), {} };
 			}
 			catch (const std::exception& error)
 			{
-				return { {}, error.what() };
+				return { {}, {}, error.what() };
 			}
 		}
 
@@ -91,7 +94,8 @@ namespace Raven
 		}
 
 		std::optional<FragmentShaderWatch::Candidate> Compile(const ShaderScratch& scratch,
-			const Snapshot& snapshot, FragmentShaderKind kind, std::stop_token stop)
+			const Snapshot& snapshot, FragmentShaderKind kind, const std::filesystem::path& include,
+			std::stop_token stop)
 		{
 			if (!snapshot.Error.empty())
 				throw std::runtime_error(snapshot.Error);
@@ -105,7 +109,7 @@ namespace Raven
 				std::wstring(L"-DDXC=") + Dxc, std::wstring(L"-DVALIDATOR=") + Validator,
 				std::wstring(L"-DOPTIMIZATION=") + Optimization, std::wstring(L"-DPROFILE=") + Profile,
 				std::wstring(L"-DENTRY=") + Entry, L"-DSOURCE=" + input.wstring(),
-				L"-DOUTPUT=" + output.wstring(), L"-P", CompileScript
+				L"-DOUTPUT=" + output.wstring(), L"-DINCLUDE=" + include.wstring(), L"-P", CompileScript
 			};
 			std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)> process(
 				Platform::StartBuildProcess(CMake, arguments, log), &Platform::DestroyBuildProcess);
@@ -126,12 +130,14 @@ namespace Raven
 			std::vector<std::uint32_t> words(bytes.size() / sizeof(std::uint32_t));
 			std::memcpy(words.data(), bytes.data(), bytes.size());
 			CheckFragmentShaderInterface(words, kind);
-			return FragmentShaderWatch::Candidate{ std::move(words), snapshot.Bytes, compileTime };
+			return FragmentShaderWatch::Candidate{ std::move(words), snapshot.Bytes, snapshot.Header, compileTime };
 		}
 	}
 
 	FragmentShaderWatch::FragmentShaderWatch(std::filesystem::path source, FragmentShaderKind kind)
 		: m_Source(std::filesystem::absolute(source)),
+		  m_Header(kind == FragmentShaderKind::Lit ? m_Source.parent_path() / "Raven" / "Material.hlsli"
+			  : std::filesystem::path{}),
 		  m_Kind(kind),
 		  m_Worker([this](std::stop_token stop) { Run(stop); })
 	{
@@ -145,8 +151,8 @@ namespace Raven
 
 	bool FragmentShaderWatch::IsCurrent(const Candidate& candidate) const
 	{
-		const auto snapshot = ReadSource(m_Source);
-		return snapshot.Error.empty() && snapshot.Bytes == candidate.Source;
+		const auto snapshot = ReadSource(m_Source, m_Header);
+		return snapshot.Error.empty() && snapshot.Bytes == candidate.Source && snapshot.Header == candidate.Header;
 	}
 
 	void FragmentShaderWatch::Run(std::stop_token stop)
@@ -154,14 +160,15 @@ namespace Raven
 		try
 		{
 			const ShaderScratch scratch;
-			const Platform::WatchDirectory directory{ m_Source.parent_path() };
+			// Lit shaders also watch Raven/Material.hlsli below the source directory.
+			const Platform::WatchDirectory directory{ m_Source.parent_path(), !m_Header.empty() };
 			Platform::DirectoryWatch watch(std::span(&directory, 1));
 			std::optional<Snapshot> observed;
 			auto stableSince = Clock::now();
 			bool attempted = false;
 			while (!stop.stop_requested())
 			{
-				auto current = ReadSource(m_Source);
+				auto current = ReadSource(m_Source, m_Header);
 				const auto now = Clock::now();
 				if (!observed || current != *observed)
 				{
@@ -178,7 +185,7 @@ namespace Raven
 					std::string error;
 					try
 					{
-						candidate = Compile(scratch, *observed, m_Kind, stop);
+						candidate = Compile(scratch, *observed, m_Kind, m_Source.parent_path(), stop);
 					}
 					catch (const std::exception& failure)
 					{
@@ -186,7 +193,7 @@ namespace Raven
 					}
 					if (stop.stop_requested())
 						return;
-					if (ReadSource(m_Source) != *observed)
+					if (ReadSource(m_Source, m_Header) != *observed)
 						observed.reset();
 					else if (!error.empty())
 						Log(LogLevel::Warning, "Cannot reload shader " + PathToUtf8(m_Source) + ": " + error);

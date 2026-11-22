@@ -20,8 +20,10 @@ set(RAVEN_SHADER_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Shaders/$<CONFIG>
 set(RAVEN_SHADER_OUTPUTS)
 set(RAVEN_SHADER_COMPILE_SCRIPT "${PROJECT_SOURCE_DIR}/cmake/CompileShader.cmake")
 set(RAVEN_SHADER_OPTIMIZATION "$<IF:$<CONFIG:Debug>,-Od,-O3>")
+set(RAVEN_SHADER_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Private/Renderer/Shaders")
+file(GLOB_RECURSE RAVEN_SHADER_INCLUDES CONFIGURE_DEPENDS "${RAVEN_SHADER_DIRECTORY}/*.hlsli")
 function(raven_add_shader source profile entry)
-    set(shader_source "${CMAKE_CURRENT_SOURCE_DIR}/Private/Renderer/Shaders/${source}")
+    set(shader_source "${RAVEN_SHADER_DIRECTORY}/${source}")
     get_filename_component(shader_name "${source}" NAME_WLE)
     set(shader_output "${RAVEN_SHADER_OUTPUT_DIRECTORY}/${shader_name}.spv")
     target_sources(RavenCore PRIVATE "${shader_source}")
@@ -32,9 +34,9 @@ function(raven_add_shader source profile entry)
         COMMAND "${CMAKE_COMMAND}" "-DDXC=${RAVEN_DXC_EXECUTABLE}"
             "-DVALIDATOR=${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}"
             "-DOPTIMIZATION=${RAVEN_SHADER_OPTIMIZATION}" "-DPROFILE=${profile}" "-DENTRY=${entry}"
-            "-DSOURCE=${shader_source}" "-DOUTPUT=${shader_output}"
+            "-DSOURCE=${shader_source}" "-DOUTPUT=${shader_output}" "-DINCLUDE=${RAVEN_SHADER_DIRECTORY}"
             -P "${RAVEN_SHADER_COMPILE_SCRIPT}"
-        DEPENDS "${shader_source}" "${RAVEN_DXC_EXECUTABLE}"
+        DEPENDS "${shader_source}" ${RAVEN_SHADER_INCLUDES} "${RAVEN_DXC_EXECUTABLE}"
             "${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}" "${RAVEN_SHADER_COMPILE_SCRIPT}"
         COMMENT "Compile and validate ${source} (${entry})"
         VERBATIM
@@ -52,6 +54,13 @@ raven_add_shader("Color.vert.hlsl" vs_6_0 VSMain)
 raven_add_shader("${RAVEN_LIT_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
 raven_add_shader("Texture.vert.hlsl" vs_6_0 VSMain)
 raven_add_shader("${RAVEN_TEXTURED_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
+# GPU-driven scene passes (docs/GpuDrivenDesign.md, G2/G5).
+raven_add_shader("Scatter.comp.hlsl" cs_6_0 CSMain)
+raven_add_shader("Cull.comp.hlsl" cs_6_0 CSMain)
+foreach(include IN LISTS RAVEN_SHADER_INCLUDES)
+    target_sources(RavenCore PRIVATE "${include}")
+    set_source_files_properties("${include}" PROPERTIES HEADER_FILE_ONLY TRUE)
+endforeach()
 configure_file("${PROJECT_SOURCE_DIR}/cmake/ShaderWatchConfig.hpp.in"
     "${CMAKE_CURRENT_BINARY_DIR}/Generated/ShaderWatchConfig.hpp.in" @ONLY)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/$<CONFIG>/ShaderWatchConfig.hpp"

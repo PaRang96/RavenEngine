@@ -52,7 +52,7 @@ def generate():
 
 def read_frames(path):
     with path.open(newline="") as file:
-        return [{key: float(value) if key in ("delta_seconds", "benchmark_phase", "gpu_ns") else int(value)
+        return [{key: float(value) if key in ("delta_seconds", "benchmark_phase", "gpu_ns", "gpu_cull_ns") else int(value)
                  for key, value in row.items()} for row in csv.DictReader(file) if row["drawable"] == "1"]
 
 
@@ -85,6 +85,8 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
         if place:
             place(app)
             app.marker(f"Loaded level 'Benchmark-{count}.ravenscene'".encode())
+            if not animated:
+                app.tap(0x20, 0x39)
             app.marker(b"Watching lit fragment shader")
         else:
             configure_app(app, count, watching, animated)
@@ -108,6 +110,8 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
           "The selected animation mode did not produce the expected motion")
     timestamps = {row["gpu_frame_ns"]: row["gpu_ns"] for row in frames if row["gpu_frame_ns"]}
     gpu = [timestamps[row["start_ns"]] for row in window if row["start_ns"] in timestamps]
+    culls = {row["gpu_frame_ns"]: row.get("gpu_cull_ns", 0) for row in frames if row["gpu_frame_ns"]}
+    cull = [culls[row["start_ns"]] for row in window if row["start_ns"] in culls]
     check(len(gpu) >= len(window) - 2 and min(gpu) > 0, "Completed GPU timestamps are missing")
     intervals = [b["start_ns"] - a["start_ns"] for a, b in zip(window, window[1:])]
     stages = {
@@ -127,6 +131,7 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
     result.update({"meshes": count, "draw_calls": next(iter(calls)), "animation": "animated" if animated else "static",
                    "watching": watching, "frames": len(window), "frame": distribution(intervals),
                    "fps": round(len(intervals) * 1e9 / sum(intervals), 2), "display_waits": distribution(waits),
+                   "gpu_cull": distribution(cull),
                    "cpu_preparation": distribution(preparation),
                    "cpu_under_5_ms_percent": round(100 * sum(x < 5_000_000 for x in preparation) / len(window), 2),
                    "intervals_at_most_6_06_ms_percent": round(100 * sum(x <= 6_060_606 for x in intervals)
@@ -183,7 +188,7 @@ def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
 
 
 def hot_reload(report, count):
-    source = build_snapshot(report)
+    source = build_snapshot(report, stress=count)
     path = source / "RavenEngine/Private/Game/InteractionGame.cpp"
     original = path.read_bytes()
     rule = b"ContinuousRotationSpeed = 1.0f;"
@@ -192,7 +197,7 @@ def hot_reload(report, count):
     activation = b"Game module activated, generation "
     try:
         with SMOKE["run_sample"](runtime(source) / "RavenEngine.exe", directory,
-                                 ("--scene", SCENES[count])) as app:
+                                 ("--scene", SCENE_IDS[count])) as app:
             configure_app(app, count, True, True)
             time.sleep(2)
             expected = app.count(activation) + 1
@@ -234,7 +239,7 @@ def main():
     runs.add_argument("--seconds", type=float, default=4)
     runs.add_argument("--repeats", type=int, default=3)
     reload = modes.add_parser("reload")
-    reload.add_argument("--meshes", type=int, choices=SCENES, default=500)
+    reload.add_argument("--meshes", type=int, choices=SCENE_IDS, default=500)
     validate = modes.add_parser("validate")
     validate.add_argument("--meshes", type=int, choices=SCENE_IDS, default=2000)
     scale = modes.add_parser("scale")
@@ -243,6 +248,7 @@ def main():
     scale.add_argument("--seconds", type=float, default=4)
     scale.add_argument("--repeats", type=int, default=3)
     scale.add_argument("--meshes", type=int, choices=(4000, *STRESS), default=4000)
+    scale.add_argument("--static", action="store_true", help="Pause the rotators (M3 100k static target)")
     args = parser.parse_args()
     if args.mode == "generate":
         generate()
@@ -268,7 +274,7 @@ def main():
             for name, environment, place in cases(display, selected, trial, SMOKE["USER"]):
                 with environment:
                     row = profile(runtime(source) / "RavenEngine.exe", report / name,
-                                  args.meshes, True, True, args.seconds, place=place)
+                                  args.meshes, not args.static, True, args.seconds, place=place)
                 log = (report / name / "run.log").read_text(encoding="utf-8", errors="replace")
                 _, adapter, mode = name.split("-", 2)
                 selected_adapter = next(line.split("Selected GPU: ", 1)[1] for line in log.splitlines()
@@ -277,8 +283,8 @@ def main():
                 check(f"[scale] Present {mode}" in log, "Wrong presentation mode selected")
                 check(f"Swapchain created: {display.width} x {display.height}," in log,
                       "The renderer did not use the selected display resolution")
-                # Three lit batches (textured cube, painted cube, painted sphere) and four textured batches.
-                check(row["draw_calls"] == 7, "Unexpected benchmark draw count")
+                # One indirect command per lit mesh (cube, sphere) and four textured batches (G5).
+                check(row["draw_calls"] == 6, "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
         result = {"label": args.label, "display": display.name, "hz": display.hz,

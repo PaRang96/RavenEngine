@@ -18,6 +18,8 @@
 #include "Core/FrameTrace.hpp"
 #include "ShaderWatchConfig.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
+#include "Renderer/Vulkan/VulkanGpuScene.hpp"
+#include "Renderer/RenderWorldState.hpp"
 
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/Paths.hpp"
@@ -116,12 +118,12 @@ namespace Raven
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
 		void ReplaceTexture(const VulkanTexture& texture, const TextureDesc& description);
 		template<typename Camera>
-		void DrawFrame(const Camera& camera, std::span<const VulkanDraw> draws,
+		void DrawFrame(const Camera& camera,
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws);
 
 		std::optional<RenderedCameraView> DrawFrameWithView(const CameraViewBuilder& buildView,
-			std::span<const VulkanDraw> draws,
+			RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
 
@@ -158,6 +160,8 @@ namespace Raven
 		const VulkanTexture* m_WhiteTexture = nullptr;
 		// Outlives the pass and swapchain; retired resources drop before the stores above (R3).
 		VulkanFrameTimeline m_Timeline;
+		// GPU-driven lit meshes (docs/GpuDrivenDesign.md, G2/G5); the pass borrows it.
+		VulkanGpuScene m_GpuScene;
 		std::optional<VulkanSwapchain> m_Swapchain;
 		std::optional<VulkanClearPass> m_ClearPass;
 		VulkanDrawQueue m_DrawQueue;
@@ -198,6 +202,9 @@ namespace Raven
 		  m_TextureDescriptors(m_Device),
 		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
+		  m_GpuScene(m_Device, m_PhysicalDevice, m_Timeline,
+			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Scatter.comp.spv"),
+			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Cull.comp.spv")),
 		  m_Lit{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.vert.spv"),
 			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.frag.spv"), {}, {} },
 		  m_Textured{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Texture.vert.spv"),
@@ -221,6 +228,9 @@ namespace Raven
 
 		const std::array<std::byte, 4> white{ std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255} };
 		m_WhiteTexture = &CreateTexture({ 1, 1, white, TextureColorSpace::Linear });
+		// Materials without a texture name bindless element 0 (G4).
+		if (m_WhiteTexture->GetBindlessIndex() != 0)
+			throw std::logic_error("The white texture must be bindless element 0");
 		PrepareSwapchain();
 		Log(LogLevel::Info, "Vulkan renderer context created");
 	}
@@ -246,8 +256,8 @@ namespace Raven
 		try
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
-				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(), m_FrameLayout.Get(),
-				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment, m_Timeline,
+				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
+				m_TextureDescriptors.GetBindlessLayout(), m_FrameLayout.Get(), m_GpuScene, m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment, m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
 			m_RetainedPipelines.reset();
 		}
@@ -399,7 +409,7 @@ namespace Raven
 		for (auto& slot : m_Textures)
 			if (!slot.Alive && slot.Owner && slot.Owner.use_count() == 1)
 			{
-				m_TextureDescriptors.ReleaseBinding(slot.Owner->GetDescriptorSet());
+				m_TextureDescriptors.ReleaseBinding(*slot.Owner);
 				slot.Owner.reset();
 			}
 	}
@@ -414,7 +424,7 @@ namespace Raven
 		VulkanTexture replacement(m_Device, m_PhysicalDevice, description);
 		// The upload fence covers earlier draws on the same graphics queue.
 		// Reuse the descriptor set and destroy the old image with the temporary.
-		m_TextureDescriptors.WriteBinding(texture.GetDescriptorSet(), replacement);
+		m_TextureDescriptors.WriteBinding(texture, replacement);
 		found->Owner->SwapImage(replacement);
 	}
 
@@ -428,7 +438,6 @@ namespace Raven
 
 	template<typename Camera>
 	void VulkanContext::Impl::DrawFrame(const Camera& camera,
-		std::span<const VulkanDraw> draws,
 		std::span<const VulkanTexturedDraw> texturedDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws)
 	{
@@ -440,12 +449,11 @@ namespace Raven
 				.Projection = camera.GetProjection(aspect)
 			};
 		};
-		DrawFrameWithView(buildView, draws, texturedDraws, transparentDraws);
+		DrawFrameWithView(buildView, nullptr, {}, texturedDraws, transparentDraws);
 	}
 
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::Impl::DrawFrameWithView(
-		const CameraViewBuilder& buildView,
-		std::span<const VulkanDraw> draws,
+		const CameraViewBuilder& buildView, RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
 		std::span<const VulkanTexturedDraw> texturedDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
 	{
@@ -454,10 +462,6 @@ namespace Raven
 		FrameSection preparation(metrics ? &metrics->RenderPrepare : nullptr);
 		CollectResources();
 		// Reject resources from other contexts before touching frame synchronization.
-		for (const auto& draw : draws)
-			if (!OwnsResource(m_Meshes, draw.Mesh) ||
-				(draw.Texture && !OwnsResource(m_Textures, *draw.Texture)))
-				throw std::invalid_argument("Color mesh does not belong to this renderer context");
 		for (const auto& draw : texturedDraws)
 			if (!OwnsResource(m_TexturedMeshes, draw.Mesh) || !OwnsResource(m_Textures, draw.Texture))
 				throw std::invalid_argument("Textured mesh and texture must belong to this renderer context");
@@ -478,19 +482,16 @@ namespace Raven
 		const Mat4 viewProjection = cameraView->Projection * view;
 
 		// Visibility and ordering complete before acquisition or command recording.
-		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection,
-			draws, texturedDraws, transparentDraws, lighting);
-			
+		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, texturedDraws, transparentDraws, lighting);
+		// Lit meshes: plan the GPU scene's upload; culling happens on the GPU (G5).
+		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh);
 		if (metrics)
-		{
-			metrics->VisibleMeshes = m_DrawQueue.Color.size();
-			metrics->DrawCalls = m_DrawQueue.LitBatches.size() + m_DrawQueue.OpaqueBatches.size() +
+			metrics->DrawCalls = m_GpuScene.GetDrawCount() + m_DrawQueue.OpaqueBatches.size() +
 				m_DrawQueue.TransparentBatches.size();
-		}
 		preparation.End();
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
-			m_DrawQueue, m_MeshPool, *m_WhiteTexture, metrics))
+			m_DrawQueue, m_MeshPool, m_TextureDescriptors.GetBindlessSet(), metrics))
 		{
 			ResetSwapchain();
 			return std::nullopt;
@@ -656,8 +657,8 @@ namespace Raven
 		if (!a.Managed || !b.Managed)
 			return false;
 		a.Owner->SwapImage(*b.Owner);
-		m_Impl->m_TextureDescriptors.WriteBinding(a.Owner->GetDescriptorSet(), *a.Owner);
-		m_Impl->m_TextureDescriptors.WriteBinding(b.Owner->GetDescriptorSet(), *b.Owner);
+		m_Impl->m_TextureDescriptors.WriteBinding(*a.Owner, *a.Owner);
+		m_Impl->m_TextureDescriptors.WriteBinding(*b.Owner, *b.Owner);
 		return true;
 	}
 
@@ -734,47 +735,28 @@ namespace Raven
 	}
 
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::DrawFrame(
-		const CameraViewBuilder& buildView,
-			std::span<const VulkanDraw> draws,
+		const CameraViewBuilder& buildView, RenderWorld* world,
 			std::span<const VulkanTexturedDraw> texturedDraws,
 			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
 	{
-		return m_Impl->DrawFrameWithView(buildView, draws, texturedDraws, transparentDraws, lighting);
+		// Handle resolution belongs to the context, which MeshHandle befriends.
+		const VulkanGpuScene::MeshResolver resolveMesh = [this](MeshHandle handle) -> const VulkanMeshData*
+		{
+			const auto* mesh = ResolveMesh(handle);
+			return mesh ? mesh->GetData().get() : nullptr;
+		};
+		return m_Impl->DrawFrameWithView(buildView, world, resolveMesh, texturedDraws, transparentDraws, lighting);
 	}
 
-	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> draws)
-	{
-		m_Impl->DrawFrame(camera, draws, {}, {});
-	}
-
-	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> colorDraws,
-		std::span<const VulkanTexturedDraw> texturedDraws)
-	{
-		m_Impl->DrawFrame(camera, colorDraws, texturedDraws, {});
-	}
-
-	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanDraw> colorDraws,
-		std::span<const VulkanTexturedDraw> opaqueDraws,
+	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanTexturedDraw> opaqueDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws)
 	{
-		m_Impl->DrawFrame(camera, colorDraws, opaqueDraws, transparentDraws);
+		m_Impl->DrawFrame(camera, opaqueDraws, transparentDraws);
 	}
 
-	void VulkanContext::DrawFrame(const OrthographicCamera& camera, std::span<const VulkanDraw> draws)
-	{
-		m_Impl->DrawFrame(camera, draws, {}, {});
-	}
-
-	void VulkanContext::DrawFrame(const OrthographicCamera& camera, std::span<const VulkanDraw> colorDraws,
-		std::span<const VulkanTexturedDraw> texturedDraws)
-	{
-		m_Impl->DrawFrame(camera, colorDraws, texturedDraws, {});
-	}
-
-	void VulkanContext::DrawFrame(const OrthographicCamera& camera, std::span<const VulkanDraw> colorDraws,
-		std::span<const VulkanTexturedDraw> opaqueDraws,
+	void VulkanContext::DrawFrame(const OrthographicCamera& camera, std::span<const VulkanTexturedDraw> opaqueDraws,
 		std::span<const VulkanTransparentDraw> transparentDraws)
 	{
-		m_Impl->DrawFrame(camera, colorDraws, opaqueDraws, transparentDraws);
+		m_Impl->DrawFrame(camera, opaqueDraws, transparentDraws);
 	}
 }
