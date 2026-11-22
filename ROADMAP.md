@@ -84,13 +84,12 @@ Raise the API baseline and restructure frame data for scale. CPU-side mesh insta
 
 ### M3 — GPU-driven rendering at scale
 
-Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (draft, awaiting owner review).
+Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (owner decisions Q1–Q7 recorded 2026-11-23; no code yet).
 
 - [ ] Keep a GPU-resident object/transform buffer updated incrementally from ECS changes, uploading dirty ranges only.
 - [ ] Make materials and textures bindless through descriptor indexing.
 - [ ] Add compute frustum culling that writes indirect draw arguments. Use draw-indirect-count where supported, with a fixed-count fallback that zeroes culled instance counts (for example on MoltenVK).
 - [ ] Add Hi-Z occlusion culling if the measurements justify it.
-- [ ] Move sprites onto the same instance and culling path.
 - [ ] Record GPU and CPU timings per stage in the benchmark build, and add a stress sample with thousands of moving objects driven by reloadable ECS systems.
 
 **Exit (proposed targets, measured on the minimum-spec machine):** 50,000 lit meshes with 20% animated run at ≥ 60 FPS at 2560 × 1440 on the RTX 3070 Ti Laptop, with CPU frame preparation ≤ 4 ms. 100,000 static meshes stay ≥ 60 FPS. A DLL edit to the animating system reloads without frame-time spikes above 100 ms.
@@ -125,6 +124,7 @@ Run the same engine on Linux and macOS. Platform contributors own native impleme
 - [ ] Expose stable scene access, ECS views and runtime resource handles to game code.
 - [ ] Generalize component and asset serialization beyond the current sample codecs, with round-trip tests.
 - [ ] Import multi-object FBX files with stable sub-asset identities.
+- [ ] Move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, with an owner-requested 2D run. *Moved from M3 (owner decision Q5, 2026-11-22).*
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
 - [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.
 

@@ -61,10 +61,11 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Step 8 (R7): `GetFramebufferState()` is the only window size accessor, `PrepareSwapchain()` is the one readiness check, and device loss has one error path. The mesh-handle item was reviewed with no change. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [ ] Step 9: M2 exit check (budgets, image comparison, Debug validation, live session, a local 10k scene, Courtyard on request).
 
-## M3 — GPU-driven rendering at scale (design draft)
+## M3 — GPU-driven rendering at scale (design decided, not started)
 
-- [x] Write the design note: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (draft, 2026-11-22). No M3 code until the owner approves it.
-- [ ] Owner review: decisions Q1–Q7 (render world, removal detection, bindless shader interface, indirect commands, sprites, Hi-Z, public API).
+- [x] Write the design note: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (2026-11-22).
+- [x] Owner decisions Q1–Q7 (2026-11-22/23): render world from change ticks, an in-memory lifecycle journal, bindless lit materials behind an engine header, fixed-count indirect commands, sprites moved to M6, Hi-Z only if measured, lit meshes only from the render world.
+- [ ] Implementation starts on an explicit owner request, after the M2 exit check (step 9). Steps 1–7 are in the design note.
 
 ## M4 — Platform contributor queue (parallel)
 
