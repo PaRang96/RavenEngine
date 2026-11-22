@@ -84,7 +84,7 @@ Raise the API baseline and restructure frame data for scale. CPU-side mesh insta
 
 ### M3 — GPU-driven rendering at scale
 
-Move object processing to the GPU to reach the performance goal.
+Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (draft, awaiting owner review).
 
 - [ ] Keep a GPU-resident object/transform buffer updated incrementally from ECS changes, uploading dirty ranges only.
 - [ ] Make materials and textures bindless through descriptor indexing.
