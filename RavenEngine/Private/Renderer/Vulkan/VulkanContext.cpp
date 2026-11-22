@@ -11,6 +11,7 @@
 #include "Renderer/Vulkan/VulkanTextureDescriptors.hpp"
 #include "Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Renderer/Vulkan/VulkanClearPass.hpp"
+#include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Renderer/Shaders/FragmentShaderWatch.hpp"
 #include "Core/PathText.hpp"
@@ -151,6 +152,8 @@ namespace Raven
 		std::vector<ResourceSlot<VulkanTexture>> m_Textures;
 		VulkanTextureDescriptors m_TextureDescriptors;
 		const VulkanTexture* m_WhiteTexture = nullptr;
+		// Outlives the pass and swapchain; retired resources drop before the stores above (R3).
+		VulkanFrameTimeline m_Timeline;
 		std::optional<VulkanSwapchain> m_Swapchain;
 		std::optional<VulkanClearPass> m_ClearPass;
 		VulkanDrawQueue m_DrawQueue;
@@ -188,6 +191,7 @@ namespace Raven
 			  m_Instance.Get(), m_Surface.Get())),
 		  m_Device(m_PhysicalDevice),
 		  m_TextureDescriptors(m_Device),
+		  m_Timeline(m_Device),
 		  m_Lit{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.vert.spv"),
 			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.frag.spv"), {}, {} },
 		  m_Textured{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Texture.vert.spv"),
@@ -237,7 +241,7 @@ namespace Raven
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
 				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
-				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment,
+				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment, m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
 			m_RetainedPipelines.reset();
 		}
@@ -343,6 +347,7 @@ namespace Raven
 			m_RetainedPipelines = m_ClearPass->GetPipelines();
 		m_ClearPass.reset();
 		m_Swapchain.reset();
+		m_Timeline.Collect();
 	}
 
 	const VulkanMesh& VulkanContext::Impl::CreateMesh(std::span<const ColorVertex> vertices,
@@ -385,8 +390,8 @@ namespace Raven
 
 	void VulkanContext::Impl::CollectResources() noexcept
 	{
-		if (m_ClearPass)
-			m_ClearPass->CollectCompletedResources();
+		// A released texture's slot keeps its owner until the retirement queue drops its copy.
+		m_Timeline.Collect();
 		for (auto& slot : m_Textures)
 			if (!slot.Alive && slot.Owner && slot.Owner.use_count() == 1)
 			{
@@ -475,23 +480,6 @@ namespace Raven
 		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection,
 			draws, texturedDraws, transparentDraws, lighting);
 			
-		std::vector<std::shared_ptr<const VulkanTexture>> retainedTextures;
-		const auto retain = [&](const VulkanTexture* texture)
-		{
-			if (!texture)
-				return;
-			const auto found = std::find_if(m_Textures.begin(), m_Textures.end(), [texture](const auto& slot)
-			{
-				return slot.Alive && slot.Owner.get() == texture;
-			});
-			retainedTextures.push_back(found->Owner);
-		};
-		for (const auto* draw : m_DrawQueue.Color)
-			retain(draw->Texture);
-		for (const auto& draw : m_DrawQueue.OpaqueTexture)
-			retain(&draw.Draw->Texture);
-		for (const auto& draw : m_DrawQueue.Transparent)
-			retain(&draw.Draw->Texture);
 		if (metrics)
 		{
 			metrics->VisibleMeshes = m_DrawQueue.Color.size();
@@ -501,7 +489,7 @@ namespace Raven
 		preparation.End();
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
-			m_DrawQueue, *m_WhiteTexture, retainedTextures, metrics))
+			m_DrawQueue, *m_WhiteTexture, metrics))
 		{
 			ResetSwapchain();
 			return std::nullopt;
@@ -573,8 +561,11 @@ namespace Raven
 		if (!ResolveMesh(mesh))
 			throw std::invalid_argument("Mesh handle does not belong to this renderer context");
 
-		m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)].Owner->Replace(
-			m_Impl->m_Device, m_Impl->m_PhysicalDevice, vertices, indices);
+		auto& owner = *m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)].Owner;
+		auto previous = owner.GetData();
+		owner.Replace(m_Impl->m_Device, m_Impl->m_PhysicalDevice, vertices, indices);
+		// Submitted frames may still read the previous buffers (R3).
+		m_Impl->m_Timeline.Retire(std::move(previous));
 	}
 
 	const VulkanMesh* VulkanContext::ResolveMesh(MeshHandle mesh) const noexcept
@@ -619,7 +610,8 @@ namespace Raven
 		if (!slot.Managed)
 			return false;
 		slot.Alive = false;
-		slot.Owner.reset();
+		// Submitted frames may still read the mesh buffers (R3).
+		m_Impl->m_Timeline.Retire(std::move(slot.Owner));
 		return true;
 	}
 
@@ -631,6 +623,8 @@ namespace Raven
 		if (!slot.Managed)
 			return false;
 		slot.Alive = false;
+		// Submitted frames may still sample the image; the slot is freed once this copy drops (R3).
+		m_Impl->m_Timeline.Retire(slot.Owner);
 		m_Impl->CollectResources();
 		return true;
 	}

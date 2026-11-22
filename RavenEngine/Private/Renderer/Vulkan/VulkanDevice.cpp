@@ -89,6 +89,7 @@ namespace Raven
 		m_Commands.BeginRendering = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(load("vkCmdBeginRenderingKHR"));
 		m_Commands.EndRendering = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(load("vkCmdEndRenderingKHR"));
 		m_Commands.PipelineBarrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2KHR>(load("vkCmdPipelineBarrier2KHR"));
+		m_Commands.QueueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2KHR>(load("vkQueueSubmit2KHR"));
 	}
 
 	VulkanDevice::~VulkanDevice()

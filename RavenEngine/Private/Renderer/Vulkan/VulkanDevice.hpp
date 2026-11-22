@@ -6,12 +6,13 @@ namespace Raven
 {
 	struct VulkanPhysicalDevice;
 
-	// Extension commands loaded for this device (docs/RendererDesign.md, R2).
+	// Extension commands loaded for this device (docs/RendererDesign.md, R2 and R3).
 	struct VulkanDeviceCommands
 	{
 		PFN_vkCmdBeginRenderingKHR BeginRendering = nullptr;
 		PFN_vkCmdEndRenderingKHR EndRendering = nullptr;
 		PFN_vkCmdPipelineBarrier2KHR PipelineBarrier2 = nullptr;
+		PFN_vkQueueSubmit2KHR QueueSubmit2 = nullptr;
 	};
 
 	class VulkanDevice

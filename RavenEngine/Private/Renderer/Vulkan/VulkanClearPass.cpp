@@ -80,6 +80,8 @@ namespace Raven
 
 	void VulkanClearPass::UseLitPipeline(std::shared_ptr<const VulkanColorPipeline> pipeline) noexcept
 	{
+		// Submitted frames may still use the previous pipeline (R3).
+		m_Timeline.Retire(std::move(m_LitPipeline));
 		m_LitPipeline = std::move(pipeline);
 	}
 
@@ -101,6 +103,7 @@ namespace Raven
 			m_TextureLayout, vertexModule, fragmentModule);
 		if (canPublish && !canPublish())
 			return false;
+		m_Timeline.Retire(std::move(m_TexturedPipelines));
 		m_TexturedPipelines = std::move(candidate);
 		return true;
 	}
@@ -110,8 +113,8 @@ namespace Raven
 		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
 		std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
-		const Pipelines* reuse)
-		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice),
+		VulkanFrameTimeline& timeline, const Pipelines* reuse)
+		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
 		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_Extent(swapchain.GetExtent())
 	{
 		if (m_Device == VK_NULL_HANDLE || swapchain.Get() == VK_NULL_HANDLE ||
@@ -162,9 +165,6 @@ namespace Raven
 
 			VkSemaphoreCreateInfo semaphoreInfo{};
 			semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-			VkFenceCreateInfo fenceInfo{};
-			fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-			fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
 			for (std::size_t index = 0; index < m_Frames.size(); ++index)
 			{
@@ -172,8 +172,6 @@ namespace Raven
 				frame.Commands = commands[index];
 				CheckClearCreation(vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr,
 					&frame.ImageAvailable), frame.ImageAvailable, "vkCreateSemaphore (acquire)");
-				CheckClearCreation(vkCreateFence(m_Device, &fenceInfo, nullptr, &frame.InFlight),
-					frame.InFlight, "vkCreateFence");
 			}
 
 			m_RenderFinished.resize(m_ColorImages.size(), VK_NULL_HANDLE);
@@ -199,12 +197,8 @@ namespace Raven
 			if (semaphore != VK_NULL_HANDLE)
 				vkDestroySemaphore(m_Device, semaphore, nullptr);
 		for (const auto& frame : m_Frames)
-		{
-			if (frame.InFlight != VK_NULL_HANDLE)
-				vkDestroyFence(m_Device, frame.InFlight, nullptr);
 			if (frame.ImageAvailable != VK_NULL_HANDLE)
 				vkDestroySemaphore(m_Device, frame.ImageAvailable, nullptr);
-		}
 		if (m_CommandPool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
 		if (m_Timestamps != VK_NULL_HANDLE)
@@ -213,8 +207,6 @@ namespace Raven
 		{
 			frame.TexturedInstances.reset();
 			frame.MeshInstances.reset();
-			frame.LitPipeline.reset();
-			frame.Textured.reset();
 		}
 		m_TexturedPipelines.reset();
 		m_LitPipeline.reset();
@@ -271,7 +263,7 @@ namespace Raven
 			return;
 		const auto first = static_cast<std::uint32_t>(m_FrameIndex * 2);
 		std::array<std::uint64_t, 2> ticks{};
-		// The existing slot fence has already completed. Never wait on the query itself.
+		// The slot's previous submission has already completed. Never wait on the query itself.
 		const auto result = vkGetQueryPoolResults(m_Device, m_Timestamps, first, 2,
 			sizeof(ticks), ticks.data(), sizeof(ticks[0]), VK_QUERY_RESULT_64_BIT);
 		if (result == VK_SUCCESS)
@@ -374,7 +366,8 @@ namespace Raven
 			const auto& draw = *queue.Color[index];
 			const auto& texture = draw.Texture ? *draw.Texture : white;
 			m_LitPipeline->Bind(commands, texture.GetDescriptorSet());
-			const auto& mesh = *frame.ColorMeshes.emplace_back(draw.Mesh.GetData());
+			// Released or replaced mesh data is retired, so it outlives this submission (R3).
+			const auto& mesh = *draw.Mesh.GetData();
 			const std::array<VkBuffer, 2> buffers{ mesh.Vertices.Get(), frame.MeshInstances->Get() };
 			const std::array<VkDeviceSize, 2> offsets{ 0, 0 };
 			vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
@@ -405,28 +398,15 @@ namespace Raven
 		CheckClearResult(vkEndCommandBuffer(commands), "vkEndCommandBuffer");
 	}
 
-	void VulkanClearPass::CollectCompletedResources() noexcept
-	{
-		for (auto& frame : m_Frames)
-			if (frame.InFlight != VK_NULL_HANDLE && vkGetFenceStatus(m_Device, frame.InFlight) == VK_SUCCESS)
-			{
-				frame.Textures.clear();
-				frame.ColorMeshes.clear();
-				frame.LitPipeline.reset();
-				frame.Textured.reset();
-			}
-	}
-
 	bool VulkanClearPass::Draw(const VulkanSwapchain& swapchain, VkQueue graphics,
-		VkQueue present, const VulkanDrawQueue& queue, const VulkanTexture& white,
-		std::span<const std::shared_ptr<const VulkanTexture>> textures, FrameMetrics* metrics)
+		VkQueue present, const VulkanDrawQueue& queue, const VulkanTexture& white, FrameMetrics* metrics)
 	{
 		auto& frame = m_Frames[m_FrameIndex];
 		constexpr auto timeout = std::numeric_limits<std::uint64_t>::max();
 		{
+			// Reuse the slot once its previous frame has completed on the timeline (R3).
 			FrameSection wait(metrics ? &metrics->FenceWait : nullptr);
-			CheckClearResult(vkWaitForFences(m_Device, 1, &frame.InFlight, VK_TRUE, timeout),
-				"vkWaitForFences");
+			m_Timeline.Wait(frame.Submitted);
 		}
 		FrameSection upload(metrics ? &metrics->RecordSubmit : nullptr);
 		if (metrics)
@@ -434,12 +414,7 @@ namespace Raven
 			PrepareTimestampQueries();
 			ReadTimestamps(frame, *metrics);
 		}
-		frame.LitPipeline.reset();
-		frame.Textured.reset();
-		frame.ColorMeshes.clear();
-		frame.Textures.assign(textures.begin(), textures.end());
-		// Allocate CPU and GPU storage before acquiring the image.
-		frame.ColorMeshes.reserve(queue.Color.size());
+		// Allocate GPU storage before acquiring the image.
 		UploadInstances(frame.TexturedInstances, std::as_bytes(std::span(queue.TexturedInstances)));
 		UploadInstances(frame.MeshInstances, std::as_bytes(std::span(queue.MeshInstances)));
 		upload.End();
@@ -459,22 +434,38 @@ namespace Raven
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
 		Record(frame, imageIndex, queue, white, timestamps);
-		// Keep the fence signaled on acquisition/recording failure; reset just before submission.
-		CheckClearResult(vkResetFences(m_Device, 1, &frame.InFlight), "vkResetFences");
-		const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		VkSubmitInfo submission{};
-		submission.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submission.waitSemaphoreCount = 1;
-		submission.pWaitSemaphores = &frame.ImageAvailable;
-		submission.pWaitDstStageMask = &waitStage;
-		submission.commandBufferCount = 1;
-		submission.pCommandBuffers = &frame.Commands;
-		submission.signalSemaphoreCount = 1;
-		submission.pSignalSemaphores = &m_RenderFinished[imageIndex];
-		CheckClearResult(vkQueueSubmit(graphics, 1, &submission, frame.InFlight), "vkQueueSubmit");
+
+		// The binary semaphores serve acquire and present; the timeline value marks this frame.
+		VkSemaphoreSubmitInfoKHR acquired{};
+		acquired.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR;
+		acquired.semaphore = frame.ImageAvailable;
+		acquired.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+		const std::uint64_t value = m_Timeline.GetNextValue();
+		std::array<VkSemaphoreSubmitInfoKHR, 2> signals{};
+		for (auto& signal : signals)
+		{
+			signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR;
+			signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
+		}
+		signals[0].semaphore = m_RenderFinished[imageIndex];
+		signals[1].semaphore = m_Timeline.Get();
+		signals[1].value = value;
+		VkCommandBufferSubmitInfoKHR commandInfo{};
+		commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO_KHR;
+		commandInfo.commandBuffer = frame.Commands;
+		VkSubmitInfo2KHR submission{};
+		submission.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR;
+		submission.waitSemaphoreInfoCount = 1;
+		submission.pWaitSemaphoreInfos = &acquired;
+		submission.commandBufferInfoCount = 1;
+		submission.pCommandBufferInfos = &commandInfo;
+		submission.signalSemaphoreInfoCount = static_cast<std::uint32_t>(signals.size());
+		submission.pSignalSemaphoreInfos = signals.data();
+		CheckClearResult(m_DeviceOwner.GetCommands().QueueSubmit2(graphics, 1, &submission, VK_NULL_HANDLE),
+			"vkQueueSubmit2KHR");
+		m_Timeline.MarkSubmitted();
+		frame.Submitted = value;
 		frame.TimestampFrame = timestamps ? metrics->Start : 0;
-		frame.LitPipeline = m_LitPipeline;
-		frame.Textured = m_TexturedPipelines;
 
 		const VkSwapchainKHR handle = swapchain.Get();
 		VkPresentInfoKHR presentation{};

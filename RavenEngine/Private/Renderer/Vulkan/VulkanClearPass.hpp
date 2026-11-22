@@ -11,6 +11,7 @@
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
 #include "Renderer/Vulkan/VulkanTexturePipeline.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
+#include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 
 #include <array>
 #include <cstdint>
@@ -67,7 +68,7 @@ namespace Raven
 			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
 			std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
-			const Pipelines* reuse = nullptr);
+			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
 		LitPipelineFactory GetLitPipelineFactory() const;
 		Pipelines GetPipelines() const;
 		bool IsCurrent(const LitPipelineFactory& factory) const noexcept;
@@ -75,12 +76,10 @@ namespace Raven
 		bool ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
 			std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish = {});
 		~VulkanClearPass();
-		void CollectCompletedResources() noexcept;
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
 		bool Draw(const VulkanSwapchain& swapchain, VkQueue graphics, VkQueue present,
-			const VulkanDrawQueue& queue, const VulkanTexture& white,
-			std::span<const std::shared_ptr<const VulkanTexture>> textures, FrameMetrics* metrics);
+			const VulkanDrawQueue& queue, const VulkanTexture& white, FrameMetrics* metrics);
 
 		VulkanClearPass(const VulkanClearPass&) = delete;
 		VulkanClearPass& operator=(const VulkanClearPass&) = delete;
@@ -90,14 +89,11 @@ namespace Raven
 		{
 			VkCommandBuffer Commands = VK_NULL_HANDLE;
 			VkSemaphore ImageAvailable = VK_NULL_HANDLE;
-			VkFence InFlight = VK_NULL_HANDLE;
+			// Timeline value signaled by this slot's last submission; 0 before the first one.
+			std::uint64_t Submitted = 0;
+			// Only this slot's submissions read its instance buffers, so waiting for the slot covers them.
 			std::unique_ptr<VulkanBuffer> TexturedInstances;
 			std::unique_ptr<VulkanBuffer> MeshInstances;
-			// Retain the exact pipelines and mesh buffers referenced by this slot's submission.
-			std::shared_ptr<const VulkanColorPipeline> LitPipeline;
-			std::shared_ptr<const TexturedPipelines> Textured;
-			std::vector<std::shared_ptr<const VulkanMeshData>> ColorMeshes;
-			std::vector<std::shared_ptr<const VulkanTexture>> Textures;
 			std::int64_t TimestampFrame = 0;
 		};
 
@@ -111,6 +107,7 @@ namespace Raven
 		// These owners outlive the pass and its per-frame buffers.
 		const VulkanDevice& m_DeviceOwner;
 		const VulkanPhysicalDevice& m_PhysicalDevice;
+		VulkanFrameTimeline& m_Timeline;
 		VkDevice m_Device = VK_NULL_HANDLE;
 		VkFormat m_ColorFormat = VK_FORMAT_UNDEFINED;
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;

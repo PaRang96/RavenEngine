@@ -173,7 +173,20 @@ Each step is a reviewed patch, and every sample keeps working.
      - The live Release session passed with six swapchain recreations and no validation messages: fragment shader reloads in 221–284 ms (including across resizes), rejections in 260 ms, and PNG, FBX, scene and game reloads as before.
      - A Debug minimize/restore/portrait-resize probe with validation recreated the swapchain four times, reported nothing and closed normally.
      - Not verified: closing while minimized (retained pipelines are destroyed before the device by declaration order), MoltenVK and Linux (M4).
-4. **R3:** timeline-semaphore pacing and the retirement queue, replacing the per-slot fences and keep-alive lists.
+4. *(Done 2026-11-22.)* **R3:** timeline-semaphore pacing and the retirement queue, replacing the per-slot fences and keep-alive lists.
+   - `VulkanFrameTimeline` is owned by the context and survives swapchain recreation. Each submission (`vkQueueSubmit2KHR`) signals the next value; a frame slot waits for the value of its own previous submission before reuse.
+   - The wait first compares with the last value read back, then reads the counter, and calls `vkWaitSemaphores` only when the GPU is behind. On the laptop a `vkWaitSemaphores` call on an already-reached value costs about 18 µs; the slot wait is now 0.5 µs p50 (fences: 4 µs).
+   - Replaced lit and textured pipelines, replaced mesh data, released managed meshes and released managed textures are retired at the last submitted value. A released texture's slot is freed once the queue drops its copy. If queuing fails, the device is waited idle instead.
+   - The per-frame keep-alive lists and the per-draw texture-slot search are gone. Per-slot instance buffers stay owned by their slot, which the slot wait covers.
+   - Verification on the minimum-spec laptop:
+     - Debug/Release builds and both tests pass.
+     - The Debug 3D smoke with core and synchronization validation reported nothing.
+     - All six captures are bit-identical to the references.
+     - The live Release session passed: fragment shader reloads in 229–267 ms, rejections in 203–238 ms, and PNG, FBX, scene and game reloads as before.
+     - 4,000-mesh benchmark (NVIDIA, mailbox, 3 runs): 165.0 FPS as before, frame p95 6.48–6.66 ms (step 3: 6.49–6.59 ms), renderer preparation p95 0.67–0.72 ms (step 3: 0.74–0.78 ms), GPU p95 unchanged.
+     - Interleaved idle runs show the same process CPU per frame as step 3, so the timeline wait does not spin.
+     - Debug minimize/restore/resize probes with validation reported nothing; closing while minimized exits with code 0.
+     - Not verified: a direct count of drained retirements (no counter is logged), MoltenVK and Linux (M4).
 5. **R4:** persistently mapped per-frame rings, the frame uniform, and 112-byte lit instances with the clip transform in the vertex shader.
 6. **R5:** instanced lit-mesh batching.
 7. **R6:** device-local vertex/index pools with 32-bit indices, staging uploads and range retirement.
