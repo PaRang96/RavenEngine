@@ -22,6 +22,13 @@ SCENES = {
     2000: "84d2e14b-30ba-4158-b3e4-dcfad32b35e0",
     4000: "b61438cc-321d-41da-b9ec-1d17b34d7357",
 }
+# Stress scenes (docs/GpuDrivenDesign.md, G6) are generated into each benchmark snapshot, never into Content.
+STRESS = {
+    10000: "3c5e1f0a-7d2b-4e61-9a84-1b0c6f2d9e31",
+    50000: "8a41d7c2-5b9e-4f03-b6d1-2e7f90c4a358",
+    100000: "d29f6b14-0c83-4a7e-8f52-6b1e3a9d07c4",
+}
+SCENE_IDS = {**SCENES, **STRESS}
 EXTENT = 1280, 720
 RATE = .65
 RELEASE = "x64-release"
@@ -71,7 +78,7 @@ def configure_app(app, count, watching, animated):
 
 
 def profile(executable, directory, count, animated, watching, seconds, capture=False, place=None):
-    args = ["--scene", SCENES[count]]
+    args = ["--scene", SCENE_IDS[count]]
     if not watching:
         args.append("--no-watch")
     with SMOKE["run_sample"](executable, directory, args, capture=capture) as app:
@@ -150,7 +157,7 @@ def measure(report, seconds, repeats):
     return results
 
 
-def build_snapshot(report, edit=None):
+def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
     source = report / "source"
     source.mkdir()
     for folder in ("RavenEngine", "ThirdParty", "cmake", "Content", "scripts", "docs", "BuildProfiles"):
@@ -160,9 +167,18 @@ def build_snapshot(report, edit=None):
     if edit:
         edit(source)
     with (report / "build.log").open("wb") as output:
-        subprocess.run(["cmake", "--preset", RELEASE], cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
-        subprocess.run(["cmake", "--build", f"out/build/{RELEASE}", "--parallel", "4"],
-                       cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(["cmake", "--preset", preset], cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+        build = ["cmake", "--build", f"out/build/{preset}", "--parallel", "4"]
+        subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+        if stress in STRESS:
+            # The snapshot's own scene tool writes the scene; the rebuild stages it with the project.
+            level = f"Levels/Benchmark-{stress}.ravenscene"
+            subprocess.run([str(runtime(source, preset) / "RavenSceneTool.exe"), str(source / "Content"),
+                            "create-benchmark", str(source / "Content" / level), str(stress)],
+                           stdout=output, stderr=subprocess.STDOUT, check=True)
+            with (source / "Content/Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
+                project.write(f'scene {STRESS[stress]} perspective "{level}"\n')
+            subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
     return source
 
 
@@ -220,12 +236,13 @@ def main():
     reload = modes.add_parser("reload")
     reload.add_argument("--meshes", type=int, choices=SCENES, default=500)
     validate = modes.add_parser("validate")
-    validate.add_argument("--meshes", type=int, choices=SCENES, default=2000)
+    validate.add_argument("--meshes", type=int, choices=SCENE_IDS, default=2000)
     scale = modes.add_parser("scale")
     scale.add_argument("label")
     scale.add_argument("--case", action="append", choices=("auto-fifo", "auto-mailbox", "intel-fifo", "nvidia-mailbox"))
     scale.add_argument("--seconds", type=float, default=4)
     scale.add_argument("--repeats", type=int, default=3)
+    scale.add_argument("--meshes", type=int, choices=(4000, *STRESS), default=4000)
     args = parser.parse_args()
     if args.mode == "generate":
         generate()
@@ -244,14 +261,14 @@ def main():
 
         check(args.seconds >= 1 and args.repeats >= 1, "Measure at least one run of one second or longer")
         display = fastest_display(SMOKE["USER"])
-        source = build_snapshot(report, edit_snapshot)
+        source = build_snapshot(report, edit_snapshot, stress=args.meshes)
         selected = args.case or ["auto-fifo"]
         samples = []
         for trial in range(1, args.repeats + 1):
             for name, environment, place in cases(display, selected, trial, SMOKE["USER"]):
                 with environment:
                     row = profile(runtime(source) / "RavenEngine.exe", report / name,
-                                  4000, True, True, args.seconds, place=place)
+                                  args.meshes, True, True, args.seconds, place=place)
                 log = (report / name / "run.log").read_text(encoding="utf-8", errors="replace")
                 _, adapter, mode = name.split("-", 2)
                 selected_adapter = next(line.split("Selected GPU: ", 1)[1] for line in log.splitlines()
@@ -267,7 +284,10 @@ def main():
         result = {"label": args.label, "display": display.name, "hz": display.hz,
                   "resolution": [display.width, display.height], "samples": samples}
     else:
-        result = profile(runtime(preset="x64-debug") / "RavenEngine.exe", report / "vulkan",
+        debug = runtime(preset="x64-debug")
+        if args.meshes in STRESS:
+            debug = runtime(build_snapshot(report, preset="x64-debug", stress=args.meshes), "x64-debug")
+        result = profile(debug / "RavenEngine.exe", report / "vulkan",
                          args.meshes, True, False, 4 if args.meshes == 4000 else 2, capture=True)
         print(f"The {args.meshes:,}-mesh Debug render passed Vulkan validation.", flush=True)
     (report / "results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

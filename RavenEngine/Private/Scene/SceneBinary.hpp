@@ -11,7 +11,10 @@
 
 namespace Raven::SceneBinary
 {
-	inline constexpr std::size_t Limit = 4 * 1024 * 1024;
+	// Covers the 100,000-mesh stress scenes (about 20 MB) with headroom (docs/GpuDrivenDesign.md, G6).
+	inline constexpr std::size_t Limit = 64 * 1024 * 1024;
+	// Per-kind element cap; benchmark scenes need one pivot group per mesh.
+	inline constexpr std::uint32_t MaxElements = 262144;
 	inline std::uint32_t Checksum(std::span<const std::byte> bytes)
 	{
 		std::uint32_t value = 2166136261u;

@@ -1,4 +1,5 @@
 #include "PlayerContent.hpp"
+#include "Scene/SceneBinary.hpp"
 
 #include "Assets/AssetPath.hpp"
 #include "Raven/Core/Files.hpp"
@@ -78,7 +79,7 @@ namespace Raven
 				throw std::invalid_argument("Unknown player scene: " + id.ToString());
 			if (found->Type != SceneType::Perspective)
 				throw std::invalid_argument("Player packaging currently supports Perspective scenes: " + id.ToString());
-			auto bytes = Files::ReadBinary(ResolveAssetPath(source, found->SourcePath), 4 * 1024 * 1024);
+			auto bytes = Files::ReadBinary(ResolveAssetPath(source, found->SourcePath), SceneBinary::Limit);
 			const auto scene = SceneDocument::Decode(bytes);
 			for (const auto& mesh : scene.Meshes)
 				require(mesh.Asset.Id, AssetKind::Mesh);

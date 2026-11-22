@@ -1,5 +1,6 @@
 #include "SampleScenes.hpp"
 
+#include <algorithm>
 #include <numbers>
 #include <stdexcept>
 #include <utility>
@@ -15,7 +16,11 @@ namespace Raven
 		case 500: columns = 25; break;
 		case 2000: columns = 50; break;
 		case 4000: columns = 80; break;
-		default: throw std::invalid_argument("Benchmark mesh count must be 100, 500, 2000, or 4000");
+		// Stress scenes (docs/GpuDrivenDesign.md, G6), generated locally and never tracked in Content.
+		case 10000: columns = 125; break;
+		case 50000: columns = 250; break;
+		case 100000: columns = 400; break;
+		default: throw std::invalid_argument("Benchmark mesh count must be 100, 500, 2000, 4000, 10000, 50000 or 100000");
 		}
 		const auto rows = meshCount / columns;
 		constexpr float spacing = 1.55f;
@@ -27,7 +32,15 @@ namespace Raven
 		SceneDocument scene;
 		scene.CameraId = "main";
 		scene.LightingId = "sun";
-		scene.Camera.emplace().Spawn.Position = { 0, -79.0f, 0 };
+		auto& camera = scene.Camera.emplace();
+		camera.Spawn.Position = { 0, -79.0f, 0 };
+		if (meshCount > 4000)
+		{
+			// Keep the whole grid in view: the 4,000-mesh camera frames 80 x 50 meshes at 79 units.
+			const float scale = std::max(static_cast<float>(columns) / 80.0f, static_cast<float>(rows) / 50.0f);
+			camera.Spawn.Position.Y = -79.0f * scale;
+			camera.Lens.FarPlane = 100.0f * scale;
+		}
 		scene.OrbitTarget = Vec3{};
 		scene.Materials["paint"].Lit = true;
 		scene.Materials["textured"].Lit = true;

@@ -40,8 +40,9 @@ namespace Raven
 	void SceneDocument::Validate() const
 	{
 		Require(Camera && OrbitTarget, "Scene needs a camera and orbit target");
-		Require(Meshes.size() <= 4096 && Groups.size() <= 4096 && Materials.size() <= 4096 &&
-					Parents.size() <= 8193 && Switches.size() <= 4096 && Rotators.size() <= 4096 &&
+		constexpr auto max = SceneBinary::MaxElements;
+		Require(Meshes.size() <= max && Groups.size() <= max && Materials.size() <= 4096 &&
+					Parents.size() <= 2 * max + 1 && Switches.size() <= 4096 && Rotators.size() <= max &&
 					Doors.size() <= 4096 && Goals.size() <= 4096,
 				"Scene count limit exceeded");
 		const auto offset = Camera->Spawn.Position - *OrbitTarget;
@@ -250,7 +251,7 @@ namespace Raven
 			for (const auto& id : Collection->Pickups)
 				w.Text(id);
 		}
-		Require(w.Bytes.size() <= SceneBinary::Limit - 20, "Binary scene exceeds 4 MiB");
+		Require(w.Bytes.size() <= SceneBinary::Limit - 20, "Binary scene exceeds 64 MiB");
 		SceneBinary::Writer file;
 		for (unsigned char c : Magic)
 			file.U8(c);
@@ -263,7 +264,7 @@ namespace Raven
 
 	SceneDocument SceneDocument::Decode(std::span<const std::byte> bytes)
 	{
-		Require(bytes.size() <= SceneBinary::Limit, "Binary scene exceeds 4 MiB");
+		Require(bytes.size() <= SceneBinary::Limit, "Binary scene exceeds 64 MiB");
 		SceneBinary::Reader header{bytes};
 		for (unsigned char c : Magic)
 			Require(header.U8() == c,
@@ -297,7 +298,7 @@ namespace Raven
 		light.Direction = r.Vector();
 		light.Color = r.Vector();
 		d.Lighting = light;
-		for (auto n = r.Count(); n--;)
+		for (auto n = r.Count(SceneBinary::MaxElements); n--;)
 		{
 			MeshDefinition m;
 			m.Name = r.Text();
@@ -307,14 +308,14 @@ namespace Raven
 			m.MaterialName = r.Text();
 			d.Meshes.push_back(std::move(m));
 		}
-		for (auto n = r.Count(); n--;)
+		for (auto n = r.Count(SceneBinary::MaxElements); n--;)
 		{
 			GroupDefinition g;
 			g.Name = r.Text();
 			g.Transform = r.Transform();
 			d.Groups.push_back(std::move(g));
 		}
-		for (auto n = r.Count(8193); n--;)
+		for (auto n = r.Count(2 * SceneBinary::MaxElements + 1); n--;)
 		{
 			auto child = r.Text();
 			auto parent = r.Text();
@@ -333,7 +334,7 @@ namespace Raven
 		}
 		for (auto n = r.Count(); n--;)
 			d.Switches.push_back({r.Text()});
-		for (auto n = r.Count(); n--;)
+		for (auto n = r.Count(SceneBinary::MaxElements); n--;)
 		{
 			RotatorDefinition v;
 			v.Entity = r.Text();

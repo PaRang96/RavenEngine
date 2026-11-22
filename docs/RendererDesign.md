@@ -231,6 +231,37 @@ Each step is a reviewed patch, and every sample keeps working.
    - Verification on the minimum-spec laptop: Debug/Release builds and both tests pass; the Debug 3D smoke with core and synchronization validation reported nothing; Release captures match step 7. A Debug minimize → restore → minimize → close probe under validation kept the swapchain while minimized, recreated it once on restore, exited 0 and reported nothing.
 9. **Exit check:** budgets, image comparison, Debug validation, live reload session, the 10k scene, and Courtyard on your request.
 
+## M2 exit record (2026-11-23)
+
+Measured on the minimum-spec laptop, Release, 2560 × 1440 at 165 Hz, 4,000-mesh benchmark (one run per case after steps 7 and 8):
+
+| Measure | M1 exit | M2 target | M2 exit | Result |
+| --- | ---: | ---: | ---: | --- |
+| Lit-mesh draw calls (4,000 meshes) | 4,004 | ≤ 16 | 7 (three lit batches, four textured) | Met |
+| Renderer preparation + record/submit, p95 | 1.87 ms | ≤ 0.8 ms | 0.88 ms (auto FIFO) to 1.01 ms (NVIDIA mailbox) | **Missed by 0.1–0.2 ms** |
+| GPU pass p95 | 0.57 ms | ≤ 0.65 ms | 0.31–0.38 ms | Met |
+| CPU preparation p95 | 2.27 ms | ≤ 1.5 ms | 1.17–1.30 ms (FIFO), 1.35–1.54 ms (mailbox) | Met in FIFO, at the limit in mailbox |
+| Lit instance bytes per mesh | 176 | 112 | 112 | Met |
+
+- **The missed budget is recorded, not optimized.** All of the remaining time is CPU culling, batching and instance preparation that M3 removes (no-throwaway rule, owner 2026-11-22; see [GpuDrivenDesign.md](GpuDrivenDesign.md)).
+- **Roadmap exit criterion met.** The 10,000-mesh scene, generated locally with `RavenSceneTool create-benchmark` and never added to `Content/`, records 7 draws, as at 4,000: draws follow unique (mesh, material) pairs.
+  - The scene limits grew for it: 262,144 meshes, groups and rotators per scene, and 64 MiB binary scenes (`SceneBinary.hpp`).
+  - The benchmark script's `scale --meshes 10000|50000|100000` generates the scene into its build snapshot.
+- **Images:** the six captures match the M2 references within the approved tolerance (step 8).
+- **Validation:**
+  - The Debug 3D smoke with core and synchronization validation reported nothing (step 8).
+  - `Benchmark-Windows3D.py validate --meshes 10000` passed Vulkan validation.
+- **Live Release session:** passed on master after step 8, covering DLL, scene, PNG, FBX and fragment-shader reloads and the incompatible-shader rejection.
+- **Not run:** Courtyard (2D), which needs an owner request; MoltenVK and Linux (M4).
+
+M3 baseline for the same path (auto FIFO, 20% animated, one run each):
+
+| Meshes | FPS | CPU preparation p95 | Renderer preparation p95 | World transforms p95 | Scene gather p95 | GPU p95 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 165 (display limit) | 2.58 ms | 1.71 ms | 0.29 ms | 0.40 ms | 0.72 ms |
+| 50,000 | 85.8 | 12.34 ms | 8.31 ms | 1.49 ms | 2.02 ms | 3.18 ms |
+| 100,000 | 43.2 | 24.23 ms | 16.78 ms | 2.67 ms | 3.77 ms | 7.21 ms |
+
 ## Out of scope for M2
 
 GPU culling, indirect draws, bindless materials and GPU-resident object data (M3); multithreaded recording; a render graph; new lighting or shading features; changes to the public `DrawFrame` API.

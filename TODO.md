@@ -59,7 +59,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Step 6 (R5): instanced lit-mesh batching by (mesh, texture); 4,000 meshes now take 7 draws. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [x] Step 7 (R6): device-local vertex/index pools behind `MeshHandle`, with 32-bit indices, staging uploads and range retirement. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [x] Step 8 (R7): `GetFramebufferState()` is the only window size accessor, `PrepareSwapchain()` is the one readiness check, and device loss has one error path. The mesh-handle item was reviewed with no change. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
-- [ ] Step 9: M2 exit check (budgets, image comparison, Debug validation, live session, a local 10k scene, Courtyard on request).
+- [x] Step 9: M2 exit check, 2026-11-23. Every budget is met except renderer preparation + record/submit (0.88–1.01 ms against 0.8 ms), which is recorded without optimization because M3 removes that code. The 10k scene takes 7 draws and passes Debug validation. See [the exit record](docs/RendererDesign.md#m2-exit-record-2026-11-23).
 
 ## M3 — GPU-driven rendering at scale (design decided, not started)
 

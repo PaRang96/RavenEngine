@@ -1,6 +1,7 @@
 #include "LegacyScene.hpp"
 #include "PlayerContent.hpp"
 #include "SampleScenes.hpp"
+#include "Scene/SceneBinary.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/Scene/SceneProject.hpp"
 
@@ -88,7 +89,7 @@ int main(int argc, char** argv)
 		}
 		else
 		{
-			auto document = SceneDocument::Decode(Files::ReadBinary(input, 4 * 1024 * 1024));
+			auto document = SceneDocument::Decode(Files::ReadBinary(input, SceneBinary::Limit));
 			if (command == "validate")
 			{
 				if (argc != 4)

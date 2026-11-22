@@ -69,7 +69,7 @@ Replace per-entity heap storage with dense typed pools and real systems while ke
 
 **Exit result (2026-11-21):** met on the minimum-spec laptop. Every M0 budget passed, and the 4,000-mesh M1 stages fell from 3.91 to 0.38 ms p95 (162.8 FPS). Compatible and rejected reloads keep state, both in the smoke test and in a live Release session, and Vulkan validation is clean at 4,000 meshes. Only the 3D samples were run; the 2D Courtyard fixed-step path is built but not run. See [the exit record](docs/ECSDesign.md#m1-exit-record-2026-11-21).
 
-### M2 — Vulkan 1.2 renderer foundation · *next*
+### M2 — Vulkan 1.2 renderer foundation · *done 2026-11-23*
 
 Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win. Design: [RendererDesign.md](docs/RendererDesign.md) (approved 2026-11-21).
 
@@ -82,7 +82,9 @@ Raise the API baseline and restructure frame data for scale. CPU-side mesh insta
 
 **Exit:** 10k lit meshes using a few unique meshes record draws in proportion to the number of unique (mesh, material) pairs. The current samples render identically, and Debug validation is clean.
 
-### M3 — GPU-driven rendering at scale
+**Exit result (2026-11-23):** met. The 10k scene takes 7 draws, the samples render within the approved tolerance, and Debug validation is clean at 10k. One budget was recorded as missed instead of optimized: renderer preparation + record/submit read 0.88–1.01 ms against 0.8 ms, and M3 removes that code. See [the exit record](docs/RendererDesign.md#m2-exit-record-2026-11-23).
+
+### M3 — GPU-driven rendering at scale · *next*
 
 Move object processing to the GPU to reach the performance goal. Design: [GpuDrivenDesign.md](docs/GpuDrivenDesign.md) (owner decisions Q1–Q7 recorded 2026-11-23; no code yet).
 

@@ -1,4 +1,5 @@
 #include "Raven/Scene/SceneSession.hpp"
+#include "Scene/SceneBinary.hpp"
 
 #include "Assets/AssetPath.hpp"
 #include "Assets/SettledFileWatch.hpp"
@@ -17,7 +18,7 @@ namespace Raven
 	{
 		std::vector<std::byte> ReadScene(const std::filesystem::path& path)
 		{
-			return Files::ReadBinary(path, 4 * 1024 * 1024);
+			return Files::ReadBinary(path, SceneBinary::Limit);
 		}
 		std::vector<std::byte> DecodeSnapshot(std::span<const std::byte> bytes, const std::filesystem::path&)
 		{
