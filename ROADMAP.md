@@ -71,7 +71,7 @@ Replace per-entity heap storage with dense typed pools and real systems while ke
 
 ### M2 — Vulkan 1.2 renderer foundation · *next*
 
-Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win.
+Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win. Design: [RendererDesign.md](docs/RendererDesign.md) (approved 2026-11-21).
 
 - [ ] Target Vulkan 1.2 for the instance and SPIR-V. Use dynamic rendering, synchronization2 and timeline semaphores. Add portability enumeration for MoltenVK. Report unsupported devices with clear errors.
 - [ ] Move per-frame uploads to persistently mapped ring buffers sized per frame in flight.

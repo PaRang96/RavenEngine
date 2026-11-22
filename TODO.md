@@ -49,6 +49,10 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 
 ## M2 — Vulkan 1.2 renderer foundation (next)
 
+- [x] Write the design note: [RendererDesign.md](docs/RendererDesign.md) (2026-11-21).
+- [x] Owner review (2026-11-21): image tolerance, 32-bit indices, device-local geometry and the budgets are approved as proposed.
+- [x] Step 1: reference screenshots from master `05a1f31` (six scenes; frame 0 is bit-for-bit deterministic) and `scripts/Compare-Captures.py` with the approved tolerance. Applied 2026-11-22. References are local under `out/captures/m2-reference`.
+- [ ] Step 2 (R1): Vulkan 1.2 instance, required features and extensions, SPIR-V target 1.2, clear unsupported-device errors.
 - [ ] Raise `apiVersion` and DXC `-fspv-target-env` to Vulkan 1.2. Check required features and extensions at device selection, with clear errors.
 - [ ] Adopt dynamic rendering and synchronization2, and replace the render-pass/framebuffer objects.
 - [ ] Use timeline semaphores for frame pacing, with persistently mapped per-frame ring buffers.
