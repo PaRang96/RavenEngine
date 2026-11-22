@@ -151,6 +151,8 @@ namespace Raven
 		std::vector<std::unique_ptr<VulkanTexturedMesh>> m_TexturedMeshes;
 		std::vector<ResourceSlot<VulkanTexture>> m_Textures;
 		VulkanTextureDescriptors m_TextureDescriptors;
+		// Pipelines retained across passes use it, so it outlives the timeline and the pass (R4).
+		VulkanFrameLayout m_FrameLayout;
 		const VulkanTexture* m_WhiteTexture = nullptr;
 		// Outlives the pass and swapchain; retired resources drop before the stores above (R3).
 		VulkanFrameTimeline m_Timeline;
@@ -191,6 +193,7 @@ namespace Raven
 			  m_Instance.Get(), m_Surface.Get())),
 		  m_Device(m_PhysicalDevice),
 		  m_TextureDescriptors(m_Device),
+		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
 		  m_Lit{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.vert.spv"),
 			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.frag.spv"), {}, {} },
@@ -240,7 +243,7 @@ namespace Raven
 		try
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
-				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
+				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(), m_FrameLayout.Get(),
 				m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment, m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
 			m_RetainedPipelines.reset();

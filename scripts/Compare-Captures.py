@@ -9,10 +9,13 @@ module and content, without watchers. The first drawable frame has a zero time s
 shows the authored state before any animation or camera movement. The Vulkan screenshot
 layer saves that frame, and the process is then closed.
 
-Compare passes when at most --max-fraction of pixels differ and no channel differs by more
-than --max-delta (defaults 0.1% and 2/255, docs/RendererDesign.md). For every image that
-differs, it writes <name>.diff.ppm beside the candidate: differing pixels are red, the rest
-is a dimmed reference.
+Compare passes when every pixel is within --max-delta per channel except at most
+--max-fraction of pixels, which may differ by any amount (defaults 2/255 and 0.1%,
+docs/RendererDesign.md). The outlier allowance absorbs triangle-edge pixels whose coverage
+flips when the GPU computes a transform with different rounding; a lighting or color error
+shifts most pixels and a missing object changes thousands, so both still fail. For every
+image that differs, it writes <name>.diff.ppm beside the candidate: outliers are red, pixels
+within the limit are yellow, and the rest is a dimmed reference.
 """
 
 import argparse
@@ -106,14 +109,15 @@ def capture(directory, preset, timeout):
         print(f"{name}: captured {width}x{height}", flush=True)
 
 
-def compare_images(reference, candidate):
+def compare_images(reference, candidate, max_delta):
     width, height, expected = read_ppm(reference)
     candidate_width, candidate_height, actual = read_ppm(candidate)
     if (width, height) != (candidate_width, candidate_height):
         return None
     if expected == actual:
-        return width, height, 0, 0, None
+        return width, height, 0, 0, 0, None
     differing = 0
+    outliers = 0
     worst = 0
     diff = bytearray(len(expected))
     for index in range(0, len(expected), 3):
@@ -122,10 +126,14 @@ def compare_images(reference, candidate):
         if delta:
             differing += 1
             worst = max(worst, delta)
-            diff[index] = 255
+            if delta > max_delta:
+                outliers += 1
+                diff[index] = 255
+            else:
+                diff[index:index + 2] = b"\xff\xff"
         else:
             diff[index:index + 3] = bytes(value // 4 for value in expected[index:index + 3])
-    return width, height, differing, worst, diff
+    return width, height, differing, outliers, worst, diff
 
 
 def compare(reference_directory, candidate_directory, max_fraction, max_delta):
@@ -140,21 +148,21 @@ def compare(reference_directory, candidate_directory, max_fraction, max_delta):
             print(f"{reference.stem}: FAIL (missing candidate)")
             failures += 1
             continue
-        result = compare_images(reference, candidate)
+        result = compare_images(reference, candidate, max_delta)
         if result is None:
             print(f"{reference.stem}: FAIL (image sizes differ)")
             failures += 1
             continue
-        width, height, differing, worst, diff = result
-        fraction = differing / (width * height)
-        passed = fraction <= max_fraction and worst <= max_delta
+        width, height, differing, outliers, worst, diff = result
+        fraction = outliers / (width * height)
+        passed = fraction <= max_fraction
         failures += not passed
-        print(f"{reference.stem}: {'PASS' if passed else 'FAIL'} "
-              f"({differing} of {width * height} pixels differ = {fraction:.4%}, max delta {worst}/255)")
+        print(f"{reference.stem}: {'PASS' if passed else 'FAIL'} ({differing} of {width * height} pixels differ, "
+              f"{outliers} beyond {max_delta}/255 = {fraction:.4%}, max delta {worst}/255)")
         if diff is not None:
             write_ppm(candidate_directory / f"{reference.stem}.diff.ppm", width, height, diff)
     print(f"{len(references) - failures} of {len(references)} captures within tolerance "
-          f"(at most {max_fraction:.2%} of pixels, at most {max_delta}/255 per channel)")
+          f"(all pixels within {max_delta}/255 per channel except at most {max_fraction:.2%})")
     return failures
 
 

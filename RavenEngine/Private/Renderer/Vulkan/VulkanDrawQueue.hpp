@@ -3,6 +3,7 @@
 #include "Raven/Renderer/Vulkan/VulkanDraw.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Renderer/Vulkan/VulkanMeshInstance.hpp"
+#include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 
 #include <cstddef>
@@ -46,6 +47,7 @@ namespace Raven
 	// CPU storage is reused; borrowed submissions are used only during the current DrawFrame.
 	struct VulkanDrawQueue
 	{
+		FrameUniformData Frame{};
 		std::vector<const VulkanDraw*> Color;
 		std::vector<MeshInstanceData> MeshInstances;
 		std::vector<QueuedTexturedDraw> OpaqueTexture;

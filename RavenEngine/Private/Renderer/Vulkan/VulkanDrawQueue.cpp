@@ -25,13 +25,48 @@ namespace Raven
 			return transform;
 		}
 
-		std::array<Vec4, 3> NormalTransform(const Mat4& model, bool lit)
+		void CheckFinite(const Mat4& model, Vec4 tint)
 		{
-			const Mat4 normal = lit ? NormalMatrix(model) : Mat4::Identity();
-			std::array<Vec4, 3> result{};
-			for (std::size_t index = 0; index < result.size(); ++index)
-				result[index] = { normal(0, index), normal(1, index), normal(2, index), 0.0f };
-			return result;
+			if (!std::isfinite(tint.X) || !std::isfinite(tint.Y) || !std::isfinite(tint.Z) || !std::isfinite(tint.W))
+				throw std::invalid_argument("Draw tint must be finite");
+			for (const auto& column : model.Columns)
+				for (const float value : column)
+					if (!std::isfinite(value))
+						throw std::invalid_argument("Draw transform exceeds the supported numeric range");
+		}
+
+		// Only visible meshes get here, and only lit ones pay for the normal matrix (R4).
+		MeshInstanceData PrepareMeshInstance(const VulkanDraw& draw)
+		{
+			MeshInstanceData instance{};
+			for (std::size_t row = 0; row < 3; ++row)
+				instance.WorldRows[row] = { draw.Model(row, 0), draw.Model(row, 1), draw.Model(row, 2), draw.Model(row, 3) };
+			const Mat4 normal = draw.Lit ? NormalMatrix(draw.Model) : Mat4::Identity();
+			for (std::size_t column = 0; column < 3; ++column)
+				instance.NormalToWorld[column] = { normal(0, column), normal(1, column), normal(2, column), 0.0f };
+			instance.NormalToWorld[0].W = draw.Lit ? 1.0f : 0.0f;
+			instance.Tint = draw.Tint;
+			return instance;
+		}
+
+		// Solves View(3x3) * position = -translation, so any invertible affine view works.
+		Vec4 CameraPosition(const Mat4& view)
+		{
+			const auto m = [&view](std::size_t row, std::size_t column) { return view(row, column); };
+			const float determinant =
+				m(0, 0) * (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1)) -
+				m(0, 1) * (m(1, 0) * m(2, 2) - m(1, 2) * m(2, 0)) +
+				m(0, 2) * (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0));
+			if (!std::isfinite(determinant) || determinant == 0.0f)
+				return { 0.0f, 0.0f, 0.0f, 1.0f };
+			const float b0 = -m(0, 3), b1 = -m(1, 3), b2 = -m(2, 3);
+			const float x = (b0 * (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1)) -
+				m(0, 1) * (b1 * m(2, 2) - m(1, 2) * b2) + m(0, 2) * (b1 * m(2, 1) - m(1, 1) * b2)) / determinant;
+			const float y = (m(0, 0) * (b1 * m(2, 2) - m(1, 2) * b2) -
+				b0 * (m(1, 0) * m(2, 2) - m(1, 2) * m(2, 0)) + m(0, 2) * (m(1, 0) * b2 - b1 * m(2, 0))) / determinant;
+			const float z = (m(0, 0) * (m(1, 1) * b2 - b1 * m(2, 1)) -
+				m(0, 1) * (m(1, 0) * b2 - b1 * m(2, 0)) + b0 * (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0))) / determinant;
+			return { x, y, z, 1.0f };
 		}
 
 		void AppendTexturedBatches(std::span<const QueuedTexturedDraw> draws,
@@ -67,6 +102,10 @@ namespace Raven
 	{
 		lighting.Validate();
 		const auto direction = Normalize(lighting.Direction);
+		queue.Frame = FrameUniformData{ viewProjection, view, CameraPosition(view),
+			{ lighting.Ambient.X, lighting.Ambient.Y, lighting.Ambient.Z, 0.0f },
+			{ direction.X, direction.Y, direction.Z, 0.0f },
+			{ lighting.Color.X, lighting.Color.Y, lighting.Color.Z, 0.0f } };
 		queue.Color.clear();
 		queue.MeshInstances.clear();
 		queue.OpaqueTexture.clear();
@@ -81,16 +120,12 @@ namespace Raven
 		queue.Transparent.reserve(transparentDraws.size());
 		for (const auto& draw : colorDraws)
 		{
+			CheckFinite(draw.Model, draw.Tint);
 			const auto bounds = TransformBounds(draw.Mesh.GetData()->LocalBounds, draw.Model);
-			const auto transform = PrepareTransform(viewProjection, draw.Model, draw.Tint);
-			const auto normal = NormalTransform(draw.Model, draw.Lit);
 			if (frustum.Intersects(bounds))
 			{
 				queue.Color.push_back(&draw);
-				queue.MeshInstances.push_back({ transform, normal, draw.Tint,
-					{ lighting.Ambient.X, lighting.Ambient.Y, lighting.Ambient.Z, draw.Lit ? 1.0f : 0.0f },
-					{ direction.X, direction.Y, direction.Z, 0.0f },
-					{ lighting.Color.X, lighting.Color.Y, lighting.Color.Z, 0.0f } });
+				queue.MeshInstances.push_back(PrepareMeshInstance(draw));
 			}
 		}
 		for (const auto& draw : opaqueDraws)

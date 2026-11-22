@@ -51,7 +51,7 @@ namespace Raven
 	}
 
 	VulkanBuffer::VulkanBuffer(const VulkanDevice& device,
-		const VulkanPhysicalDevice& physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage)
+		const VulkanPhysicalDevice& physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, Mapping mapping)
 		: m_Device(device.Get()), m_Size(size)
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
@@ -87,6 +87,13 @@ namespace Raven
 
 			CheckBufferResult(vkBindBufferMemory(m_Device, m_Buffer, m_Memory, 0),
 				"vkBindBufferMemory");
+
+			if (mapping == Mapping::Persistent)
+			{
+				void* mapped = nullptr;
+				CheckBufferResult(vkMapMemory(m_Device, m_Memory, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory");
+				m_Mapped = static_cast<std::byte*>(mapped);
+			}
 		}
 		catch (...)
 		{
@@ -106,6 +113,11 @@ namespace Raven
 			throw std::invalid_argument("Buffer upload exceeds its capacity");
 		if (data.empty())
 			return;
+		if (m_Mapped)
+		{
+			std::memcpy(m_Mapped, data.data(), data.size());
+			return;
+		}
 		void* mapped = nullptr;
 		CheckBufferResult(vkMapMemory(m_Device, m_Memory, 0,
 			static_cast<VkDeviceSize>(data.size()), 0, &mapped), "vkMapMemory");
@@ -123,6 +135,11 @@ namespace Raven
 
 		if (m_Memory != VK_NULL_HANDLE)
 		{
+			if (m_Mapped)
+			{
+				vkUnmapMemory(m_Device, m_Memory);
+				m_Mapped = nullptr;
+			}
 			vkFreeMemory(m_Device, m_Memory, nullptr);
 			m_Memory = VK_NULL_HANDLE;
 		}

@@ -12,6 +12,7 @@
 #include "Renderer/Vulkan/VulkanTexturePipeline.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
+#include "Renderer/Vulkan/VulkanFrameData.hpp"
 
 #include <array>
 #include <cstdint>
@@ -39,11 +40,12 @@ namespace Raven
 		private:
 			friend class VulkanClearPass;
 			LitPipelineFactory(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-				VkDescriptorSetLayout textureLayout);
+				VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout);
 			const VulkanDevice& m_Device;
 			VkFormat m_ColorFormat;
 			VkFormat m_DepthFormat;
 			VkDescriptorSetLayout m_TextureLayout;
+			VkDescriptorSetLayout m_FrameLayout;
 		};
 
 		// Pipelines depend only on attachment formats, so a recreated pass can keep them.
@@ -65,7 +67,7 @@ namespace Raven
 
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
-			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
+			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout,
 			std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
@@ -91,15 +93,24 @@ namespace Raven
 			VkSemaphore ImageAvailable = VK_NULL_HANDLE;
 			// Timeline value signaled by this slot's last submission; 0 before the first one.
 			std::uint64_t Submitted = 0;
-			// Only this slot's submissions read its instance buffers, so waiting for the slot covers them.
-			std::unique_ptr<VulkanBuffer> TexturedInstances;
-			std::unique_ptr<VulkanBuffer> MeshInstances;
+			// Frame uniform and instances (R4). Only this slot's submissions read it, so waiting for
+			// the slot covers its previous contents.
+			VulkanUploadRing Ring;
+			// Names the ring's frame uniform; rewritten when the ring is replaced.
+			VkDescriptorSet FrameSet = VK_NULL_HANDLE;
 			std::int64_t TimestampFrame = 0;
 		};
 
-		void UploadInstances(std::unique_ptr<VulkanBuffer>& buffer, std::span<const std::byte> bytes);
+		// Ring offsets of one frame's instance arrays.
+		struct InstanceOffsets
+		{
+			VkDeviceSize Mesh = 0;
+			VkDeviceSize Textured = 0;
+		};
+
+		InstanceOffsets Upload(Frame& frame, const VulkanDrawQueue& queue);
 		void Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-			const VulkanTexture& white, bool timestamps);
+			const VulkanTexture& white, InstanceOffsets offsets, bool timestamps);
 		void PrepareTimestampQueries();
 		void ReadTimestamps(Frame& frame, FrameMetrics& metrics);
 		void Destroy() noexcept;
@@ -113,8 +124,10 @@ namespace Raven
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
 		std::shared_ptr<const VulkanColorPipeline> m_LitPipeline;
 		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_FrameLayout = VK_NULL_HANDLE;
 		std::shared_ptr<const TexturedPipelines> m_TexturedPipelines;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
+		VkDescriptorPool m_FramePool = VK_NULL_HANDLE;
 		VkExtent2D m_Extent{};
 		// Swapchain images rendered to with dynamic rendering; the swapchain outlives the pass.
 		std::vector<VkImage> m_ColorImages;

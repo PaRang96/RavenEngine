@@ -13,11 +13,13 @@ namespace Raven
 {
 	VulkanColorPipeline::VulkanColorPipeline(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
-		std::span<const std::uint32_t> vertexWords, std::span<const std::uint32_t> fragmentWords)
+		VkDescriptorSetLayout frameLayout, std::span<const std::uint32_t> vertexWords,
+		std::span<const std::uint32_t> fragmentWords)
 		: m_Device(device.Get())
 	{
-		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED)
-			throw std::runtime_error("A device and attachment formats are required for the color pipeline");
+		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED ||
+			textureLayout == VK_NULL_HANDLE || frameLayout == VK_NULL_HANDLE)
+			throw std::runtime_error("A device, attachment formats and set layouts are required for the color pipeline");
 
 		try
 		{
@@ -39,23 +41,19 @@ namespace Raven
 				VkVertexInputBindingDescription{ 0, sizeof(ColorVertex), VK_VERTEX_INPUT_RATE_VERTEX },
 				VkVertexInputBindingDescription{ 1, sizeof(MeshInstanceData), VK_VERTEX_INPUT_RATE_INSTANCE }
 			};
-			const std::array<VkVertexInputAttributeDescription, 15> attributes
+			const std::array<VkVertexInputAttributeDescription, 11> attributes
 			{
 				VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Position) },
 				VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Color) },
 				VkVertexInputAttributeDescription{ 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ColorVertex, Normal) },
 				VkVertexInputAttributeDescription{ 3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ColorVertex, UV) },
-				VkVertexInputAttributeDescription{ 4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0 },
-				VkVertexInputAttributeDescription{ 5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16 },
-				VkVertexInputAttributeDescription{ 6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32 },
-				VkVertexInputAttributeDescription{ 7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48 },
-				VkVertexInputAttributeDescription{ 8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 64 },
-				VkVertexInputAttributeDescription{ 9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 80 },
-				VkVertexInputAttributeDescription{ 10, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 96 },
-				VkVertexInputAttributeDescription{ 11, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, Tint) },
-				VkVertexInputAttributeDescription{ 12, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, AmbientAndLit) },
-				VkVertexInputAttributeDescription{ 13, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, LightDirection) },
-				VkVertexInputAttributeDescription{ 14, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, LightColor) }
+				VkVertexInputAttributeDescription{ 4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) },
+				VkVertexInputAttributeDescription{ 5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) + 16 },
+				VkVertexInputAttributeDescription{ 6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, WorldRows) + 32 },
+				VkVertexInputAttributeDescription{ 7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) },
+				VkVertexInputAttributeDescription{ 8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) + 16 },
+				VkVertexInputAttributeDescription{ 9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, NormalToWorld) + 32 },
+				VkVertexInputAttributeDescription{ 10, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstanceData, Tint) }
 			};
 			VkPipelineVertexInputStateCreateInfo vertexInput{};
 			vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -103,8 +101,9 @@ namespace Raven
 
 			VkPipelineLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-			layoutInfo.setLayoutCount = 1;
-			layoutInfo.pSetLayouts = &textureLayout;
+			const std::array<VkDescriptorSetLayout, 2> setLayouts{ textureLayout, frameLayout };
+			layoutInfo.setLayoutCount = static_cast<std::uint32_t>(setLayouts.size());
+			layoutInfo.pSetLayouts = setLayouts.data();
 			VkPipelineLayout layout = VK_NULL_HANDLE;
 			VkResult result = vkCreatePipelineLayout(m_Device, &layoutInfo, nullptr, &layout);
 			if (result != VK_SUCCESS)
@@ -155,6 +154,12 @@ namespace Raven
 		vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipeline);
 		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout,
 			0, 1, &texture, 0, nullptr);
+	}
+
+	void VulkanColorPipeline::BindFrame(VkCommandBuffer commands, VkDescriptorSet frame) const
+	{
+		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout,
+			1, 1, &frame, 0, nullptr);
 	}
 
 	VulkanColorPipeline::~VulkanColorPipeline()

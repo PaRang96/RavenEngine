@@ -29,7 +29,7 @@ namespace Raven
 			CheckClearResult(result, operation);
 		}
 
-		void RecordTexturedBatches(VkCommandBuffer commands, VkBuffer instanceBuffer,
+		void RecordTexturedBatches(VkCommandBuffer commands, VkBuffer instanceBuffer, VkDeviceSize instanceOffset,
 			const VulkanTexturePipeline& pipeline, std::span<const TexturedBatch> batches)
 		{
 			for (const auto& batch : batches)
@@ -39,7 +39,7 @@ namespace Raven
 				{
 					batch.Mesh->GetVertices().Get(), instanceBuffer
 				};
-				const std::array<VkDeviceSize, 2> offsets{ 0, 0 };
+				const std::array<VkDeviceSize, 2> offsets{ 0, instanceOffset };
 				vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
 					buffers.data(), offsets.data());
 				vkCmdBindIndexBuffer(commands, batch.Mesh->GetIndices().Get(), 0, VK_INDEX_TYPE_UINT16);
@@ -50,8 +50,10 @@ namespace Raven
 	}
 
 	VulkanClearPass::LitPipelineFactory::LitPipelineFactory(const VulkanDevice& device,
-		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout)
-		: m_Device(device), m_ColorFormat(colorFormat), m_DepthFormat(depthFormat), m_TextureLayout(textureLayout)
+		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
+		VkDescriptorSetLayout frameLayout)
+		: m_Device(device), m_ColorFormat(colorFormat), m_DepthFormat(depthFormat), m_TextureLayout(textureLayout),
+		  m_FrameLayout(frameLayout)
 	{
 	}
 
@@ -59,12 +61,12 @@ namespace Raven
 		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment) const
 	{
 		return std::make_shared<VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
-			vertex, fragment);
+			m_FrameLayout, vertex, fragment);
 	}
 
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
-		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_TextureLayout };
+		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_TextureLayout, m_FrameLayout };
 	}
 
 	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
@@ -110,12 +112,13 @@ namespace Raven
 
 	VulkanClearPass::VulkanClearPass(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
-		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout,
+		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout,
 		std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
 		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 		VulkanFrameTimeline& timeline, const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
-		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_Extent(swapchain.GetExtent())
+		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_FrameLayout(frameLayout),
+		  m_Extent(swapchain.GetExtent())
 	{
 		if (m_Device == VK_NULL_HANDLE || swapchain.Get() == VK_NULL_HANDLE ||
 			swapchain.GetImageViews().empty() || m_Extent.width == 0 || m_Extent.height == 0)
@@ -163,6 +166,27 @@ namespace Raven
 			CheckClearResult(vkAllocateCommandBuffers(m_Device, &allocation, commands.data()),
 				"vkAllocateCommandBuffers");
 
+			// One frame-uniform set per slot; each names its slot's upload ring (R4).
+			const VkDescriptorPoolSize frameSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				static_cast<std::uint32_t>(m_Frames.size()) };
+			VkDescriptorPoolCreateInfo framePoolInfo{};
+			framePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+			framePoolInfo.maxSets = static_cast<std::uint32_t>(m_Frames.size());
+			framePoolInfo.poolSizeCount = 1;
+			framePoolInfo.pPoolSizes = &frameSize;
+			CheckClearCreation(vkCreateDescriptorPool(m_Device, &framePoolInfo, nullptr, &m_FramePool),
+				m_FramePool, "vkCreateDescriptorPool (frame)");
+			std::array<VkDescriptorSetLayout, 2> frameLayouts{};
+			frameLayouts.fill(m_FrameLayout);
+			std::array<VkDescriptorSet, 2> frameSets{};
+			VkDescriptorSetAllocateInfo frameAllocation{};
+			frameAllocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			frameAllocation.descriptorPool = m_FramePool;
+			frameAllocation.descriptorSetCount = static_cast<std::uint32_t>(frameSets.size());
+			frameAllocation.pSetLayouts = frameLayouts.data();
+			CheckClearResult(vkAllocateDescriptorSets(m_Device, &frameAllocation, frameSets.data()),
+				"vkAllocateDescriptorSets (frame)");
+
 			VkSemaphoreCreateInfo semaphoreInfo{};
 			semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -170,6 +194,7 @@ namespace Raven
 			{
 				auto& frame = m_Frames[index];
 				frame.Commands = commands[index];
+				frame.FrameSet = frameSets[index];
 				CheckClearCreation(vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr,
 					&frame.ImageAvailable), frame.ImageAvailable, "vkCreateSemaphore (acquire)");
 			}
@@ -201,40 +226,43 @@ namespace Raven
 				vkDestroySemaphore(m_Device, frame.ImageAvailable, nullptr);
 		if (m_CommandPool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
+		if (m_FramePool != VK_NULL_HANDLE)
+			vkDestroyDescriptorPool(m_Device, m_FramePool, nullptr);
 		if (m_Timestamps != VK_NULL_HANDLE)
 			vkDestroyQueryPool(m_Device, m_Timestamps, nullptr);
 		for (auto& frame : m_Frames)
-		{
-			frame.TexturedInstances.reset();
-			frame.MeshInstances.reset();
-		}
+			frame.Ring = {};
 		m_TexturedPipelines.reset();
 		m_LitPipeline.reset();
 		m_DepthAttachments.clear();
 	}
 
-	void VulkanClearPass::UploadInstances(std::unique_ptr<VulkanBuffer>& buffer,
-		std::span<const std::byte> bytes)
+	VulkanClearPass::InstanceOffsets VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
 	{
-		if (bytes.empty())
-			return;
-		constexpr VkDeviceSize maxBytes = std::numeric_limits<VkDeviceSize>::max();
-		const auto required = static_cast<VkDeviceSize>(bytes.size());
-		if (!buffer || buffer->GetSize() < required)
+		const auto uniform = std::as_bytes(std::span(&queue.Frame, 1));
+		const auto mesh = std::as_bytes(std::span(queue.MeshInstances));
+		const auto textured = std::as_bytes(std::span(queue.TexturedInstances));
+		const VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(uniform.size()) + mesh.size()) +
+			textured.size();
+		if (frame.Ring.Begin(m_DeviceOwner, m_PhysicalDevice, m_Timeline, required))
 		{
-			VkDeviceSize capacity = buffer ? buffer->GetSize() :
-				64 * sizeof(TexturedInstanceData);
-			while (capacity < required)
-				capacity = capacity <= maxBytes / 2 ? capacity * 2 : required;
-			auto replacement = std::make_unique<VulkanBuffer>(m_DeviceOwner, m_PhysicalDevice,
-				capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-			replacement->Write(bytes);
-			buffer = std::move(replacement);
+			// The slot's previous submission has completed, so its set is not in use.
+			const VkDescriptorBufferInfo buffer{ frame.Ring.Get(), 0, sizeof(FrameUniformData) };
+			VkWriteDescriptorSet write{};
+			write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			write.dstSet = frame.FrameSet;
+			write.descriptorCount = 1;
+			write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			write.pBufferInfo = &buffer;
+			vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
 		}
-		else
-		{
-			buffer->Write(bytes);
-		}
+		// The frame set names offset 0, so the uniform is always pushed first.
+		if (frame.Ring.Push(uniform) != 0)
+			throw std::logic_error("The frame uniform must start the upload ring");
+		InstanceOffsets offsets;
+		offsets.Mesh = frame.Ring.Push(mesh);
+		offsets.Textured = frame.Ring.Push(textured);
+		return offsets;
 	}
 
 	void VulkanClearPass::PrepareTimestampQueries()
@@ -279,10 +307,10 @@ namespace Raven
 	}
 
 	void VulkanClearPass::Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-		const VulkanTexture& white, bool timestamps)
+		const VulkanTexture& white, InstanceOffsets offsets, bool timestamps)
 	{
 		const auto commands = frame.Commands;
-		const auto instanceBuffer = frame.TexturedInstances ? frame.TexturedInstances->Get() : VK_NULL_HANDLE;
+		const auto instanceBuffer = frame.Ring.Get();
 		CheckClearResult(vkResetCommandBuffer(commands, 0), "vkResetCommandBuffer");
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -361,6 +389,8 @@ namespace Raven
 		const VkRect2D scissor{ { 0, 0 }, m_Extent };
 		vkCmdSetViewport(commands, 0, 1, &viewport);
 		vkCmdSetScissor(commands, 0, 1, &scissor);
+		if (!queue.Color.empty())
+			m_LitPipeline->BindFrame(commands, frame.FrameSet);
 		for (std::size_t index = 0; index < queue.Color.size(); ++index)
 		{
 			const auto& draw = *queue.Color[index];
@@ -368,15 +398,17 @@ namespace Raven
 			m_LitPipeline->Bind(commands, texture.GetDescriptorSet());
 			// Released or replaced mesh data is retired, so it outlives this submission (R3).
 			const auto& mesh = *draw.Mesh.GetData();
-			const std::array<VkBuffer, 2> buffers{ mesh.Vertices.Get(), frame.MeshInstances->Get() };
-			const std::array<VkDeviceSize, 2> offsets{ 0, 0 };
+			const std::array<VkBuffer, 2> buffers{ mesh.Vertices.Get(), instanceBuffer };
+			const std::array<VkDeviceSize, 2> bufferOffsets{ 0, offsets.Mesh };
 			vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
-				buffers.data(), offsets.data());
+				buffers.data(), bufferOffsets.data());
 			vkCmdBindIndexBuffer(commands, mesh.Indices.Get(), 0, VK_INDEX_TYPE_UINT16);
 			vkCmdDrawIndexed(commands, mesh.IndexCount, 1, 0, 0, static_cast<std::uint32_t>(index));
 		}
-		RecordTexturedBatches(commands, instanceBuffer, m_TexturedPipelines->Opaque, queue.OpaqueBatches);
-		RecordTexturedBatches(commands, instanceBuffer, m_TexturedPipelines->Transparent, queue.TransparentBatches);
+		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Opaque,
+			queue.OpaqueBatches);
+		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Transparent,
+			queue.TransparentBatches);
 		vk.EndRendering(commands);
 
 		// Presentation waits on the render-finished semaphore, which the submission signals
@@ -414,9 +446,8 @@ namespace Raven
 			PrepareTimestampQueries();
 			ReadTimestamps(frame, *metrics);
 		}
-		// Allocate GPU storage before acquiring the image.
-		UploadInstances(frame.TexturedInstances, std::as_bytes(std::span(queue.TexturedInstances)));
-		UploadInstances(frame.MeshInstances, std::as_bytes(std::span(queue.MeshInstances)));
+		// Write the frame's uniform and instances before acquiring the image.
+		const auto offsets = Upload(frame, queue);
 		upload.End();
 
 		std::uint32_t imageIndex = 0;
@@ -433,7 +464,7 @@ namespace Raven
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
-		Record(frame, imageIndex, queue, white, timestamps);
+		Record(frame, imageIndex, queue, white, offsets, timestamps);
 
 		// The binary semaphores serve acquire and present; the timeline value marks this frame.
 		VkSemaphoreSubmitInfoKHR acquired{};
