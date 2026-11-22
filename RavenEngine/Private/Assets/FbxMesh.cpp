@@ -20,7 +20,6 @@ namespace Raven
 		constexpr std::size_t MaxFileBytes = 64 * 1024 * 1024;
 		constexpr std::size_t MaxParserBytes = 128 * 1024 * 1024;
 		constexpr std::size_t MaxTriangles = 262144;
-		constexpr std::size_t MaxVertices = std::size_t{std::numeric_limits<std::uint16_t>::max()} + 1;
 
 		[[noreturn]] void FbxError(const std::filesystem::path& path, const char* reason)
 		{
@@ -149,8 +148,9 @@ namespace Raven
 		std::vector<std::uint32_t> indices(result.Vertices.size());
 		const ufbx_allocator_opts allocator{ .memory_limit = MaxParserBytes };
 		const auto unique = ufbx_generate_indices(&stream, 1, indices.data(), indices.size(), &allocator, &error);
-		if (unique == 0 || unique > MaxVertices)
-			FbxError(path, "cannot index mesh within the renderer's 16-bit vertex limit");
+		// 32-bit indices (R6): the triangle limit bounds the vertex count well below the index range.
+		if (unique == 0)
+			FbxError(path, "cannot index mesh");
 		result.Vertices.resize(unique);
 		result.Indices.assign(indices.begin(), indices.end());
 		return result;

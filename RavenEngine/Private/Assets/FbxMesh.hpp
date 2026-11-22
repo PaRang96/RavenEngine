@@ -13,7 +13,7 @@ namespace Raven
 	struct FbxMesh
 	{
 		std::vector<ColorVertex> Vertices;
-		std::vector<std::uint16_t> Indices;
+		std::vector<std::uint32_t> Indices;
 	};
 
 	std::vector<std::byte> ReadFbxBytes(const std::filesystem::path& path);

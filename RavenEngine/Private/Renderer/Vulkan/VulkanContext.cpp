@@ -107,10 +107,10 @@ namespace Raven
 		void WatchFragment(FragmentProgram& program, FragmentShaderKind kind);
 		void CollectResources() noexcept;
 		std::size_t CreateMeshSlot(std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices, bool managed);
+			std::span<const std::uint32_t> indices, bool managed);
 		std::size_t CreateTextureSlot(const TextureDesc& description, bool managed);
 		const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices);
+			std::span<const std::uint32_t> indices);
 		const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
@@ -147,6 +147,8 @@ namespace Raven
 		VulkanSurface m_Surface;
 		VulkanPhysicalDevice m_PhysicalDevice;
 		VulkanDevice m_Device;
+		// Mesh data returns its ranges here, including retired data dropped by the timeline (R6).
+		VulkanMeshPool m_MeshPool;
 		std::vector<ResourceSlot<VulkanMesh>> m_Meshes;
 		std::vector<std::unique_ptr<VulkanTexturedMesh>> m_TexturedMeshes;
 		std::vector<ResourceSlot<VulkanTexture>> m_Textures;
@@ -192,6 +194,7 @@ namespace Raven
 		  m_PhysicalDevice(SelectVulkanPhysicalDevice(
 			  m_Instance.Get(), m_Surface.Get())),
 		  m_Device(m_PhysicalDevice),
+		  m_MeshPool(m_Device, m_PhysicalDevice),
 		  m_TextureDescriptors(m_Device),
 		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
@@ -354,16 +357,16 @@ namespace Raven
 	}
 
 	const VulkanMesh& VulkanContext::Impl::CreateMesh(std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const std::uint32_t> indices)
 	{
 		return *m_Meshes[CreateMeshSlot(vertices, indices, false)].Owner;
 	}
 
 	std::size_t VulkanContext::Impl::CreateMeshSlot(std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices, bool managed)
+		std::span<const std::uint32_t> indices, bool managed)
 	{
 		const auto index = ReserveResourceSlot(m_Meshes);
-		auto owner = std::make_shared<VulkanMesh>(m_Device, m_PhysicalDevice, vertices, indices);
+		auto owner = std::make_shared<VulkanMesh>(m_MeshPool, m_Timeline, vertices, indices);
 		auto& slot = m_Meshes[index];
 		slot.Owner = std::move(owner);
 		++slot.Generation;
@@ -492,7 +495,7 @@ namespace Raven
 		preparation.End();
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
-			m_DrawQueue, *m_WhiteTexture, metrics))
+			m_DrawQueue, m_MeshPool, *m_WhiteTexture, metrics))
 		{
 			ResetSwapchain();
 			return std::nullopt;
@@ -546,27 +549,27 @@ namespace Raven
 	}
 
 	const VulkanMesh& VulkanContext::CreateMesh(std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const std::uint32_t> indices)
 	{
 		return m_Impl->CreateMesh(vertices, indices);
 	}
 
 	MeshHandle VulkanContext::CreateMeshHandle(std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const std::uint32_t> indices)
 	{
 		const auto index = m_Impl->CreateMeshSlot(vertices, indices, false);
 		return MeshHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Meshes[index].Generation);
 	}
 
 	void VulkanContext::ReplaceMesh(MeshHandle mesh, std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const std::uint32_t> indices)
 	{
 		if (!ResolveMesh(mesh))
 			throw std::invalid_argument("Mesh handle does not belong to this renderer context");
 
 		auto& owner = *m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)].Owner;
 		auto previous = owner.GetData();
-		owner.Replace(m_Impl->m_Device, m_Impl->m_PhysicalDevice, vertices, indices);
+		owner.Replace(m_Impl->m_MeshPool, m_Impl->m_Timeline, vertices, indices);
 		// Submitted frames may still read the previous buffers (R3).
 		m_Impl->m_Timeline.Retire(std::move(previous));
 	}
@@ -585,7 +588,7 @@ namespace Raven
 	}
 
 	MeshHandle VulkanContext::CreateManagedMesh(std::span<const ColorVertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const std::uint32_t> indices)
 	{
 		const auto index = m_Impl->CreateMeshSlot(vertices, indices, true);
 		return MeshHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Meshes[index].Generation);

@@ -12,11 +12,13 @@ namespace Raven
 	class VulkanBuffer
 	{
 	public:
-		// Persistent buffers stay mapped for their lifetime (docs/RendererDesign.md, R4).
+		// Persistent buffers stay mapped for their lifetime (docs/RendererDesign.md, R4). Device-local
+		// buffers are never mapped and are filled by transfer commands (R6).
 		enum class Mapping
 		{
 			PerWrite,
-			Persistent
+			Persistent,
+			DeviceLocal
 		};
 
 		VulkanBuffer(const VulkanDevice& device,
@@ -47,5 +49,6 @@ namespace Raven
 		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
 		VkDeviceSize m_Size = 0;
 		std::byte* m_Mapped = nullptr;
+		bool m_DeviceLocal = false;
 	};
 }

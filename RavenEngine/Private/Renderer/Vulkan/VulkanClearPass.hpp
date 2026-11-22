@@ -81,7 +81,8 @@ namespace Raven
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
 		bool Draw(const VulkanSwapchain& swapchain, VkQueue graphics, VkQueue present,
-			const VulkanDrawQueue& queue, const VulkanTexture& white, FrameMetrics* metrics);
+			const VulkanDrawQueue& queue, const VulkanMeshPool& meshes, const VulkanTexture& white,
+			FrameMetrics* metrics);
 
 		VulkanClearPass(const VulkanClearPass&) = delete;
 		VulkanClearPass& operator=(const VulkanClearPass&) = delete;
@@ -110,7 +111,7 @@ namespace Raven
 
 		InstanceOffsets Upload(Frame& frame, const VulkanDrawQueue& queue);
 		void Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-			const VulkanTexture& white, InstanceOffsets offsets, bool timestamps);
+			const VulkanMeshPool& meshes, const VulkanTexture& white, InstanceOffsets offsets, bool timestamps);
 		void PrepareTimestampQueries();
 		void ReadTimestamps(Frame& frame, FrameMetrics& metrics);
 		void Destroy() noexcept;

@@ -17,9 +17,9 @@ namespace Raven
 	};
 
 	// Call after validating nonempty triangle indices. Only referenced vertices contribute.
-	template<typename Vertex>
+	template<typename Vertex, typename Index>
 	MeshBounds CalculateMeshBounds(std::span<const Vertex> vertices,
-		std::span<const std::uint16_t> indices)
+		std::span<const Index> indices)
 	{
 		const auto& first = vertices[indices.front()].Position;
 		float minimum[3]{ first[0], first[1], first[2] };

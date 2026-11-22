@@ -210,7 +210,18 @@ Each step is a reviewed patch, and every sample keeps working.
      - Back to back with step 5 at equal frame rate (auto FIFO, NVIDIA, 165 FPS): renderer preparation p95 0.67 ms (0.61), record/submit p95 0.13 ms (0.84), GPU p95 0.44 ms (0.42), CPU preparation p95 1.05 ms (1.71).
      - NVIDIA mailbox (2 runs each): 193–207 FPS (163); preparation p95 0.79–0.87 ms (0.64–0.66), record/submit p95 0.18 ms (0.87–0.90), GPU p95 0.44–0.52 ms (0.55). Preparation per frame reads higher at the higher frame rate; the FIFO pair isolates the code change.
      - The live session was not rerun: batching changes neither reload nor resource lifetime, which step 7 exercises.
-7. **R6:** device-local vertex/index pools with 32-bit indices, staging uploads and range retirement.
+7. *(Done 2026-11-22.)* **R6:** device-local vertex/index pools with 32-bit indices, staging uploads and range retirement.
+   - `VulkanMeshPool` (in `VulkanMesh.cpp`) owns one device-local vertex pool (44-byte `ColorVertex`, initially 64 Ki vertices) and one index pool (32-bit, initially 256 Ki indices), each with a sorted first-fit free list that merges neighbors.
+   - `VulkanMeshData` holds its ranges and returns them on destruction. Released or replaced data is already retired through R3, so a range is reused only after the GPU finishes with it.
+   - An upload writes a persistently mapped staging buffer and records copies in a one-time command buffer on the graphics queue: a barrier after earlier copies and vertex/index reads, growth copies when a pool is outgrown, a copy-to-copy barrier, the data copies, and a barrier to vertex and index input. The submission signals the next timeline value; the staging buffer, command buffer and any outgrown pool buffer are retired, so uploads never wait on the CPU.
+   - Uploads are transactional: the pools are copied, changed and committed only after submission succeeds.
+   - The lit mesh API (`CreateMesh`, `CreateMeshHandle`, `CreateManagedMesh`, `ReplaceMesh`) takes 32-bit indices, and FBX import no longer has a 65,536-vertex limit; its 262,144-triangle limit stays. Draws bind both pools once and pass `firstIndex` and `vertexOffset` per batch.
+   - Not changed: textured (sprite) meshes keep their own host-visible 16-bit buffers. They are the 2D path, which M2 does not target; M3 can fold them in with bindless materials.
+   - Verification on the minimum-spec laptop:
+     - Debug/Release builds and both tests pass; the Debug 3D smoke with core and synchronization validation reported nothing.
+     - Temporary probe with 64-vertex and 96-index initial pools (ignored snapshot, reverted): the validation smoke reported nothing, and Debug captures matched step 6, so growth copies, barriers and free-list reuse keep existing geometry intact.
+     - Release captures match step 6. The live Release session passed, including FBX reload through `ReplaceMesh`.
+     - 4,000-mesh benchmark, back to back with step 6 (one run per case): auto FIFO preparation p95 0.73 ms (0.80), record/submit 0.15 ms (0.19), GPU 0.38 ms (0.37), CPU preparation 1.17 ms (1.30); NVIDIA mailbox 213 FPS (193), GPU p95 0.31 ms (0.38). Run-to-run noise is about 0.1 ms on preparation.
 8. **R7** cleanups where not already absorbed.
 9. **Exit check:** budgets, image comparison, Debug validation, live reload session, the 10k scene, and Courtyard on your request.
 

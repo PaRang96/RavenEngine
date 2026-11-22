@@ -18,13 +18,13 @@ namespace Raven
 					" failed: " + std::to_string(result));
 		}
 
-		std::uint32_t FindUploadMemoryType(VkPhysicalDevice physicalDevice,
-			std::uint32_t allowedTypes)
+		std::uint32_t FindMemoryType(VkPhysicalDevice physicalDevice,
+			std::uint32_t allowedTypes, bool deviceLocal)
 		{
 			VkPhysicalDeviceMemoryProperties properties{};
 			vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
 
-			constexpr VkMemoryPropertyFlags required =
+			const VkMemoryPropertyFlags required = deviceLocal ? VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT :
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
@@ -38,7 +38,8 @@ namespace Raven
 					return index;
 			}
 
-			throw std::runtime_error("No compatible host-visible coherent buffer memory");
+			throw std::runtime_error(deviceLocal ? "No compatible device-local buffer memory" :
+				"No compatible host-visible coherent buffer memory");
 		}
 	}
 
@@ -52,7 +53,7 @@ namespace Raven
 
 	VulkanBuffer::VulkanBuffer(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, VkDeviceSize size, VkBufferUsageFlags usage, Mapping mapping)
-		: m_Device(device.Get()), m_Size(size)
+		: m_Device(device.Get()), m_Size(size), m_DeviceLocal(mapping == Mapping::DeviceLocal)
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
 			size == 0 || usage == 0)
@@ -77,8 +78,9 @@ namespace Raven
 			VkMemoryAllocateInfo allocation{};
 			allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 			allocation.allocationSize = requirements.size;
-			allocation.memoryTypeIndex = FindUploadMemoryType(
-				physicalDevice.Handle, requirements.memoryTypeBits);
+			allocation.memoryTypeIndex = FindMemoryType(
+				physicalDevice.Handle, requirements.memoryTypeBits,
+				mapping == Mapping::DeviceLocal);
 
 			VkDeviceMemory memory = VK_NULL_HANDLE;
 			CheckBufferResult(vkAllocateMemory(m_Device, &allocation, nullptr, &memory),
@@ -111,6 +113,8 @@ namespace Raven
 	{
 		if (data.size() > m_Size)
 			throw std::invalid_argument("Buffer upload exceeds its capacity");
+		if (m_DeviceLocal)
+			throw std::logic_error("Device-local buffers are filled by transfer commands");
 		if (data.empty())
 			return;
 		if (m_Mapped)

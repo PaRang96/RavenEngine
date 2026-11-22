@@ -49,11 +49,11 @@ namespace Raven
 
 		// Meshes remain owned by this context until shutdown, after GPU work completes.
 		RAVEN_API const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices);
+			std::span<const std::uint32_t> indices);
 
 		// Value handles can be copied into ECS data; geometry is shared, not copied.
 		RAVEN_API MeshHandle CreateMeshHandle(std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices);
+			std::span<const std::uint32_t> indices);
 
 		// Null/foreign/expired-context handles resolve to null. Borrow only while this context lives.
 		RAVEN_API const VulkanMesh* ResolveMesh(MeshHandle mesh) const noexcept;
@@ -63,12 +63,12 @@ namespace Raven
 		// Rendering thread, between DrawFrame calls. The mesh reference and handle stay valid.
 		// A failed replacement leaves the current geometry active.
 		RAVEN_API void ReplaceMesh(MeshHandle mesh, std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices);
+			std::span<const std::uint32_t> indices);
 
 		// Managed resources are borrowed only while their owner holds the handle. Release invalidates
 		// the handle immediately; submitted GPU work retains the required native resources.
 		RAVEN_API MeshHandle CreateManagedMesh(std::span<const ColorVertex> vertices,
-			std::span<const std::uint16_t> indices);
+			std::span<const std::uint32_t> indices);
 		RAVEN_API TextureHandle CreateManagedTexture(const TextureDesc& description);
 		RAVEN_API const VulkanTexture* ResolveTexture(TextureHandle texture) const noexcept;
 		RAVEN_API bool ReleaseMesh(MeshHandle mesh) noexcept;

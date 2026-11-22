@@ -307,7 +307,7 @@ namespace Raven
 	}
 
 	void VulkanClearPass::Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-		const VulkanTexture& white, InstanceOffsets offsets, bool timestamps)
+		const VulkanMeshPool& meshes, const VulkanTexture& white, InstanceOffsets offsets, bool timestamps)
 	{
 		const auto commands = frame.Commands;
 		const auto instanceBuffer = frame.Ring.Get();
@@ -392,11 +392,15 @@ namespace Raven
 		if (!queue.LitBatches.empty())
 		{
 			m_LitPipeline->BindFrame(commands, frame.FrameSet);
-			vkCmdBindVertexBuffers(commands, 1, 1, &instanceBuffer, &offsets.Mesh);
+			// Every lit mesh lives in the two pools, so geometry binds once (R6).
+			const std::array<VkBuffer, 2> buffers{ meshes.GetVertices(), instanceBuffer };
+			const std::array<VkDeviceSize, 2> bufferOffsets{ 0, offsets.Mesh };
+			vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
+				buffers.data(), bufferOffsets.data());
+			vkCmdBindIndexBuffer(commands, meshes.GetIndices(), 0, VK_INDEX_TYPE_UINT32);
 		}
-		// One instanced draw per batch (R5); binds change only with the texture or mesh.
+		// One instanced draw per batch (R5); the texture binds only when it changes.
 		const VulkanTexture* boundTexture = nullptr;
-		const VulkanMeshData* boundMesh = nullptr;
 		for (const auto& batch : queue.LitBatches)
 		{
 			const auto* texture = batch.Key.Texture ? batch.Key.Texture : &white;
@@ -405,17 +409,10 @@ namespace Raven
 				m_LitPipeline->Bind(commands, texture->GetDescriptorSet());
 				boundTexture = texture;
 			}
-			// Released or replaced mesh data is retired, so it outlives this submission (R3).
-			const auto& mesh = *batch.Key.Mesh;
-			if (&mesh != boundMesh)
-			{
-				const VkBuffer vertices = mesh.Vertices.Get();
-				const VkDeviceSize vertexOffset = 0;
-				vkCmdBindVertexBuffers(commands, 0, 1, &vertices, &vertexOffset);
-				vkCmdBindIndexBuffer(commands, mesh.Indices.Get(), 0, VK_INDEX_TYPE_UINT16);
-				boundMesh = &mesh;
-			}
-			vkCmdDrawIndexed(commands, mesh.IndexCount, batch.InstanceCount, 0, 0, batch.FirstInstance);
+			// Released or replaced mesh data is retired, so its ranges outlive this submission (R3).
+			const auto& ranges = batch.Key.Mesh->Ranges;
+			vkCmdDrawIndexed(commands, ranges.IndexCount, batch.InstanceCount, ranges.FirstIndex,
+				ranges.VertexOffset, batch.FirstInstance);
 		}
 		RecordTexturedBatches(commands, instanceBuffer, offsets.Textured, m_TexturedPipelines->Opaque,
 			queue.OpaqueBatches);
@@ -443,7 +440,8 @@ namespace Raven
 	}
 
 	bool VulkanClearPass::Draw(const VulkanSwapchain& swapchain, VkQueue graphics,
-		VkQueue present, const VulkanDrawQueue& queue, const VulkanTexture& white, FrameMetrics* metrics)
+		VkQueue present, const VulkanDrawQueue& queue, const VulkanMeshPool& meshes,
+		const VulkanTexture& white, FrameMetrics* metrics)
 	{
 		auto& frame = m_Frames[m_FrameIndex];
 		constexpr auto timeout = std::numeric_limits<std::uint64_t>::max();
@@ -476,7 +474,7 @@ namespace Raven
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
-		Record(frame, imageIndex, queue, white, offsets, timestamps);
+		Record(frame, imageIndex, queue, meshes, white, offsets, timestamps);
 
 		// The binary semaphores serve acquire and present; the timeline value marks this frame.
 		VkSemaphoreSubmitInfoKHR acquired{};

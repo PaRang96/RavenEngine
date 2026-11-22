@@ -46,7 +46,7 @@ namespace Raven
 		const auto cross = [](D a, D b) -> D
 		{ return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}; };
 		const auto dot = [](D a, D b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
-		const auto point = [&model, &data](std::uint16_t index) -> D
+		const auto point = [&model, &data](std::uint32_t index) -> D
 		{
 			const auto p = data.PickVertices[index];
 			const auto v = model * Vec4{p.X, p.Y, p.Z, 1};
