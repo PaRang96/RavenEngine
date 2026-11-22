@@ -53,8 +53,7 @@ namespace Raven
 		info.pSemaphores = &m_Semaphore;
 		info.pValues = &value;
 		const VkResult result = vkWaitSemaphores(m_Device, &info, std::numeric_limits<std::uint64_t>::max());
-		if (result != VK_SUCCESS)
-			throw std::runtime_error("vkWaitSemaphores (frame timeline) failed: " + std::to_string(result));
+		CheckVulkanResult(result, "vkWaitSemaphores (frame timeline)");
 		m_Completed = value;
 	}
 

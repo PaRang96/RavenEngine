@@ -20,8 +20,6 @@ namespace Raven
 
 		void PollEvents() override;
 		bool ShouldClose() const override;
-		std::uint32_t GetWidth() const override;
-		std::uint32_t GetHeight() const override;
 		FramebufferState GetFramebufferState() const override;
 		std::vector<const char*> GetRequiredVulkanInstanceExtensions() const override;
 		VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;

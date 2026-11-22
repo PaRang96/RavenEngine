@@ -23,8 +23,6 @@ Reuse the shared renderer, math, samples, and image decoder. If a shared API nee
 ```cpp
 void PollEvents() override;
 bool ShouldClose() const override;
-std::uint32_t GetWidth() const override;
-std::uint32_t GetHeight() const override;
 FramebufferState GetFramebufferState() const override;
 std::vector<const char*> GetRequiredVulkanInstanceExtensions() const override;
 const InputState& GetInputState() const override;

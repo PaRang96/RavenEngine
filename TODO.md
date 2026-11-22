@@ -58,7 +58,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Step 5 (R4): persistently mapped per-frame rings, the frame uniform (camera and lighting, set 1, vertex stage only), and 112-byte lit instances with the clip transform in the vertex shader. Applied 2026-11-22 with the revised image tolerance. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [x] Step 6 (R5): instanced lit-mesh batching by (mesh, texture); 4,000 meshes now take 7 draws. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [x] Step 7 (R6): device-local vertex/index pools behind `MeshHandle`, with 32-bit indices, staging uploads and range retirement. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
-- [ ] Step 8 (R7): consolidate window size access around `GetFramebufferState()`, make swapchain preparation report usability through one readiness check, keep mesh-handle creation and lookup beside the mesh storage, and give device loss one clear error path.
+- [x] Step 8 (R7): `GetFramebufferState()` is the only window size accessor, `PrepareSwapchain()` is the one readiness check, and device loss has one error path. The mesh-handle item was reviewed with no change. Applied 2026-11-22. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
 - [ ] Step 9: M2 exit check (budgets, image comparison, Debug validation, live session, a local 10k scene, Courtyard on request).
 
 ## M4 — Platform contributor queue (parallel)

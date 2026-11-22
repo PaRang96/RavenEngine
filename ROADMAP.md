@@ -73,12 +73,12 @@ Replace per-entity heap storage with dense typed pools and real systems while ke
 
 Raise the API baseline and restructure frame data for scale. CPU-side mesh instancing is the first win. Design: [RendererDesign.md](docs/RendererDesign.md) (approved 2026-11-21).
 
-- [ ] Target Vulkan 1.2 for the instance and SPIR-V. Use dynamic rendering, synchronization2 and timeline semaphores. Add portability enumeration for MoltenVK. Report unsupported devices with clear errors.
-- [ ] Move per-frame uploads to persistently mapped ring buffers sized per frame in flight.
-- [ ] Move camera and lighting into a per-frame uniform buffer, and shrink instance data to a transform plus material/object indices.
-- [ ] Batch lit meshes by (mesh, material) with instanced draws. Transparent draws keep their sorted path.
-- [ ] Consolidate meshes into shared vertex/index pools, so geometry is ready for indirect drawing.
-- [ ] Review device loss, presentation completion and the swapchain readiness check. Fold in the pending framebuffer-state and mesh-handle cleanups.
+- [x] Target Vulkan 1.2 for the instance and SPIR-V. Use dynamic rendering, synchronization2 and timeline semaphores. Add portability enumeration for MoltenVK. Report unsupported devices with clear errors.
+- [x] Move per-frame uploads to persistently mapped ring buffers sized per frame in flight.
+- [ ] Move camera and lighting into a per-frame uniform buffer, and shrink instance data to a transform plus material/object indices. *Camera and lighting moved, and instances shrank to 112 bytes (step 5). Material/object indices come with M3's bindless materials and resident object data.*
+- [x] Batch lit meshes by (mesh, material) with instanced draws. Transparent draws keep their sorted path.
+- [x] Consolidate meshes into shared vertex/index pools, so geometry is ready for indirect drawing.
+- [x] Review device loss, presentation completion and the swapchain readiness check. Fold in the pending framebuffer-state and mesh-handle cleanups. *Presentation-completion timing was reviewed and left out; see [RendererDesign.md](docs/RendererDesign.md#migration-steps) step 8.*
 
 **Exit:** 10k lit meshes using a few unique meshes record draws in proportion to the number of unique (mesh, material) pairs. The current samples render identically, and Debug validation is clean.
 

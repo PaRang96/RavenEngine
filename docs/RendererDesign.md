@@ -222,7 +222,13 @@ Each step is a reviewed patch, and every sample keeps working.
      - Temporary probe with 64-vertex and 96-index initial pools (ignored snapshot, reverted): the validation smoke reported nothing, and Debug captures matched step 6, so growth copies, barriers and free-list reuse keep existing geometry intact.
      - Release captures match step 6. The live Release session passed, including FBX reload through `ReplaceMesh`.
      - 4,000-mesh benchmark, back to back with step 6 (one run per case): auto FIFO preparation p95 0.73 ms (0.80), record/submit 0.15 ms (0.19), GPU 0.38 ms (0.37), CPU preparation 1.17 ms (1.30); NVIDIA mailbox 213 FPS (193), GPU p95 0.31 ms (0.38). Run-to-run noise is about 0.1 ms on preparation.
-8. **R7** cleanups where not already absorbed.
+8. *(Done 2026-11-22.)* **R7** cleanups where not already absorbed.
+   - Window size: `Window::GetWidth()`/`GetHeight()` are removed, and `GetFramebufferState()` is the only size accessor. The Win32 accessors reported the restored size while minimized, unlike the framebuffer state. The Xcb mouse path now reads the framebuffer state. The Xcb and Cocoa edits are not compiled here (M4).
+   - Readiness: `PrepareSwapchain()` returns whether the framebuffer is drawable and a pass is ready. `DrawFrame` and `ReplaceTexturedFragment` use that one result. A minimized window still keeps its swapchain.
+   - Device loss: `CheckVulkanResult` turns `VK_ERROR_DEVICE_LOST` into a `VulkanDeviceLostError` with one message. Frame submit, acquire and present, timeline waits, swapchain-recreation idle waits, and mesh and texture uploads all use it. The error reaches the sample's fatal handler, which logs it and exits with code 1. Device loss could not be triggered on purpose, so this path is verified only by build and review.
+   - Mesh handles: reviewed, no change. Slot creation (`CreateMeshSlot`) and generation-checked lookup (`ResolveMesh`) already sit with the slot storage, and R6 moved the geometry into `VulkanMeshPool`. Moving handle construction into `VulkanContext::Impl` would need `MeshHandle` to befriend the private `Impl`, which buys nothing.
+   - Not addressed: the roadmap's "presentation completion" item. Present waits are bounded by the render-finished semaphores and timeline pacing; measuring when a frame actually reaches the display (`VK_KHR_present_wait`) would serve latency tuning, which no M2 budget needs.
+   - Verification on the minimum-spec laptop: Debug/Release builds and both tests pass; the Debug 3D smoke with core and synchronization validation reported nothing; Release captures match step 7. A Debug minimize → restore → minimize → close probe under validation kept the swapchain while minimized, recreated it once on restore, exited 0 and reported nothing.
 9. **Exit check:** budgets, image comparison, Debug validation, live reload session, the 10k scene, and Courtyard on your request.
 
 ## Out of scope for M2

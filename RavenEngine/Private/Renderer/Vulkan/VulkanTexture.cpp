@@ -15,8 +15,7 @@ namespace Raven
 	{
 		void CheckTextureResult(VkResult result, const char* operation)
 		{
-			if (result != VK_SUCCESS)
-				throw std::runtime_error(std::string(operation) + " failed: " + std::to_string(result));
+			CheckVulkanResult(result, operation);
 		}
 
 		std::uint32_t FindTextureMemory(VkPhysicalDevice physicalDevice, std::uint32_t allowedTypes)

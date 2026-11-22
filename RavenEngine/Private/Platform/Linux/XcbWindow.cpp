@@ -341,12 +341,9 @@ namespace Raven
 	}
 
 	bool XcbWindow::ShouldClose() const { return m_ShouldClose; }
-	std::uint32_t XcbWindow::GetWidth() const { return m_Mapped ? m_Width : 0; }
-	std::uint32_t XcbWindow::GetHeight() const { return m_Mapped ? m_Height : 0; }
-
 	FramebufferState XcbWindow::GetFramebufferState() const
 	{
-		return { GetWidth(), GetHeight(), m_FramebufferRevision };
+		return { m_Mapped ? m_Width : 0, m_Mapped ? m_Height : 0, m_FramebufferRevision };
 	}
 
 	std::vector<const char*> XcbWindow::GetRequiredVulkanInstanceExtensions() const
@@ -504,8 +501,11 @@ namespace Raven
 			if (TranslateMouseButton(buttonEvent->detail, button))
 			{
 				if (down)
+				{
+					const auto framebuffer = GetFramebufferState();
 					m_Input.PressMouseButton({ button, buttonEvent->event_x,
-						buttonEvent->event_y, GetWidth(), GetHeight() });
+						buttonEvent->event_y, framebuffer.Width, framebuffer.Height });
+				}
 				else
 					m_Input.SetMouseButtonDown(button, false);
 			}

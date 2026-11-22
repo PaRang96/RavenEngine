@@ -45,7 +45,9 @@ namespace Raven
 		RAVEN_API explicit VulkanContext(const Window& window);
 		RAVEN_API ~VulkanContext();
 
-		RAVEN_API void PrepareSwapchain();
+		// True when the framebuffer is drawable and a swapchain is ready to render (R7). A minimized
+		// window keeps its swapchain and returns false.
+		RAVEN_API bool PrepareSwapchain();
 
 		// Meshes remain owned by this context until shutdown, after GPU work completes.
 		RAVEN_API const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,

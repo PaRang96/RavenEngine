@@ -99,7 +99,7 @@ namespace Raven
 		explicit Impl(const Window& window);
 		~Impl();
 
-		void PrepareSwapchain();
+		bool PrepareSwapchain();
 		void ResetSwapchain();
 		struct FragmentProgram;
 		void ApplyLitShaderReload();
@@ -225,15 +225,15 @@ namespace Raven
 		Log(LogLevel::Info, "Vulkan renderer context created");
 	}
 
-	void VulkanContext::Impl::PrepareSwapchain()
+	bool VulkanContext::Impl::PrepareSwapchain()
 	{
 		const auto framebuffer = m_Window.GetFramebufferState();
 		if (!framebuffer.IsDrawable())
-			return;
+			return false;
 		if (m_Swapchain.has_value())
 		{
 			if (m_FramebufferRevision == framebuffer.Revision)
-				return;
+				return m_ClearPass.has_value();
 			ResetSwapchain();
 		}
 
@@ -241,7 +241,7 @@ namespace Raven
 		if (m_Swapchain->Get() == VK_NULL_HANDLE)
 		{
 			m_Swapchain.reset();
-			return;
+			return false;
 		}
 		try
 		{
@@ -264,6 +264,7 @@ namespace Raven
 			std::to_string(extent.height) + ", images=" +
 			std::to_string(m_Swapchain->GetImages().size()) + ", format=" +
 			std::to_string(m_Swapchain->GetFormat()));
+		return true;
 	}
 
 	void VulkanContext::Impl::ApplyLitShaderReload()
@@ -345,10 +346,7 @@ namespace Raven
 
 	void VulkanContext::Impl::ResetSwapchain()
 	{
-		const VkResult result = vkDeviceWaitIdle(m_Device.Get());
-		if (result != VK_SUCCESS)
-			throw std::runtime_error("vkDeviceWaitIdle failed during swapchain recreation: " +
-				std::to_string(result));
+		CheckVulkanResult(vkDeviceWaitIdle(m_Device.Get()), "vkDeviceWaitIdle (swapchain recreation)");
 		if (m_ClearPass)
 			m_RetainedPipelines = m_ClearPass->GetPipelines();
 		m_ClearPass.reset();
@@ -466,10 +464,7 @@ namespace Raven
 		for (const auto& submission : transparentDraws)
 			if (!OwnsResource(m_TexturedMeshes, submission.Draw.Mesh) || !OwnsResource(m_Textures, submission.Draw.Texture))
 				throw std::invalid_argument("Transparent mesh and texture must belong to this renderer context");
-		if (!m_Window.GetFramebufferState().IsDrawable())
-			return std::nullopt;
-		PrepareSwapchain();
-		if (!m_ClearPass.has_value() || !buildView)
+		if (!PrepareSwapchain() || !buildView)
 			return std::nullopt;
 
 		const auto extent = m_Swapchain->GetExtent();
@@ -543,9 +538,9 @@ namespace Raven
 
 	VulkanContext::~VulkanContext() = default;
 
-	void VulkanContext::PrepareSwapchain()
+	bool VulkanContext::PrepareSwapchain()
 	{
-		m_Impl->PrepareSwapchain();
+		return m_Impl->PrepareSwapchain();
 	}
 
 	const VulkanMesh& VulkanContext::CreateMesh(std::span<const ColorVertex> vertices,
@@ -719,8 +714,7 @@ namespace Raven
 	bool VulkanContext::ReplaceTexturedFragment(std::span<const std::uint32_t> words)
 	{
 		CheckFragmentShaderInterface(words, FragmentShaderKind::Textured);
-		m_Impl->PrepareSwapchain();
-		if (!m_Impl->m_Window.GetFramebufferState().IsDrawable() || !m_Impl->m_ClearPass)
+		if (!m_Impl->PrepareSwapchain())
 			return false;
 		std::vector<std::uint32_t> candidate(words.begin(), words.end());
 		m_Impl->m_ClearPass->ReplaceTexturedPipelines(m_Impl->m_Textured.Vertex, candidate);

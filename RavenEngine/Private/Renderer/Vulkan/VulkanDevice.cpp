@@ -7,6 +7,16 @@
 
 namespace Raven
 {
+	void CheckVulkanResult(VkResult result, const char* operation)
+	{
+		if (result == VK_SUCCESS)
+			return;
+		if (result == VK_ERROR_DEVICE_LOST)
+			throw VulkanDeviceLostError(std::string("The GPU device was lost during ") + operation +
+				" (driver reset, GPU fault or device removal). Rendering cannot continue; restart the application.");
+		throw std::runtime_error(std::string(operation) + " failed: " + std::to_string(result));
+	}
+
 	VulkanDevice::VulkanDevice(const VulkanPhysicalDevice& physicalDevice)
 	{
 		if (physicalDevice.Handle == VK_NULL_HANDLE ||

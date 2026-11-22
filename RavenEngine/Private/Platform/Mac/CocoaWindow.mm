@@ -175,16 +175,6 @@ namespace Raven
         return ((__bridge RavenNativeWindow *)m_WindowHandle).shouldClose;
     }
 
-    std::uint32_t CocoaWindow::GetWidth() const
-    {
-        return GetFramebufferState().Width;
-    }
-
-    std::uint32_t CocoaWindow::GetHeight() const
-    {
-        return GetFramebufferState().Height;
-    }
-
     FramebufferState CocoaWindow::GetFramebufferState() const
     {
         RavenNativeWindow *window = (__bridge RavenNativeWindow *)m_WindowHandle;

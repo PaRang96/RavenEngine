@@ -40,10 +40,8 @@ namespace Raven
 		virtual void PollEvents() = 0;
 		virtual bool ShouldClose() const = 0;
 
-		virtual std::uint32_t GetWidth() const = 0;
-		virtual std::uint32_t GetHeight() const = 0;
-
-		// Read on the window thread after PollEvents().
+		// The only window size accessor (docs/RendererDesign.md, R7). Read on the window thread
+		// after PollEvents().
 		// Dimensions are drawable pixels; minimized/unavailable is 0 x 0.
 		// Revision advances on size changes and is never consumed/reset.
 		virtual FramebufferState GetFramebufferState() const = 0;

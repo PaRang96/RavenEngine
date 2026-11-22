@@ -2,8 +2,21 @@
 
 #include <vulkan/vulkan.h>
 
+#include <stdexcept>
+
 namespace Raven
 {
+	// VK_ERROR_DEVICE_LOST from any submit, present or wait (docs/RendererDesign.md, R7). The context
+	// cannot recover, so the error propagates to the application's fatal handler with one message.
+	class VulkanDeviceLostError : public std::runtime_error
+	{
+	public:
+		using std::runtime_error::runtime_error;
+	};
+
+	// Throws VulkanDeviceLostError for device loss and std::runtime_error for any other failure.
+	void CheckVulkanResult(VkResult result, const char* operation);
+
 	struct VulkanPhysicalDevice;
 
 	// Extension commands loaded for this device (docs/RendererDesign.md, R2 and R3).

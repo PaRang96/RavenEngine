@@ -15,9 +15,7 @@ namespace Raven
 	{
 		void CheckClearResult(VkResult result, const char* operation)
 		{
-			if (result != VK_SUCCESS)
-				throw std::runtime_error(std::string(operation) + " failed: " +
-					std::to_string(result));
+			CheckVulkanResult(result, operation);
 		}
 
 		template<typename Handle>

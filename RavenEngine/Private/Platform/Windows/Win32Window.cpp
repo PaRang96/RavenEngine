@@ -108,8 +108,6 @@ namespace Raven
 	{
 		return m_ShouldClose || Win32EventPump::IsQuitRequested();
 	}
-	std::uint32_t Win32Window::GetWidth() const { return m_Width; }
-	std::uint32_t Win32Window::GetHeight() const { return m_Height; }
 
 	FramebufferState Win32Window::GetFramebufferState() const
 	{
