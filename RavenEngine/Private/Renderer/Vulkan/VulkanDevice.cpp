@@ -40,8 +40,22 @@ namespace Raven
 			queueInfos[i].pQueuePriorities = &priority;
 		}
 
+		// Features required at selection (docs/RendererDesign.md, R1).
+		VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2{};
+		synchronization2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
+		synchronization2.synchronization2 = VK_TRUE;
+		VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRendering{};
+		dynamicRendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+		dynamicRendering.pNext = &synchronization2;
+		dynamicRendering.dynamicRendering = VK_TRUE;
+		VkPhysicalDeviceVulkan12Features vulkan12{};
+		vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		vulkan12.pNext = &dynamicRendering;
+		vulkan12.timelineSemaphore = VK_TRUE;
+
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		createInfo.pNext = &vulkan12;
 		createInfo.queueCreateInfoCount = queueInfoCount;
 		createInfo.pQueueCreateInfos = queueInfos.data();
 		createInfo.enabledExtensionCount =

@@ -196,6 +196,12 @@ namespace Raven
 			m_PhysicalDevice.Properties.deviceName);
 
 		Log(LogLevel::Info,
+			"Vulkan " + std::to_string(VK_API_VERSION_MAJOR(m_PhysicalDevice.Properties.apiVersion)) + "." +
+			std::to_string(VK_API_VERSION_MINOR(m_PhysicalDevice.Properties.apiVersion)) +
+			" device; M3 features: descriptor indexing " + (m_PhysicalDevice.DescriptorIndexing ? "yes" : "no") +
+			", draw indirect count " + (m_PhysicalDevice.DrawIndirectCount ? "yes" : "no"));
+
+		Log(LogLevel::Info,
 			"Queue families: graphics=" +
 			std::to_string(m_PhysicalDevice.QueueFamilies.Graphics.value()) +
 			", present=" +

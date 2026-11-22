@@ -52,14 +52,14 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Write the design note: [RendererDesign.md](docs/RendererDesign.md) (2026-11-21).
 - [x] Owner review (2026-11-21): image tolerance, 32-bit indices, device-local geometry and the budgets are approved as proposed.
 - [x] Step 1: reference screenshots from master `05a1f31` (six scenes; frame 0 is bit-for-bit deterministic) and `scripts/Compare-Captures.py` with the approved tolerance. Applied 2026-11-22. References are local under `out/captures/m2-reference`.
-- [ ] Step 2 (R1): Vulkan 1.2 instance, required features and extensions, SPIR-V target 1.2, clear unsupported-device errors.
-- [ ] Raise `apiVersion` and DXC `-fspv-target-env` to Vulkan 1.2. Check required features and extensions at device selection, with clear errors.
-- [ ] Adopt dynamic rendering and synchronization2, and replace the render-pass/framebuffer objects.
-- [ ] Use timeline semaphores for frame pacing, with persistently mapped per-frame ring buffers.
-- [ ] Split per-frame camera/lighting into a UBO, and shrink `MeshInstanceData` (currently 176 bytes, with lighting copied per object).
-- [ ] Batch lit meshes by (mesh, material) with instancing ([VulkanClearPass.cpp](RavenEngine/Private/Renderer/Vulkan/VulkanClearPass.cpp) currently issues one draw per mesh).
-- [ ] Put shared vertex/index pools behind MeshHandle.
-- [ ] Carried over: consolidate window size access around `GetFramebufferState()`. Make swapchain preparation report usability through one readiness check. Keep mesh-handle creation and lookup beside the mesh storage. Review device-loss handling and device-idle recreation/shutdown.
+- [x] Step 2 (R1): Vulkan 1.2 instance, required features and extensions, SPIR-V 1.5 shaders, clear unsupported-device errors. Applied 2026-11-22; captures are bit-identical. See [RendererDesign.md](docs/RendererDesign.md#migration-steps).
+- [ ] Step 3 (R2): dynamic rendering and synchronization2; remove the render pass and framebuffers, and add explicit layout transitions.
+- [ ] Step 4 (R3): timeline-semaphore frame pacing and one retirement queue, replacing the per-slot fences and keep-alive lists.
+- [ ] Step 5 (R4): persistently mapped per-frame rings, the frame uniform (camera and lighting), and 112-byte lit instances with the clip transform in the vertex shader.
+- [ ] Step 6 (R5): instanced lit-mesh batching by (pipeline, mesh, texture, lit). [VulkanClearPass.cpp](RavenEngine/Private/Renderer/Vulkan/VulkanClearPass.cpp) currently issues one draw per mesh.
+- [ ] Step 7 (R6): device-local vertex/index pools behind `MeshHandle`, with 32-bit indices, staging uploads and range retirement.
+- [ ] Step 8 (R7): consolidate window size access around `GetFramebufferState()`, make swapchain preparation report usability through one readiness check, keep mesh-handle creation and lookup beside the mesh storage, and give device loss one clear error path.
+- [ ] Step 9: M2 exit check (budgets, image comparison, Debug validation, live session, a local 10k scene, Courtyard on request).
 
 ## M4 — Platform contributor queue (parallel)
 

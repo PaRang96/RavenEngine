@@ -149,7 +149,19 @@ Each step is a reviewed patch, and every sample keeps working.
    - `compare <reference> <candidate>` applies the approved tolerance (defaults `--max-fraction 0.001 --max-delta 2`), writes `<name>.diff.ppm` for images that differ, and exits nonzero on failure.
    - References come from master `05a1f31` and are kept under ignored `out/captures/m2-reference`. A second capture matched them bit for bit, which confirms frame 0 is deterministic.
    - Altered copies confirmed the thresholds: 0.05% of pixels off by 1 passes, while 0.22% of pixels, or a single pixel off by 10, fails.
-2. **R1:** Vulkan 1.2 instance, required features and extensions, SPIR-V target 1.2, clear unsupported-device errors. No rendering change.
+2. *(Done 2026-11-22.)* **R1:** Vulkan 1.2 instance, required features and extensions, SPIR-V target 1.2, clear unsupported-device errors. No rendering change.
+   - The loader must report Vulkan 1.2.
+   - A GPU must report Vulkan 1.2, `timelineSemaphore`, `VK_KHR_dynamic_rendering` and `VK_KHR_synchronization2`, and the device enables those three features. Descriptor indexing and draw-indirect-count are recorded for M3 and logged at startup.
+   - When no GPU qualifies, one error lists every GPU and what it lacks.
+   - Shaders are built as SPIR-V 1.5 by the build and the runtime watcher. The fragment-interface check accepts SPIR-V 1.0–1.5, and from 1.4 on it also requires the texture and sampler in the entry-point interface.
+   - Verification on the minimum-spec laptop:
+     - Debug/Release builds and both tests pass.
+     - The Debug 3D smoke with core and synchronization validation reported nothing.
+     - All six captures are bit-identical to the references.
+     - The RTX reports itself as a Vulkan 1.4 device with both M3 features.
+     - The SDK profiles layer produced the two rejections: a simulated Vulkan 1.1 device ("supports only Vulkan 1.1") and hidden extensions ("lacks VK_KHR_dynamic_rendering, VK_KHR_synchronization2").
+     - The live Release session passed: fragment shader reloads in 236–282 ms, syntax and interface rejections in 220 ms, and PNG, FBX, scene and game reloads as before.
+     - MoltenVK and Linux are not verified here (M4).
 3. **R2:** dynamic rendering and synchronization2. Remove the render pass and framebuffers, and add explicit layout transitions.
 4. **R3:** timeline-semaphore pacing and the retirement queue, replacing the per-slot fences and keep-alive lists.
 5. **R4:** persistently mapped per-frame rings, the frame uniform, and 112-byte lit instances with the clip transform in the vertex shader.

@@ -73,11 +73,19 @@ namespace Raven
 			throw std::runtime_error("Vulkan validation layer is unavailable");
 		#endif // RAVEN_ENABLE_VALIDATION
 
+		// docs/RendererDesign.md, R1: the loader must expose Vulkan 1.2.
+		std::uint32_t loaderVersion = VK_API_VERSION_1_0;
+		if (vkEnumerateInstanceVersion(&loaderVersion) != VK_SUCCESS || loaderVersion < VK_API_VERSION_1_2)
+			throw std::runtime_error("The installed Vulkan runtime supports Vulkan " +
+				std::to_string(VK_API_VERSION_MAJOR(loaderVersion)) + "." +
+				std::to_string(VK_API_VERSION_MINOR(loaderVersion)) +
+				"; RavenEngine requires Vulkan 1.2. Update the GPU driver or Vulkan runtime.");
+
 		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 		appInfo.pApplicationName = "RavenEngine";
 		appInfo.pEngineName = "RavenEngine";
-		appInfo.apiVersion = VK_API_VERSION_1_0;
+		appInfo.apiVersion = VK_API_VERSION_1_2;
 
 		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

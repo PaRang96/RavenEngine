@@ -12,7 +12,7 @@ namespace Raven
 {
 	namespace
 	{
-		// SPIR-V 1.0 instructions and operands used by the fixed fragment interface.
+		// SPIR-V instructions and operands used by the fixed fragment interface.
 		enum class Op : std::uint16_t
 		{
 			Extension = 10, EntryPoint = 15, ExecutionMode = 16, Capability = 17,
@@ -73,8 +73,12 @@ namespace Raven
 		constexpr std::uint32_t ShaderCapability = 1;
 		constexpr std::uint32_t FragmentModel = 4;
 		constexpr std::uint32_t OriginUpperLeft = 7;
-		if (words.size() < 5 || words[0] != 0x07230203 || words[1] != 0x00010000)
-			Reject("expected SPIR-V 1.0");
+		if (words.size() < 5 || words[0] != 0x07230203 || words[1] < 0x00010000 || words[1] > 0x00010500)
+			Reject("expected SPIR-V 1.0 to 1.5");
+		// From SPIR-V 1.4 the entry point lists every global it uses, including the texture
+		// and sampler; earlier versions list only the stage inputs and outputs.
+		const bool listsGlobals = words[1] >= 0x00010400;
+		const std::size_t interfaceSize = widths.size() + 1 + (listsGlobals ? 2 : 0);
 
 		std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> types;
 		std::unordered_map<std::uint32_t, Decorations> decorations;
@@ -100,7 +104,7 @@ namespace Raven
 				Reject("extensions and decoration groups are outside the reload interface");
 			case Op::EntryPoint:
 				// Null-terminated PSMain occupies two little-endian SPIR-V words.
-				if (!entry.empty() || size != 6 + widths.size() || instruction[1] != FragmentModel ||
+				if (!entry.empty() || size != 5 + interfaceSize || instruction[1] != FragmentModel ||
 					instruction[3] != 0x614d5350 || instruction[4] != 0x00006e69)
 					Reject("expected one PSMain fragment entry with the configured stage variables");
 				entry = instruction;
@@ -155,6 +159,7 @@ namespace Raven
 
 		std::array<std::uint32_t, litWidths.size()> inputs{};
 		std::array<bool, 2> descriptors{};
+		std::array<std::uint32_t, 2> descriptorIds{};
 		std::uint32_t output = 0;
 		for (const auto& variable : variables)
 		{
@@ -183,6 +188,7 @@ namespace Raven
 					Type(types, valueType, Op::TypeSampler, 2);
 				}
 				descriptors[*decoration.Binding] = true;
+				descriptorIds[*decoration.Binding] = variable.Id;
 				continue;
 			}
 			if (decoration.Set || decoration.Binding || !decoration.Location)
@@ -209,5 +215,9 @@ namespace Raven
 				Reject("entry point does not expose the expected stage variables");
 		if (std::ranges::find(exposed, output) == exposed.end())
 			Reject("entry point does not expose its color output");
+		if (listsGlobals)
+			for (const auto id : descriptorIds)
+				if (std::ranges::find(exposed, id) == exposed.end())
+					Reject("entry point does not expose its texture and sampler");
 	}
 }
