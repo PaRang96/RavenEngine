@@ -10,11 +10,16 @@ namespace Raven
 	class VulkanColorPipeline
 	{
 	public:
+		// Lines draws triangle edges over the depth the filled pass wrote: the wireframe debug view
+		// (docs/HotReloadDesign.md, H3). It needs the fillModeNonSolid device feature.
+		enum class Mode { Fill, Lines };
+
 		// Set 0 is the bindless texture array (G4), set 1 the frame uniform (R4) and set 2 the GPU
 		// scene (G5). Vertices come from the shared pool; objects come from the scene set.
 		VulkanColorPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
 			VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout,
-			std::span<const std::uint32_t> vertexWords, std::span<const std::uint32_t> fragmentWords);
+			std::span<const std::uint32_t> vertexWords, std::span<const std::uint32_t> fragmentWords,
+			Mode mode = Mode::Fill);
 		~VulkanColorPipeline();
 
 		VkPipeline Get() const { return m_Pipeline; }

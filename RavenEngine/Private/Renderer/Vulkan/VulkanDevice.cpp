@@ -74,6 +74,7 @@ namespace Raven
 		core.pNext = &vulkan12;
 		core.features.multiDrawIndirect = VK_TRUE;
 		core.features.drawIndirectFirstInstance = VK_TRUE;
+		core.features.fillModeNonSolid = physicalDevice.FillModeNonSolid ? VK_TRUE : VK_FALSE;
 
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

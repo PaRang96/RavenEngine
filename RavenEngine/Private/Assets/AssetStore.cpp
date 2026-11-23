@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -107,8 +108,9 @@ namespace Raven
 			result->Bytes = std::move(decoded->Bytes);
 			if ((record.Kind == AssetKind::Mesh && WatchMeshes) || (record.Kind == AssetKind::Texture && WatchTextures))
 			{
-				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source,
-					record.Kind == AssetKind::Mesh ? "FBX" : "PNG", ReadAsset, DecodeAsset, result->Bytes);
+				const bool mesh = record.Kind == AssetKind::Mesh;
+				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, mesh ? "FBX" : "PNG",
+					mesh ? ImporterVersion::Fbx : ImporterVersion::Png, ReadAsset, DecodeAsset, result->Bytes);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
 			}
 			return result;
@@ -205,6 +207,7 @@ namespace Raven
 				continue;
 			try
 			{
+				const auto publishStart = std::chrono::steady_clock::now();
 				AssetCatalog catalog;
 				if (current->Record.Kind == AssetKind::Texture)
 					catalog.Register(TextureAssetDesc{ id, current->Record.SourcePath, current->ColorSpace });
@@ -213,10 +216,15 @@ namespace Raven
 				auto candidate = m_Impl->Load(catalog, id, std::move(decoded));
 				if (!candidate->IsCurrent())
 					continue;
+				// Commit swaps in the candidate's fresh watch, so the summary comes from this one.
+				const std::chrono::duration<double, std::milli> publish = std::chrono::steady_clock::now() - publishStart;
+				const auto summary = current->Watch->Published(publish);
 				current->Commit(*candidate);
 				result.Mesh |= current->Record.Kind == AssetKind::Mesh;
 				result.Texture |= current->Record.Kind == AssetKind::Texture;
-				Log(LogLevel::Info, std::string(current->Record.Kind == AssetKind::Mesh ? "Replaced FBX " : "Replaced PNG ") + PathToUtf8(current->Source));
+				// The H7 summary: trigger, import and publish times.
+				Log(LogLevel::Info, std::string(current->Record.Kind == AssetKind::Mesh ? "Replaced FBX " : "Replaced PNG ") +
+					PathToUtf8(current->Source) + "; " + summary);
 			}
 			catch (const std::exception& error)
 			{

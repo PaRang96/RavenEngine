@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Raven/Renderer/RenderView.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
@@ -30,29 +31,50 @@ namespace Raven
 	public:
 		struct TexturedPipelines;
 
+		// The lit meshes' shaders: one vertex shader and a fragment shader per view (H3).
+		struct LitShaders
+		{
+			std::span<const std::uint32_t> Vertex;
+			std::span<const std::uint32_t> Shaded;
+			std::span<const std::uint32_t> Unlit;
+			std::span<const std::uint32_t> Normals;
+			std::span<const std::uint32_t> Wireframe;
+		};
+
+		// Every view's pipeline, published and retired together (docs/HotReloadDesign.md, H3).
+		struct LitPipelines
+		{
+			std::shared_ptr<const VulkanColorPipeline> Shaded;
+			std::shared_ptr<const VulkanColorPipeline> Unlit;
+			std::shared_ptr<const VulkanColorPipeline> Normals;
+			// Null when the device lacks fillModeNonSolid.
+			std::shared_ptr<const VulkanColorPipeline> Lines;
+		};
+
 		// Creates lit pipelines for given attachment formats; usable on a worker thread.
 		class LitPipelineFactory
 		{
 		public:
-			std::shared_ptr<const VulkanColorPipeline> Create(std::span<const std::uint32_t> vertex,
-				std::span<const std::uint32_t> fragment) const;
+			std::shared_ptr<const LitPipelines> Create(const LitShaders& shaders) const;
 
 		private:
 			friend class VulkanClearPass;
 			LitPipelineFactory(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-				VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout);
+				VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout,
+				bool lines);
 			const VulkanDevice& m_Device;
 			VkFormat m_ColorFormat;
 			VkFormat m_DepthFormat;
 			VkDescriptorSetLayout m_TextureLayout;
 			VkDescriptorSetLayout m_FrameLayout;
 			VkDescriptorSetLayout m_SceneLayout;
+			bool m_Lines;
 		};
 
 		// Pipelines depend only on attachment formats, so a recreated pass can keep them.
 		struct Pipelines
 		{
-			std::shared_ptr<const VulkanColorPipeline> Lit;
+			std::shared_ptr<const LitPipelines> Lit;
 			std::shared_ptr<const TexturedPipelines> Textured;
 			VkFormat ColorFormat = VK_FORMAT_UNDEFINED;
 			VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
@@ -69,13 +91,13 @@ namespace Raven
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
 			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
-			VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene, std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
+			VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene, const LitShaders& lit,
 			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
 		LitPipelineFactory GetLitPipelineFactory() const;
 		Pipelines GetPipelines() const;
 		bool IsCurrent(const LitPipelineFactory& factory) const noexcept;
-		void UseLitPipeline(std::shared_ptr<const VulkanColorPipeline> pipeline) noexcept;
+		void UseLitPipelines(std::shared_ptr<const LitPipelines> pipelines) noexcept;
 		bool ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
 			std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish = {});
 		~VulkanClearPass();
@@ -84,7 +106,7 @@ namespace Raven
 		// The GPU scene was planned for this frame; lit meshes come only from it (G7).
 		bool Draw(const VulkanSwapchain& swapchain, VkQueue graphics, VkQueue present,
 			const VulkanDrawQueue& queue, const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures,
-			FrameMetrics* metrics);
+			FrameMetrics* metrics, RenderView view = RenderView::Shaded);
 
 		VulkanClearPass(const VulkanClearPass&) = delete;
 		VulkanClearPass& operator=(const VulkanClearPass&) = delete;
@@ -107,7 +129,8 @@ namespace Raven
 		// Returns the ring offset of the textured instances.
 		VkDeviceSize Upload(Frame& frame, const VulkanDrawQueue& queue);
 		void Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-			const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps);
+			const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps,
+			RenderView view);
 		void PrepareTimestampQueries();
 		void ReadTimestamps(Frame& frame, FrameMetrics& metrics);
 		void Destroy() noexcept;
@@ -119,7 +142,7 @@ namespace Raven
 		VkDevice m_Device = VK_NULL_HANDLE;
 		VkFormat m_ColorFormat = VK_FORMAT_UNDEFINED;
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
-		std::shared_ptr<const VulkanColorPipeline> m_LitPipeline;
+		std::shared_ptr<const LitPipelines> m_LitPipelines;
 		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_BindlessLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FrameLayout = VK_NULL_HANDLE;

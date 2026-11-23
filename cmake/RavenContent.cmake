@@ -46,14 +46,15 @@ function(raven_add_shader source profile entry)
     set(RAVEN_SHADER_OUTPUTS "${outputs}" PARENT_SCOPE)
 endfunction()
 
-set(RAVEN_WATCH_PROFILE ps_6_0)
-set(RAVEN_WATCH_ENTRY PSMain)
-set(RAVEN_LIT_FRAGMENT_SOURCE Color.frag.hlsl)
-set(RAVEN_TEXTURED_FRAGMENT_SOURCE Texture.frag.hlsl)
+# Renderer/Shaders/ShaderLibrary.cpp lists the same programs for live reload (docs/HotReloadDesign.md, H2).
 raven_add_shader("Color.vert.hlsl" vs_6_0 VSMain)
-raven_add_shader("${RAVEN_LIT_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
+raven_add_shader("Color.frag.hlsl" ps_6_0 PSMain)
+# Debug views over the lit meshes (docs/HotReloadDesign.md, H3).
+raven_add_shader("Unlit.frag.hlsl" ps_6_0 PSMain)
+raven_add_shader("Normals.frag.hlsl" ps_6_0 PSMain)
+raven_add_shader("Wireframe.frag.hlsl" ps_6_0 PSMain)
 raven_add_shader("Texture.vert.hlsl" vs_6_0 VSMain)
-raven_add_shader("${RAVEN_TEXTURED_FRAGMENT_SOURCE}" "${RAVEN_WATCH_PROFILE}" "${RAVEN_WATCH_ENTRY}")
+raven_add_shader("Texture.frag.hlsl" ps_6_0 PSMain)
 # GPU-driven scene passes (docs/GpuDrivenDesign.md, G2/G5).
 raven_add_shader("Scatter.comp.hlsl" cs_6_0 CSMain)
 raven_add_shader("Cull.comp.hlsl" cs_6_0 CSMain)

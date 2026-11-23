@@ -1,44 +1,61 @@
 #pragma once
 
+#include "Core/ImporterVersions.hpp"
 #include "Core/PathText.hpp"
-#include "Platform/DirectoryWatch.hpp"
-#include "Raven/Core/Log.hpp"
+#include "Core/ReloadService.hpp"
 
 #include <chrono>
 #include <cstddef>
-#include <exception>
+#include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
 namespace Raven
 {
-	// A worker owns the snapshots and decoder. The consumer takes only the latest decoded result.
+	// One watched file on the shared reload service (docs/HotReloadDesign.md, H1). A reload
+	// worker decodes settled bytes; the consumer takes only the latest decoded result.
 	template<typename Data>
-	class SettledFileWatch
+	class SettledFileWatch final : private ReloadConsumer
 	{
 	public:
-		using ReadFile = std::vector<std::byte>(*)(const std::filesystem::path&);
+		using ReadFile = ReloadInput::ReadFile;
 		using DecodeFile = Data(*)(std::span<const std::byte>, const std::filesystem::path&);
 
-		SettledFileWatch(std::filesystem::path path, std::string_view format, ReadFile read,
+		// importerVersion comes from ImporterVersions.hpp and keys the dependency record (Q4 A+).
+		SettledFileWatch(std::filesystem::path path, std::string_view format, std::uint32_t importerVersion, ReadFile read,
 			DecodeFile decode, std::optional<std::vector<std::byte>> loadedBytes = std::nullopt, bool retryFailures = false)
-			: m_Path(std::filesystem::absolute(path)),
-			  m_Worker([this, format = std::string(format), read, decode,
-				  loadedBytes = std::move(loadedBytes), retryFailures](std::stop_token stop) mutable
-			  {
-				  Run(stop, format, read, decode, std::move(loadedBytes), retryFailures);
-			  })
+			: m_Path(std::filesystem::absolute(path)), m_Format(format), m_Decode(decode)
 		{
+			ReloadOptions options;
+			options.Name = std::string(format) + " " + PathToUtf8(m_Path);
+			options.ImporterVersion = importerVersion;
+			options.RetryFailures = retryFailures;
+			if (loadedBytes)
+				options.Baseline = ReloadSnapshot{ { std::move(*loadedBytes) }, {} };
+			m_Subscription = ReloadService::Subscribe({ ReloadInput{ m_Path, read } }, *this, std::move(options));
 		}
 
+		~SettledFileWatch()
+		{
+			// No reload worker may call into this object once destruction begins.
+			m_Subscription.reset();
+		}
+
+		SettledFileWatch(const SettledFileWatch&) = delete;
+		SettledFileWatch& operator=(const SettledFileWatch&) = delete;
+
 		const std::filesystem::path& GetPath() const noexcept { return m_Path; }
+		// The dependency record, for reload diagnostics (docs/HotReloadDesign.md, H7).
+		ReloadRecord GetRecord() const { return m_Subscription->GetRecord(); }
+		// After publishing a taken result: records the publish time and returns the H7 summary.
+		std::string Published(std::chrono::duration<double, std::milli> publish) { return m_Subscription->Published(publish); }
 
 		std::optional<Data> Take()
 		{
@@ -47,103 +64,36 @@ namespace Raven
 		}
 
 	private:
-		struct Snapshot
+		std::string Import(const ReloadSnapshot& snapshot, std::stop_token) override
 		{
-			std::vector<std::byte> Bytes;
-			std::string Error;
-			bool operator==(const Snapshot&) const = default;
-		};
-
-		Snapshot ReadSnapshot(ReadFile read) const
-		{
-			try
-			{
-				return { read(m_Path), {} };
-			}
-			catch (const std::exception& error)
-			{
-				return { {}, error.what() };
-			}
+			m_Pending = m_Decode(snapshot.Contents.front(), m_Path);
+			return m_Format + " decoded from " + std::to_string(snapshot.Contents.front().size()) + " bytes";
 		}
 
-		void Run(std::stop_token stop, const std::string& format, ReadFile read, DecodeFile decode,
-			std::optional<std::vector<std::byte>> loadedBytes, bool retryFailures)
+		void Accept(const ReloadRecord&) override
 		{
-			using Clock = std::chrono::steady_clock;
-			constexpr auto pollInterval = std::chrono::milliseconds(40);
-			constexpr auto settleTime = std::chrono::milliseconds(100);
-			constexpr auto auditInterval = std::chrono::milliseconds(2000);
-			const Platform::WatchDirectory directory{ m_Path.parent_path() };
-			Platform::DirectoryWatch watch(std::span(&directory, 1));
-			std::optional<Snapshot> observed;
-			auto stableSince = Clock::now();
-			bool handled = false;
-			std::string reportedError;
-			if (loadedBytes)
-			{
-				observed = Snapshot{ std::move(*loadedBytes), {} };
-				handled = true;
-			}
+			const std::scoped_lock lock(m_Mutex);
+			m_Ready = std::exchange(m_Pending, std::nullopt);
+		}
 
-			while (!stop.stop_requested())
-			{
-				auto current = ReadSnapshot(read);
-				const auto now = Clock::now();
-				if (!observed || current != *observed)
-				{
-					observed = std::move(current);
-					stableSince = now;
-					handled = false;
-					reportedError.clear();
-					const std::scoped_lock lock(m_Mutex);
-					m_Ready.reset();
-				}
-				else if (!handled && now - stableSince >= settleTime)
-				{
-					handled = true;
-					std::optional<Data> decoded;
-					std::string error = observed->Error;
-					if (error.empty())
-					{
-						try
-						{
-							decoded = decode(observed->Bytes, m_Path);
-						}
-						catch (const std::exception& exception)
-						{
-							error = exception.what();
-						}
-					}
+		void Discard() noexcept override
+		{
+			m_Pending.reset();
+		}
 
-					if (stop.stop_requested())
-						return;
-					// A save can supersede the candidate while the decoder is working.
-					if (ReadSnapshot(read) != *observed)
-						observed.reset();
-					else if (decoded)
-					{
-						const std::scoped_lock lock(m_Mutex);
-						m_Ready = std::move(decoded);
-					}
-					else
-					{
-						if (error != reportedError)
-							Log(LogLevel::Warning, "Cannot reload " + format + " " + PathToUtf8(m_Path) + ": " + error);
-						reportedError = error;
-						if (retryFailures)
-						{
-							handled = false;
-							stableSince = Clock::now();
-						}
-					}
-				}
-				watch.Wait(stop, observed && handled && watch.IsAvailable() ? auditInterval : pollInterval);
-			}
+		void Changed() noexcept override
+		{
+			const std::scoped_lock lock(m_Mutex);
+			m_Ready.reset();
 		}
 
 		const std::filesystem::path m_Path;
+		const std::string m_Format;
+		const DecodeFile m_Decode;
 		std::mutex m_Mutex;
 		std::optional<Data> m_Ready;
-		std::jthread m_Worker;
+		// Written only by the reload worker between Import and Accept or Discard.
+		std::optional<Data> m_Pending;
+		std::unique_ptr<ReloadSubscription> m_Subscription;
 	};
 }

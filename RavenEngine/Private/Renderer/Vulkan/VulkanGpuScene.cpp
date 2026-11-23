@@ -149,8 +149,7 @@ namespace Raven
 			pipelineLayout.pPushConstantRanges = &constants;
 			CheckSceneResult(vkCreatePipelineLayout(m_Device, &pipelineLayout, nullptr, &m_PipelineLayout),
 				"vkCreatePipelineLayout (GPU scene)");
-			m_Scatter = CreateCompute(m_Device, device, m_PipelineLayout, scatterWords, "vkCreateComputePipelines (scatter)");
-			m_Cull = CreateCompute(m_Device, device, m_PipelineLayout, cullWords, "vkCreateComputePipelines (cull)");
+			m_Pipelines = CreatePipelines(scatterWords, cullWords);
 		}
 		catch (...)
 		{
@@ -164,19 +163,94 @@ namespace Raven
 		Destroy();
 	}
 
+	struct VulkanGpuScene::ComputePipelines
+	{
+		VkDevice Device = VK_NULL_HANDLE;
+		VkPipeline Scatter = VK_NULL_HANDLE;
+		VkPipeline Cull = VK_NULL_HANDLE;
+
+		~ComputePipelines()
+		{
+			if (Cull != VK_NULL_HANDLE)
+				vkDestroyPipeline(Device, Cull, nullptr);
+			if (Scatter != VK_NULL_HANDLE)
+				vkDestroyPipeline(Device, Scatter, nullptr);
+		}
+	};
+
+	std::shared_ptr<const VulkanGpuScene::ComputePipelines> VulkanGpuScene::CreatePipelines(
+		std::span<const std::uint32_t> scatterWords, std::span<const std::uint32_t> cullWords) const
+	{
+		auto pipelines = std::make_shared<ComputePipelines>();
+		pipelines->Device = m_Device;
+		pipelines->Scatter = CreateCompute(m_Device, m_DeviceOwner, m_PipelineLayout, scatterWords,
+			"vkCreateComputePipelines (scatter)");
+		pipelines->Cull = CreateCompute(m_Device, m_DeviceOwner, m_PipelineLayout, cullWords,
+			"vkCreateComputePipelines (cull)");
+		return pipelines;
+	}
+
+	void VulkanGpuScene::ReplacePipelines(std::span<const std::uint32_t> scatterWords,
+		std::span<const std::uint32_t> cullWords)
+	{
+		auto next = CreatePipelines(scatterWords, cullWords);
+		m_Timeline.Retire(std::move(m_Pipelines));
+		m_Pipelines = std::move(next);
+	}
+
+	std::vector<ShaderBufferLayout> VulkanGpuScene::GetBufferLayouts(std::uint32_t set)
+	{
+		using Command = VkDrawIndexedIndirectCommand;
+		return {
+			{ set, Objects, sizeof(GpuObjectData), { offsetof(GpuObjectData, WorldRows), offsetof(GpuObjectData, NormalToWorld),
+				offsetof(GpuObjectData, Tint), offsetof(GpuObjectData, Group), offsetof(GpuObjectData, Material),
+				offsetof(GpuObjectData, Flags), offsetof(GpuObjectData, Padding) } },
+			{ set, Visible, sizeof(std::uint32_t), {} },
+			{ set, Materials, sizeof(GpuMaterialData), { offsetof(GpuMaterialData, BaseColor), offsetof(GpuMaterialData, Texture),
+				offsetof(GpuMaterialData, Lit), offsetof(GpuMaterialData, Padding) } },
+			{ set, Meshes, sizeof(MeshEntry), { offsetof(MeshEntry, IndexCount), offsetof(MeshEntry, FirstIndex),
+				offsetof(MeshEntry, VertexOffset), offsetof(MeshEntry, Padding), offsetof(MeshEntry, Center),
+				offsetof(MeshEntry, HalfExtent) } },
+			{ set, Commands, sizeof(Command), { offsetof(Command, indexCount), offsetof(Command, instanceCount),
+				offsetof(Command, firstIndex), offsetof(Command, vertexOffset), offsetof(Command, firstInstance) } },
+			// Byte-address buffers: runtime arrays of uint.
+			{ set, ObjectBytes, sizeof(std::uint32_t), {} },
+			{ set, Binding::Upload, sizeof(std::uint32_t), {} },
+		};
+	}
+
+	ShaderInterface VulkanGpuScene::GetScatterInterface()
+	{
+		ShaderInterface result;
+		result.Kind = ShaderInterface::Stage::Compute;
+		result.Buffers = GetBufferLayouts(0);
+		result.PushConstantOffsets = { offsetof(ScatterConstants, SlotOffset), offsetof(ScatterConstants, RecordOffset),
+			offsetof(ScatterConstants, RecordCount), offsetof(ScatterConstants, Padding) };
+		// RecordPrepare dispatches groups of 64 threads.
+		result.LocalSize = { 64, 1, 1 };
+		return result;
+	}
+
+	ShaderInterface VulkanGpuScene::GetCullInterface()
+	{
+		ShaderInterface result;
+		result.Kind = ShaderInterface::Stage::Compute;
+		result.Buffers = GetBufferLayouts(0);
+		result.PushConstantOffsets = { offsetof(CullConstants, Planes), offsetof(CullConstants, ObjectCount),
+			offsetof(CullConstants, Padding) };
+		result.LocalSize = { 64, 1, 1 };
+		return result;
+	}
+
 	void VulkanGpuScene::Destroy() noexcept
 	{
-		if (m_Cull != VK_NULL_HANDLE)
-			vkDestroyPipeline(m_Device, m_Cull, nullptr);
-		if (m_Scatter != VK_NULL_HANDLE)
-			vkDestroyPipeline(m_Device, m_Scatter, nullptr);
+		m_Pipelines.reset();
 		if (m_PipelineLayout != VK_NULL_HANDLE)
 			vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
 		if (m_Pool != VK_NULL_HANDLE)
 			vkDestroyDescriptorPool(m_Device, m_Pool, nullptr);
 		if (m_Layout != VK_NULL_HANDLE)
 			vkDestroyDescriptorSetLayout(m_Device, m_Layout, nullptr);
-		m_Cull = m_Scatter = VK_NULL_HANDLE;
 		m_PipelineLayout = VK_NULL_HANDLE;
 		m_Pool = VK_NULL_HANDLE;
 		m_Layout = VK_NULL_HANDLE;
@@ -360,7 +434,7 @@ namespace Raven
 		{
 			const ScatterConstants scatter{ static_cast<std::uint32_t>(slot.SlotOffset),
 				static_cast<std::uint32_t>(slot.ObjectOffset), static_cast<std::uint32_t>(m_DirtySlots.size()), 0 };
-			vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, m_Scatter);
+			vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipelines->Scatter);
 			vkCmdPushConstants(commands, m_PipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(scatter), &scatter);
 			// Eight threads per record, one per 16 bytes.
 			vkCmdDispatch(commands, (static_cast<std::uint32_t>(m_DirtySlots.size()) * 8 + 63) / 64, 1, 1);
@@ -379,7 +453,7 @@ namespace Raven
 				for (std::size_t component = 0; component < 4; ++component)
 					cull.Planes[plane][component] = static_cast<float>(planes[plane][component]);
 			cull.ObjectCount = m_ObjectCount;
-			vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, m_Cull);
+			vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipelines->Cull);
 			vkCmdPushConstants(commands, m_PipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(cull), &cull);
 			vkCmdDispatch(commands, (m_ObjectCount + 63) / 64, 1, 1);
 		}

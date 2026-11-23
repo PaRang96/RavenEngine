@@ -6,7 +6,7 @@ Working agreement: the assistant suggests small, reviewable engine snippets and 
 
 Priority: 3D first. 2D runtime testing needs an explicit owner request. macOS and Linux contributors work on M4 in parallel.
 
-## M0 — Safety net and baseline (current)
+## M0 — Safety net and baseline (one item left)
 
 ### Repository state
 - [x] Commit the outstanding working tree in four commits on master: vendored ufbx with its license, the feature work (built in isolation), CTest/CI with the guard tests, and the roadmap/design docs (2026-11-21).
@@ -86,6 +86,21 @@ Windows-side M4 items:
 - [x] Prefer a discrete GPU, then an integrated one, in device selection (owner decision, 2026-11-23). See [PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements).
 - [ ] Owner decision: a development option that forces separate graphics and present families on the NVIDIA GPU, to exercise that path.
 
+## M5 — Hot reload completeness (current)
+
+- [x] Write the design note: [HotReloadDesign.md](docs/HotReloadDesign.md) (2026-11-23).
+- [x] Owner review: Q1 A, Q2 A, Q3 A, Q4 A+, Q5 A, Q6 A (provisional), Q7 A (2026-11-23).
+- [x] Step 1: opt-in DLL phase timing (`RAVEN_RELOAD_TRACE`) and the measured breakdown (2026-11-23).
+- [x] Step 2: the reload service and dependency records (H1); PNG, FBX, scene, project, game sources and the DLL moved onto it (2026-11-23).
+- [x] Step 3: shader programs for every stage, DXC-reported includes and vertex/compute interface checks (H2) (2026-11-23).
+- [x] Step 4: debug views on F7: shaded, unlit, normals, wireframe (H3) (2026-11-23).
+- [x] Step 5: system table diff and failing-system suspension (H4) (2026-11-23).
+- [x] Step 6: DLL loop fixes: game PCH, configure skip, no poll/debounce wait (H5) (2026-11-23).
+- [x] Step 7: exit check (2026-11-23). See the [M5 exit record](docs/HotReloadDesign.md#m5-exit-record-2026-11-23).
+- [x] Owner review decisions (2026-11-23): D1 Release DLL target ≤ 2.0 s and Debug ≤ 1.5 s; D2 track the stall; D3 accept the 2 s audit for edits that keep their timestamp.
+- [ ] Investigate the single 437 ms frame seen during a Release game build with validation layers if it recurs (D2). It did not recur in two later passes.
+- [x] Owner review of the whole M5 implementation (2026-11-23); gaps found in review were fixed: importer versions, complete records and summaries, the records file, the measured thread count, the PowerShell 5.1 smoke script and stale docs.
+
 ## Later milestones
 
-M3 (GPU-driven rendering), M5 (reload completeness), M6 (gameplay services) and M7 (quality and release) are tracked in [ROADMAP.md](ROADMAP.md#milestones). Move their tasks here when work starts.
+M6 (gameplay services) and M7 (quality and release) are tracked in [ROADMAP.md](ROADMAP.md#milestones). Move their tasks here when work starts.

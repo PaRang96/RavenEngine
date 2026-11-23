@@ -14,6 +14,8 @@ namespace Raven
 		explicit PngFileWatch(std::filesystem::path path);
 		std::optional<ImageData> TakeImage();
 		const std::filesystem::path& GetPath() const noexcept { return m_Watch.GetPath(); }
+		// After uploading a taken image: the H7 summary (docs/HotReloadDesign.md).
+		std::string Published(std::chrono::duration<double, std::milli> publish) { return m_Watch.Published(publish); }
 
 		PngFileWatch(const PngFileWatch&) = delete;
 		PngFileWatch& operator=(const PngFileWatch&) = delete;

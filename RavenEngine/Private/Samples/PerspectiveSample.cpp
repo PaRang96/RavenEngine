@@ -13,12 +13,14 @@
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <format>
 #include <numbers>
 #include <optional>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
@@ -261,6 +263,18 @@ namespace Raven
 
 		if (input.WasKeyPressed(Key::F6) && GetLevel().SwapMeshSources())
 			Log(LogLevel::Info, "Swapped Perspective mesh sources");
+		// F7 cycles the lit-mesh debug views (docs/HotReloadDesign.md, H3); a binding once M6 adds them.
+		if (input.WasKeyPressed(Key::F7))
+		{
+			constexpr std::array<std::pair<RenderView, const char*>, 4> views{ {
+				{ RenderView::Shaded, "shaded" }, { RenderView::Unlit, "unlit" },
+				{ RenderView::Normals, "normals" }, { RenderView::Wireframe, "wireframe" } } };
+			auto index = static_cast<std::size_t>(m_Renderer.GetRenderView());
+			do
+				index = (index + 1) % views.size();
+			while (!m_Renderer.SetRenderView(views[index].first));
+			Log(LogLevel::Info, std::string("Render view: ") + views[index].second);
+		}
 		if (!m_FreeFly)
 			UpdateCamera(input, frameTime);
 		else if (GetLevel().ConsumeCompletion())

@@ -22,6 +22,9 @@ foreach(source IN LISTS RAVEN_GAME_SOURCES)
         COMPILE_DEFINITIONS "RAVEN_GAME_BUILD_ID=${build_digest}")
 endforeach()
 target_compile_options(RavenGame PRIVATE /W4 /WX /utf-8)
+# <format> dominates a one-file game edit; this PCH cut its compile from 1.75 to 1.0 s
+# (docs/HotReloadDesign.md, H5). Engine headers stay out: adding them measured no gain.
+raven_enable_precompiled_headers(RavenGame <cmath> <exception> <format> <numbers>)
 set_target_properties(RavenGame PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${RAVEN_GAME_OUTPUT}")
 

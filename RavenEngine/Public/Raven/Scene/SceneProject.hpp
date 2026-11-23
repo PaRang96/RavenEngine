@@ -3,11 +3,13 @@
 #include "Raven/Assets/AssetCatalog.hpp"
 #include "Raven/Assets/AssetStore.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace Raven
@@ -45,6 +47,9 @@ namespace Raven
 		RAVEN_API bool IsCurrent(const SceneProjectDefinition& candidate) const;
 		RAVEN_API void Commit(SceneProjectDefinition& candidate) noexcept;
 		RAVEN_API bool IsWatching() const noexcept;
+		// After committing a taken update: records the publish time and returns the reload summary
+		// (trigger, import and publish times; docs/HotReloadDesign.md, H7).
+		RAVEN_API std::string ReportPublished(std::chrono::duration<double, std::milli> publish);
 
 		SceneProject(const SceneProject&) = delete;
 		SceneProject& operator=(const SceneProject&) = delete;

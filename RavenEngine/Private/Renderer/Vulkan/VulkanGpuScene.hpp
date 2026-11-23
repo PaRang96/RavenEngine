@@ -3,6 +3,7 @@
 #include "Renderer/RenderWorldState.hpp"
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/ShaderInterface.hpp"
 
 #include <array>
 #include <cstdint>
@@ -35,6 +36,14 @@ namespace Raven
 
 		// Set 2 of the lit pipeline and set 0 of the culling passes.
 		VkDescriptorSetLayout GetLayout() const noexcept { return m_Layout; }
+
+		// What reloaded shaders must match (docs/HotReloadDesign.md, H2): the scene buffers as
+		// this class writes them, bound at the given set, and each compute pass's interface.
+		static std::vector<ShaderBufferLayout> GetBufferLayouts(std::uint32_t set);
+		static ShaderInterface GetScatterInterface();
+		static ShaderInterface GetCullInterface();
+		// Replaces both compute pipelines; frames in flight keep the previous ones (R3).
+		void ReplacePipelines(std::span<const std::uint32_t> scatterWords, std::span<const std::uint32_t> cullWords);
 
 		// Plans this frame's upload and returns the ring bytes it needs. A null world draws nothing.
 		VkDeviceSize Plan(RenderWorld::State* world, const MeshResolver& resolveMesh);
@@ -91,6 +100,9 @@ namespace Raven
 			VkBuffer Ring = VK_NULL_HANDLE;
 		};
 
+		struct ComputePipelines;
+		std::shared_ptr<const ComputePipelines> CreatePipelines(std::span<const std::uint32_t> scatterWords,
+			std::span<const std::uint32_t> cullWords) const;
 		bool Reserve(Storage& storage, VkDeviceSize bytes, VkBufferUsageFlags usage);
 		void Destroy() noexcept;
 
@@ -101,8 +113,7 @@ namespace Raven
 		VkDescriptorSetLayout m_Layout = VK_NULL_HANDLE;
 		VkDescriptorPool m_Pool = VK_NULL_HANDLE;
 		VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
-		VkPipeline m_Scatter = VK_NULL_HANDLE;
-		VkPipeline m_Cull = VK_NULL_HANDLE;
+		std::shared_ptr<const ComputePipelines> m_Pipelines;
 		Storage m_Objects;
 		Storage m_Visible;
 		Storage m_Materials;

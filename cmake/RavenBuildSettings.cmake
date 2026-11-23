@@ -48,11 +48,12 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
 
 # Private, stable standard-library headers; project/header edits do not rebuild
 # the PCH. Each target owns its artifact because their export definitions differ.
-option(RAVEN_USE_PCH "Precompile standard-library headers for engine/sample builds" ON)
+# Extra arguments add target-specific standard headers.
+option(RAVEN_USE_PCH "Precompile standard-library headers for engine, sample and game builds" ON)
 function(raven_enable_precompiled_headers target)
     if(RAVEN_USE_PCH)
         target_precompile_headers(${target} PRIVATE
             <algorithm> <array> <chrono> <cstdint> <filesystem> <memory>
-            <span> <string> <string_view> <unordered_map> <utility> <vector>)
+            <span> <string> <string_view> <unordered_map> <utility> <vector> ${ARGN})
     endif()
 endfunction()

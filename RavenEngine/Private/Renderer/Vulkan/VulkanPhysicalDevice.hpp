@@ -15,6 +15,8 @@ namespace Raven
 		// Required in M3 and recorded at selection (docs/RendererDesign.md, R1).
 		bool DescriptorIndexing = false;
 		bool DrawIndirectCount = false;
+		// Optional: line polygon mode for the wireframe debug view (docs/HotReloadDesign.md, H3).
+		bool FillModeNonSolid = false;
 	};
 
 	VulkanPhysicalDevice SelectVulkanPhysicalDevice(

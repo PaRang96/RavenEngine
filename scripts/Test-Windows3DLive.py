@@ -221,14 +221,19 @@ def live(executable, source, directory, capture=True):
     png = source / "Content/Textures/UVGridAlternate.png"
     # Lit shaders reload when the engine material header changes (docs/GpuDrivenDesign.md, G4).
     header = shader.parent / "Raven/Material.hlsli"
-    originals = {path: path.read_bytes() for path in (shader, header, game, scene, metadata, mesh, png)}
+    # Every stage and include reloads since M5 (docs/HotReloadDesign.md, H2).
+    vertex = shader.parent / "Color.vert.hlsl"
+    cull = shader.parent / "Cull.comp.hlsl"
+    scene_header = shader.parent / "GpuScene.hlsli"
+    originals = {path: path.read_bytes() for path in (shader, header, vertex, cull, scene_header, game, scene,
+                                                       metadata, mesh, png)}
     measurements = {}
     rejections = {}
     try:
         with run_sample(executable, directory, capture=capture) as app:
             screenshot = app.screenshot if capture else lambda *args: None
             app.marker(b"Game source watching enabled")
-            app.marker(b"Watching lit fragment shader")
+            app.marker(b"Watching shaders in")
             app.marker(b"Watching project")
             app.resize(600, 400)
             for name in ("Gallery", "Assemblies", "Puzzle", "Collection"):
@@ -236,7 +241,7 @@ def live(executable, source, directory, capture=True):
             app.pickup("left", -1.6, 1.6, 1)
             original_image = screenshot("original")
 
-            shader_marker = b"Lit fragment reload presented:"
+            shader_marker = b"Lit shader reload presented:"
 
             def change_shader(name, data, previous, preserve_timestamp=False):
                 count = app.count(shader_marker) + 1
@@ -246,7 +251,7 @@ def live(executable, source, directory, capture=True):
                     check(len(data) == stamp.st_size, "The equal-size shader fixture changed")
                     os.utime(shader, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
                 app.marker(shader_marker, count)
-                lines = re.findall(rb"Lit fragment reload presented:.*?clock (\d+) ns", app.log.read_bytes())
+                lines = re.findall(rb"Lit shader reload presented:.*?clock (\d+) ns", app.log.read_bytes())
                 measurements[name] = (start, int(lines[-1]), "presentation clock")
                 return screenshot(name, previous, True)
 
@@ -287,7 +292,7 @@ def live(executable, source, directory, capture=True):
             app.resize(600, 400)
             screenshot("shader-latest-snapshot", original_image, False)
             check(app.count(shader_marker) == count, "An intermediate shader save was published")
-            lines = re.findall(rb"Lit fragment reload presented:.*?clock (\d+) ns", app.log.read_bytes())
+            lines = re.findall(rb"Lit shader reload presented:.*?clock (\d+) ns", app.log.read_bytes())
             measurements["shader-superseded-save"] = (start, int(lines[-1]), "presentation clock")
             warm_image = change_shader("shader-restored-warm", warm, original_image)
 
@@ -298,13 +303,62 @@ def live(executable, source, directory, capture=True):
             count = app.count(shader_marker) + 1
             start = save(header, header_green)
             app.marker(shader_marker, count)
-            lines = re.findall(rb"Lit fragment reload presented:.*?clock (\d+) ns", app.log.read_bytes())
+            lines = re.findall(rb"Lit shader reload presented:.*?clock (\d+) ns", app.log.read_bytes())
             measurements["shader-header"] = (start, int(lines[-1]), "presentation clock")
             screenshot("shader-header", warm_image, True)
             count = app.count(shader_marker) + 1
             save(header, originals[header])
             app.marker(shader_marker, count)
             screenshot("shader-header-restored", warm_image, False)
+
+            # Vertex and compute reloads, their interface checks and the debug views (M5, H2/H3).
+            def reload_stage(name, path, data, marker, previous, changed):
+                count = app.count(marker) + 1
+                start = save(path, data)
+                app.marker(marker, count)
+                lines = re.findall(re.escape(marker) + rb".*?clock (\d+) ns", app.log.read_bytes())
+                measurements[name] = (start, int(lines[-1]), "presentation clock")
+                return screenshot(name, previous, changed)
+
+            def reject_stage(name, path, data, message, *more):
+                start = save(path, data)
+                for text in (message, *more):
+                    app.marker(text)
+                rejections[name] = (start, time.perf_counter_ns())
+                screenshot(f"{name}-retained", warm_image, False)
+                save(path, originals[path])
+                # The restored source compiles to the published words, so nothing is published.
+                time.sleep(1)
+
+            vertex_marker = b"Lit shader reload presented: Color.vert.hlsl"
+            swizzled = originals[vertex].replace(b"output.Color = input.Color *", b"output.Color = float3(1.0, 0.45, 0.45) * input.Color *")
+            check(swizzled != originals[vertex], "Vertex shader fixture moved")
+            reload_stage("vertex", vertex, swizzled, vertex_marker, warm_image, True)
+            reload_stage("vertex-restored", vertex, originals[vertex], vertex_marker, warm_image, False)
+            cull_marker = b"GPU scene shader reload presented: Cull.comp.hlsl"
+            halved = originals[cull].replace(b"if (slot >= Cull.ObjectCount)", b"if (slot >= Cull.ObjectCount / 2u)")
+            check(halved != originals[cull], "Culling shader fixture moved")
+            reload_stage("compute", cull, halved, cull_marker, warm_image, True)
+            reload_stage("compute-restored", cull, originals[cull], cull_marker, warm_image, False)
+            reject_stage("vertex-interface", vertex, originals[vertex].replace(b"nointerpolation uint Texture",
+                         b"nointerpolation float Texture"), b"output at location 6 has 1 float components")
+            reject_stage("compute-numthreads", cull, originals[cull].replace(b"[numthreads(64, 1, 1)]",
+                         b"[numthreads(32, 1, 1)]"), b"numthreads is (32, 1, 1); the engine dispatches (64, 1, 1)")
+            widened = originals[scene_header].replace(b"uint Padding;", b"uint Padding;\n\tuint Extra;", 1)
+            check(widened != originals[scene_header], "Scene header fixture moved")
+            reject_stage("scene-stride", scene_header, widened,
+                         b"Color.vert.hlsl: Incompatible shader: set 2 binding 0 element stride 144",
+                         b"Cull.comp.hlsl: Incompatible shader: set 0 binding 0 element stride 144")
+            previous = warm_image
+            for view in ("unlit", "normals", "wireframe"):
+                count = app.count(b"Render view: ") + 1
+                app.tap(0x76, 0x41)
+                app.marker(f"Render view: {view}".encode(), 1)
+                check(app.count(b"Render view: ") == count, "F7 did not select one view")
+                previous = screenshot(f"view-{view}", previous, True)
+            app.tap(0x76, 0x41)
+            app.marker(b"Render view: shaded")
+            screenshot("view-shaded", warm_image, False)
 
             rejected = b"Cannot replace scene/project; keeping active world"
             count = app.count(rejected) + 1

@@ -159,7 +159,7 @@ Each system is registered with a name, phase and order. Declared read/write acce
 - `Raven/Core/GameSystems.hpp` defines `SystemPhase` (`FixedUpdate`, `Update`), `SystemContext`, `SystemDesc` and `SystemTable`.
 - The DLL exports `RavenRegisterSystems` in place of `RavenGetGameUpdate`. Activation rejects a table that is empty, has an unnamed system or null function, an unknown phase, or a duplicate name. Systems are stably sorted by phase, then order.
 - `Application` runs `FixedUpdate` once per fixed step for fixed-step clients, then `Update` once per drawable frame for every client. `GameModule::Update` keeps its signature for existing callers such as the smoke test.
-- The host catches exceptions per system and logs the system name.
+- The host catches exceptions per system and logs the system name. *Since M5 it also suspends a failing system until the next module activation ([HotReloadDesign.md](HotReloadDesign.md#h4--system-table-policy-q5)).*
 - Time and call counts accumulate by system name across reloads, and are written to `<trace>.systems.csv` when a frame trace is enabled.
 - Owner decision (2026-11-21): `GameUpdateResult` stays, as `SystemContext::Result`. A FixedUpdate system writes the player displacement there, and Courtyard's `OnGameplayStep` is unchanged.
 - `PostUpdate` and `Extract` arrive with the host systems in step 6.

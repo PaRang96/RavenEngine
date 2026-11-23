@@ -23,6 +23,8 @@ namespace Raven
 		SystemPhase Phase = SystemPhase::Update;
 		std::uint64_t Calls = 0;
 		std::uint64_t Nanoseconds = 0;
+		// The system threw and is skipped until the next module activation (docs/HotReloadDesign.md, H4).
+		bool Suspended = false;
 	};
 
 	// Development-only, synchronous game code. Call from the game thread between updates.

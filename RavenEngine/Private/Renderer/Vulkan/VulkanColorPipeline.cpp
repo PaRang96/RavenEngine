@@ -13,7 +13,7 @@ namespace Raven
 	VulkanColorPipeline::VulkanColorPipeline(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
 		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout, std::span<const std::uint32_t> vertexWords,
-		std::span<const std::uint32_t> fragmentWords)
+		std::span<const std::uint32_t> fragmentWords, Mode mode)
 		: m_Device(device.Get())
 	{
 		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED ||
@@ -73,14 +73,23 @@ namespace Raven
 			raster.cullMode = VK_CULL_MODE_NONE;
 			raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
 			raster.lineWidth = 1.0f;
+			if (mode == Mode::Lines)
+			{
+				// Depth bias applies to polygons rasterized as lines; it pulls edges in front of the
+				// filled surface they came from, so they pass the depth test without z-fighting.
+				raster.polygonMode = VK_POLYGON_MODE_LINE;
+				raster.depthBiasEnable = VK_TRUE;
+				raster.depthBiasConstantFactor = -1.0f;
+				raster.depthBiasSlopeFactor = -1.0f;
+			}
 			VkPipelineMultisampleStateCreateInfo multisample{};
 			multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 			multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 			VkPipelineDepthStencilStateCreateInfo depth{};
 			depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
 			depth.depthTestEnable = VK_TRUE;
-			depth.depthWriteEnable = VK_TRUE;
-			depth.depthCompareOp = VK_COMPARE_OP_LESS;
+			depth.depthWriteEnable = mode == Mode::Fill ? VK_TRUE : VK_FALSE;
+			depth.depthCompareOp = mode == Mode::Fill ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
 
 			VkPipelineColorBlendAttachmentState color{};
 			color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |

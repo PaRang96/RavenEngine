@@ -72,12 +72,24 @@ def rate(previous, current):
 def configure_app(app, count, watching, animated):
     app.resize(*EXTENT)
     app.marker(f"Loaded level 'Benchmark-{count}.ravenscene'".encode())
-    app.marker(b"Watching lit fragment shader" if watching else b"using staged content")
+    app.marker(b"Watching shaders in" if watching else b"using staged content")
     if not animated:
         app.tap(0x20, 0x39)
 
 
-def profile(executable, directory, count, animated, watching, seconds, capture=False, place=None):
+VIEWS = ("shaded", "unlit", "normals", "wireframe")
+
+
+def select_view(app, view):
+    # F7 cycles the render views from shaded (docs/HotReloadDesign.md, H3).
+    for _ in range(VIEWS.index(view)):
+        count = app.count(b"Render view: ") + 1
+        app.tap(0x76, 0x41)
+        app.marker(b"Render view: ", count)
+    check(view == "shaded" or f"Render view: {view}".encode() in app.log.read_bytes(), f"Could not select the {view} view")
+
+
+def profile(executable, directory, count, animated, watching, seconds, capture=False, place=None, view="shaded"):
     args = ["--scene", SCENE_IDS[count]]
     if not watching:
         args.append("--no-watch")
@@ -87,9 +99,10 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
             app.marker(f"Loaded level 'Benchmark-{count}.ravenscene'".encode())
             if not animated:
                 app.tap(0x20, 0x39)
-            app.marker(b"Watching lit fragment shader")
+            app.marker(b"Watching shaders in")
         else:
             configure_app(app, count, watching, animated)
+        select_view(app, view)
         time.sleep(1.5)
         if capture:
             app.screenshot("benchmark")
@@ -128,7 +141,8 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
     result = {name: distribution(stage(row) for row in window) for name, stage in stages.items()}
     waits = [row["fence_wait_ns"] + row["acquire_wait_ns"] + row["present_wait_ns"] for row in window]
     preparation = [row["work_ns"] - wait for row, wait in zip(window, waits)]
-    result.update({"meshes": count, "draw_calls": next(iter(calls)), "animation": "animated" if animated else "static",
+    result.update({"meshes": count, "view": view, "draw_calls": next(iter(calls)),
+                   "animation": "animated" if animated else "static",
                    "watching": watching, "frames": len(window), "frame": distribution(intervals),
                    "fps": round(len(intervals) * 1e9 / sum(intervals), 2), "display_waits": distribution(waits),
                    "gpu_cull": distribution(cull),
@@ -249,6 +263,7 @@ def main():
     scale.add_argument("--repeats", type=int, default=3)
     scale.add_argument("--meshes", type=int, choices=(4000, *STRESS), default=4000)
     scale.add_argument("--static", action="store_true", help="Pause the rotators (M3 100k static target)")
+    scale.add_argument("--view", choices=VIEWS, default="shaded", help="Render view selected with F7 before measuring")
     args = parser.parse_args()
     if args.mode == "generate":
         generate()
@@ -274,7 +289,7 @@ def main():
             for name, environment, place in cases(display, selected, trial, SMOKE["USER"]):
                 with environment:
                     row = profile(runtime(source) / "RavenEngine.exe", report / name,
-                                  args.meshes, not args.static, True, args.seconds, place=place)
+                                  args.meshes, not args.static, True, args.seconds, place=place, view=args.view)
                 log = (report / name / "run.log").read_text(encoding="utf-8", errors="replace")
                 _, adapter, mode = name.split("-", 2)
                 selected_adapter = next(line.split("Selected GPU: ", 1)[1] for line in log.splitlines()
@@ -283,11 +298,12 @@ def main():
                 check(f"[scale] Present {mode}" in log, "Wrong presentation mode selected")
                 check(f"Swapchain created: {display.width} x {display.height}," in log,
                       "The renderer did not use the selected display resolution")
-                # One indirect command per lit mesh (cube, sphere) and four textured batches (G5).
-                check(row["draw_calls"] == 6, "Unexpected benchmark draw count")
+                # One indirect command per lit mesh (cube, sphere) and four textured batches (G5); the
+                # wireframe view draws the lit commands a second time as lines (H3).
+                check(row["draw_calls"] == (8 if args.view == "wireframe" else 6), "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
-        result = {"label": args.label, "display": display.name, "hz": display.hz,
+        result = {"label": args.label, "view": args.view, "display": display.name, "hz": display.hz,
                   "resolution": [display.width, display.height], "samples": samples}
     else:
         debug = runtime(preset="x64-debug")

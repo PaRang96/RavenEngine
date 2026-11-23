@@ -39,14 +39,14 @@ namespace
 	ApplicationClient* CreatePerspectiveSample(VulkanContext& renderer, GameInstance& instance)
 	{
 		if (Options.WatchShader)
-			renderer.WatchLitFragment();
+			renderer.WatchShaders();
 		return new PerspectiveSample(renderer, instance, Options.FreeFly, Options.WatchMesh, Options.WatchGame, Options.StartScene);
 	}
 
 	ApplicationClient* CreateOrthographicSample(VulkanContext& renderer, GameInstance& instance)
 	{
 		if (Options.WatchShader)
-			renderer.WatchTexturedFragment();
+			renderer.WatchShaders();
 		return new OrthographicSample(renderer, instance, Options.WatchWall, Options.WatchGame);
 	}
 }

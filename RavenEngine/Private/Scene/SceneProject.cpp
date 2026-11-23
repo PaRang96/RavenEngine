@@ -134,7 +134,7 @@ namespace Raven
 			if (watch)
 			{
 				Watch = std::make_unique<SettledFileWatch<SceneProjectDefinition>>(Path,
-					"project", ReadProject, SceneProject::Decode, Current.SourceBytes, true);
+					"project", ImporterVersion::Project, ReadProject, SceneProject::Decode, Current.SourceBytes, true);
 				Log(LogLevel::Info, "Watching project " + PathToUtf8(Path));
 			}
 			Log(LogLevel::Info, "Scene content root " + PathToUtf8(Root));
@@ -165,6 +165,11 @@ namespace Raven
 	}
 	bool SceneProject::IsCurrent(const SceneProjectDefinition& candidate) const { return ReadProject(m_Impl->Path) == candidate.SourceBytes; }
 	bool SceneProject::IsWatching() const noexcept { return m_Impl->Watch != nullptr; }
+
+	std::string SceneProject::ReportPublished(std::chrono::duration<double, std::milli> publish)
+	{
+		return m_Impl->Watch ? m_Impl->Watch->Published(publish) : std::string("not watched");
+	}
 	void SceneProject::Commit(SceneProjectDefinition& candidate) noexcept
 	{
 		m_Impl->Current.Catalog.Swap(candidate.Catalog);

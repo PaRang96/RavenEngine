@@ -25,17 +25,29 @@ Check an item only when its behavior is shown in a sample, a tracked test, or a 
 | Testing | Start CTest and a Windows CI build now, before the ECS and renderer rewrites. Keep tests minimal: add a tracked test only for behavior an upcoming change rewrites. Rendering and reload stay covered by the existing smoke and benchmark scripts. |
 | Minimum spec | The test laptop (Intel Core i7-12700H, NVIDIA GeForce RTX 3070 Ti Laptop GPU) is both the test machine and the minimum supported spec. Every performance target must be met on it. Faster hardware is not a substitute for meeting a target here. Its Intel iGPU is not part of the minimum spec. |
 
-## Where the engine stands (2026-11-21)
+## Where the engine stands (2026-11-23)
 
-Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (earlier presentation checks also used its Intel iGPU):
+Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (presentation and device checks also used its Intel iGPU):
 
-- **Platform:** Win32 window, input, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch, XAudio2 one-shots. macOS (Cocoa) and Linux (XCB) windows/input are merged. They have no random-byte hook, game-module loader, native watcher or audio backend yet, and no current native verification.
-- **Vulkan:** a 1.0 renderer with an explicit-lifetime device/swapchain, resize/minimize recovery, depth, color/textured/lit pipelines, managed mesh/texture handles with fence retirement, sprite instancing and CPU frustum culling. Lit meshes use one draw call per object, so 4,000 meshes = 4,004 draws. See [Benchmark3D.md](docs/Benchmark3D.md).
-- **ECS (M1 done):** components derive from an empty `Component` base and live in sparse-set pools keyed by a compile-time type ID. Scene-scoped views hand out borrowed references; change ticks and cached world transforms are in place. The game DLL registers named systems in `FixedUpdate`/`Update`. Deferred structural commands wait for a first runtime spawn/despawn need. See [ECSDesign.md](docs/ECSDesign.md).
+- **Platform:** Win32 window, input with focus state, key repeat and stable HID key IDs, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch, XAudio2 one-shots. Device selection prefers a discrete GPU.
+  - macOS (Cocoa) and Linux (XCB) windows and input are merged.
+  - They have no random-byte hook, game-module loader, native watcher or audio backend yet, and no current native verification (M4).
+- **Vulkan (M2, M3 done):** Vulkan 1.2 with dynamic rendering, synchronization2 and timeline retirement, plus persistent per-frame rings and a frame uniform.
+  - Lit meshes come from a host-owned render world, are culled on the GPU into fixed-count indirect draws, and use bindless textures behind `Raven/Material.hlsli`.
+  - 50k lit meshes with 20% animated ran at 126.5 FPS ([GpuDrivenDesign.md](docs/GpuDrivenDesign.md)).
+  - Debug views: shaded, unlit, normals and wireframe (F7).
+- **ECS (M1 done):** components derive from an empty `Component` base and live in sparse-set pools keyed by a compile-time type ID.
+  - Scene-scoped views hand out borrowed references; change ticks and cached world transforms are in place.
+  - The game DLL registers named systems in `FixedUpdate`/`Update`.
+  - Deferred structural commands wait for a first runtime spawn/despawn need. See [ECSDesign.md](docs/ECSDesign.md).
 - **Scenes and assets:** a versioned project catalog, a binary 3D scene codec with hierarchy and atomic saves, SceneSession switching, AssetStore leases, PNG/JPEG, static single-object FBX and PCM WAV. See [SceneWorkflow.md](docs/SceneWorkflow.md) and [AssetSystem.md](docs/AssetSystem.md).
-- **Hot reload:** the game DLL (Windows), scene/project files, PNG, FBX and lit/textured fragment shaders reload with last-good recovery. Save-to-present for a DLL edit is about 3.4–3.6 s. Changing shared component definitions requires a host rebuild and restart. See [EngineModules.md](docs/EngineModules.md) and [DevelopmentReload.md](docs/DevelopmentReload.md).
-- **Samples:** Perspective, Gallery, Assemblies, Puzzle and Collection (3D), Courtyard (2D), benchmark scenes with 100–4,000 meshes, and a Windows player build ([PlayerBuild.md](docs/PlayerBuild.md)).
-- **Quality:** CTest with `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled), a Windows CI build and CPU tests, and tracked smoke/benchmark scripts. No warning/sanitizer policy yet.
+- **Hot reload (M5 done on Windows):** one reload service watches the game sources and DLL, scenes, the project, PNG and FBX assets, and every engine shader stage with its includes. Each input keeps an in-memory dependency record.
+  - Shaders are checked against the engine's interfaces, and every path keeps its last-good result.
+  - A one-file game edit is active in 1.3–1.6 s in Debug and about 1.7 s in Release.
+  - A throwing game system is suspended until the next reload.
+  - Changing shared component definitions still requires a host rebuild and restart. See [HotReloadDesign.md](docs/HotReloadDesign.md) and [DevelopmentReload.md](docs/DevelopmentReload.md).
+- **Samples:** Perspective, Gallery, Assemblies, Puzzle and Collection (3D), Courtyard (2D), benchmark scenes with 100–100,000 meshes, and a Windows player build ([PlayerBuild.md](docs/PlayerBuild.md)).
+- **Quality:** CTest with `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled), a Windows CI build and CPU tests, and tracked smoke, live-reload and benchmark scripts. No warning/sanitizer policy yet.
 
 ## Milestones
 
@@ -63,7 +75,7 @@ Replace per-entity heap storage with dense typed pools and real systems while ke
 - [ ] Add deferred structural changes (create/destroy/add/remove) through a command buffer applied at defined sync points. *Deferred until gameplay first spawns or despawns at runtime (owner, 2026-11-21); views reject structural changes meanwhile.*
 - [x] Add a host-owned system schedule with update phases (`FixedUpdate`, `Update`). The game DLL registers its systems on each load, and they are cleared before unload, so no callback outlives the module.
 - [x] Store world transforms as a cached component updated by a hierarchy update with change tracking. Rendering reads it; picking stays live because it runs per click.
-- [ ] Optional: migrate components by field name when layouts change, so routine component edits no longer need a host restart. *Moved to M5.*
+- [ ] Optional: migrate components by field name when layouts change, so routine component edits no longer need a host restart. *Moved to M6, after generic serialization (owner decision Q7, 2026-11-23).*
 
 **Exit:** iterating Transform over 100k entities and running the hierarchy update over 50k entities meet budgets set in M0. Compatible DLL reload keeps every entity, value and system order. Existing samples behave the same.
 
@@ -118,22 +130,28 @@ Run the same engine on Linux and macOS. Platform contributors own native impleme
 
 **Exit:** every sample and every reload path runs in Debug/Release on all three platforms, with native verification recorded by the responsible contributor.
 
-### M5 — Hot reload completeness and iteration speed
+### M5 — Hot reload completeness and iteration speed · *done on Windows 2026-11-23 (owner review)*
 
-- [ ] Reload every shader stage (vertex, fragment and compute), with dependency tracking for includes.
-- [ ] Record each asset's source, dependencies and build outputs for images, FBX and HLSL. Reimport when a dependency changes.
-- [ ] Reload systems registered by the DLL, and decide the policy for added or removed systems.
-- [ ] Reduce DLL save-to-present from about 3.5 s to a target set after profiling the build (for example below 1.5 s for a one-file edit).
-- [ ] Extend last-good recovery and diagnostics to every newly supported replacement path.
+Design: [HotReloadDesign.md](docs/HotReloadDesign.md) (owner decisions Q1–Q7, 2026-11-23).
+
+- [x] Reload every shader stage (vertex, fragment and compute), with dependency tracking for includes. *All nine engine programs, DXC-reported includes, and vertex/compute interface checks (H2).*
+- [x] Record each asset's source, dependencies and build outputs for images, FBX and HLSL. Reimport when a dependency changes. *Records stay in memory, keyed by input hashes plus an importer version, so a disk cache can be added later without rework. The cache is built at its first trigger: texture compression or mips, mesh clustering or LOD, shader permutations, editor work, M7 cooking or a measured slow load (owner decision Q4, 2026-11-23).*
+- [x] Reload systems registered by the DLL, and decide the policy for added or removed systems. *Changes are logged; a throwing system is suspended until the next activation (H4).*
+- [x] Reduce DLL save-to-present from about 3.5 s to a target set after profiling the build (for example below 1.5 s for a one-file edit). *Targets set in review (D1, 2026-11-23): Debug ≤ 1.5 s, Release ≤ 2.0 s. Measured Debug 1.3–1.6 s and Release 1.63–1.87 s (median 1.69 s); see the [exit record](docs/HotReloadDesign.md#m5-exit-record-2026-11-23).*
+- [x] Extend last-good recovery and diagnostics to every newly supported replacement path.
 
 **Exit:** code, every shader stage and supported assets reload on all platforms with recorded timings and failure recovery.
+
+**Exit status (2026-11-23):** met on Windows. One unexplained 437 ms frame during a game build with validation layers is tracked (D2). macOS and Linux follow through their M4 backends. See the [M5 exit record](docs/HotReloadDesign.md#m5-exit-record-2026-11-23).
 
 ### M6 — Gameplay services and samples
 
 - [ ] Expose stable scene access, ECS views and runtime resource handles to game code.
 - [ ] Generalize component and asset serialization beyond the current sample codecs, with round-trip tests.
+- [ ] Migrate game components by field name across layout changes, using the serialization field table, once the host no longer compiles game components. *Moved from M1 via M5 (owner decision Q7, 2026-11-23); see [HotReloadDesign.md](docs/HotReloadDesign.md#h6--field-level-component-migration-q7).*
 - [ ] Import multi-object FBX files with stable sub-asset identities.
 - [ ] Move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, with an owner-requested 2D run. *Moved from M3 (owner decision Q5, 2026-11-22).*
+- [ ] Per-material shaders: a material references a shader asset, and GPU-culled commands are grouped per (shader, mesh) and drawn with one pipeline per shader. *Owner decision Q3, 2026-11-23; see [HotReloadDesign.md](docs/HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3).*
 - [ ] Key bindings and key listening on top of the shared input contract: an action map storing stable `Key`/`MouseButton` values, capture of the next pressed input, and layout-aware key names. *Owner requirement, 2026-11-23; see [InputProcessing.md](docs/InputProcessing.md#planned-key-bindings-and-key-listening).*
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
 - [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.

@@ -106,7 +106,7 @@ namespace Raven
 			{
 				if (resource.Watch)
 					throw std::logic_error("This mesh asset is already watched");
-				resource.Watch.emplace(*watchSource, "FBX", ReadFbxBytes, DecodeFbxMesh);
+				resource.Watch.emplace(*watchSource, "FBX", ImporterVersion::Fbx, ReadFbxBytes, DecodeFbxMesh);
 			}
 			return resource.Handle;
 		}
@@ -119,7 +119,7 @@ namespace Raven
 		{
 			auto& resource = entry->second;
 			if (watchSource)
-				resource.Watch.emplace(*watchSource, "FBX", ReadFbxBytes, DecodeFbxMesh, std::move(bytes));
+				resource.Watch.emplace(*watchSource, "FBX", ImporterVersion::Fbx, ReadFbxBytes, DecodeFbxMesh, std::move(bytes));
 			resource.Handle = Renderer.CreateMeshHandle(mesh.Vertices, mesh.Indices);
 			return resource.Handle;
 		}
@@ -147,9 +147,11 @@ namespace Raven
 				continue;
 			try
 			{
+				const auto start = std::chrono::steady_clock::now();
 				m_Impl->Renderer.ReplaceMesh(resource.Handle, mesh->Vertices, mesh->Indices);
 				replaced = true;
-				Log(LogLevel::Info, "Replaced FBX " + PathToUtf8(resource.Watch->GetPath()));
+				Log(LogLevel::Info, "Replaced FBX " + PathToUtf8(resource.Watch->GetPath()) + "; " +
+					resource.Watch->Published(std::chrono::steady_clock::now() - start));
 			}
 			catch (const std::exception& error)
 			{
@@ -184,10 +186,12 @@ namespace Raven
 				continue;
 			try
 			{
+				const auto start = std::chrono::steady_clock::now();
 				m_Impl->Renderer.ReplaceTexture(watch->Texture,
 					{ image->Width, image->Height, image->Pixels, watch->ColorSpace });
 				replaced = true;
-				Log(LogLevel::Info, "Replaced PNG " + PathToUtf8(watch->Watch.GetPath()));
+				Log(LogLevel::Info, "Replaced PNG " + PathToUtf8(watch->Watch.GetPath()) + "; " +
+					watch->Watch.Published(std::chrono::steady_clock::now() - start));
 			}
 			catch (const std::exception& error)
 			{

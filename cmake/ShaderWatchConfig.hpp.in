@@ -3,13 +3,9 @@
 namespace Raven::ShaderWatchConfig
 {
 	inline constexpr wchar_t SourceDirectory[] = LR"raven(@CMAKE_CURRENT_SOURCE_DIR@/Private/Renderer/Shaders)raven";
-	inline constexpr wchar_t LitSource[] = L"@RAVEN_LIT_FRAGMENT_SOURCE@";
-	inline constexpr wchar_t TexturedSource[] = L"@RAVEN_TEXTURED_FRAGMENT_SOURCE@";
 	inline constexpr wchar_t CMake[] = LR"raven(@CMAKE_COMMAND@)raven";
 	inline constexpr wchar_t CompileScript[] = LR"raven(@RAVEN_SHADER_COMPILE_SCRIPT@)raven";
 	inline constexpr wchar_t Dxc[] = LR"raven(@RAVEN_DXC_EXECUTABLE@)raven";
 	inline constexpr wchar_t Validator[] = LR"raven(@RAVEN_SPIRV_VALIDATOR_EXECUTABLE@)raven";
-	inline constexpr wchar_t Profile[] = L"@RAVEN_WATCH_PROFILE@";
-	inline constexpr wchar_t Entry[] = L"@RAVEN_WATCH_ENTRY@";
 	inline constexpr wchar_t Optimization[] = L"@RAVEN_SHADER_OPTIMIZATION@";
 }

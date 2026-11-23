@@ -1,10 +1,12 @@
 #include "Raven/Core/Application.hpp"
+#include "Core/ReloadService.hpp"
 #include "Core/FrameClock.hpp"
 #include "Core/FrameTrace.hpp"
 #include "Core/FixedGameplayStep.hpp"
 #include "Core/Paths.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/GameModule.hpp"
+#include "Raven/Core/Log.hpp"
 
 #include <chrono>
 #include <fstream>
@@ -178,15 +180,42 @@ namespace Raven
 				auto systemsPath = config.FrameTracePath;
 				systemsPath.replace_extension(".systems.csv");
 				std::ofstream systems(systemsPath);
-				systems << "system,phase,calls,total_ns,mean_ns\n";
+				systems << "system,phase,calls,total_ns,mean_ns,suspended\n";
 				for (const auto& stats : game->GetSystemStats())
 					systems << stats.Name << ',' << (stats.Phase == SystemPhase::FixedUpdate ? "fixed" : "update") << ','
 						<< stats.Calls << ',' << stats.Nanoseconds << ','
-						<< (stats.Calls ? stats.Nanoseconds / stats.Calls : 0) << '\n';
+						<< (stats.Calls ? stats.Nanoseconds / stats.Calls : 0) << ',' << stats.Suspended << '\n';
 				systems.close();
 				if (!systems)
 					throw std::runtime_error("Cannot write system timing capture");
 			}
+			// Every watched input's dependency record (docs/HotReloadDesign.md, H1 and H7).
+			auto reloadsPath = config.FrameTracePath;
+			reloadsPath.replace_extension(".reloads.csv");
+			std::ofstream reloads(reloadsPath);
+			const auto quote = [](const std::string& text)
+			{
+				std::string quoted = "\"";
+				for (const char value : text)
+					quoted += value == '"' ? std::string("\"\"") : std::string(1, value);
+				return quoted + '"';
+			};
+			reloads << "name,importer_version,inputs,imports,failures,superseded,last_import_ms,last_publish_ms,trigger,output,last_error\n";
+			for (const auto& record : ReloadService::GetRecords())
+			{
+				std::string trigger;
+				for (const auto& path : record.Trigger)
+					trigger += (trigger.empty() ? "" : ";") + path.filename().string();
+				reloads << quote(record.Name) << ',' << record.ImporterVersion << ',' << record.Inputs.size() << ','
+					<< record.Imports << ',' << record.Failures << ',' << record.Superseded << ','
+					<< record.LastImport.count() << ',' << record.LastPublish.count() << ',' << quote(trigger) << ','
+					<< quote(record.Output) << ',' << quote(record.LastError) << '\n';
+			}
+			reloads.close();
+			if (!reloads)
+				throw std::runtime_error("Cannot write reload record capture");
+			Log(LogLevel::Info, "Reload service: " + std::to_string(ReloadService::GetRecords().size()) +
+				" watched consumers on " + std::to_string(ReloadService::GetThreadCount()) + " threads");
 		}
 	}
 }

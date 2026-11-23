@@ -6,6 +6,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+
+# Windows PowerShell 5.1 turns redirected native stderr into terminating errors under 'Stop'.
+# Run redirected native commands with 'Continue' so both editions only check the exit code.
+function Invoke-Native([scriptblock]$Command) {
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command } finally { $ErrorActionPreference = $saved }
+}
 if ($DefaultLaunch) {
     & python "$PSScriptRoot/Test-Windows3DLive.py" $Preset
     if ($LASTEXITCODE -ne 0) { throw "The $Preset default-launch check failed." }
@@ -66,14 +74,14 @@ if (!$gameBody.Contains($originalRule)) { throw 'The collection rule used by thi
 $editedBody = $gameBody.Replace($originalRule, $changedRule)
 [IO.File]::WriteAllText($gameSource, $editedBody, $utf8)
 $variantDll = Join-Path $variant 'RavenGame.dll'
-& cmake -P $recipeFile *> (Join-Path $scratch 'edited-build.log')
+Invoke-Native { & cmake -P $recipeFile *> (Join-Path $scratch 'edited-build.log') }
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $variantDll)) {
     throw "The edited game DLL did not build. See $scratch/edited-build.log."
 }
 $variantHash = (Get-FileHash -LiteralPath $variantDll).Hash
 try {
     [IO.File]::WriteAllText($gameSource, "#error intentional smoke build failure`n$editedBody", $utf8)
-    & cmake -P $recipeFile *> (Join-Path $scratch 'failed-build.log')
+    Invoke-Native { & cmake -P $recipeFile *> (Join-Path $scratch 'failed-build.log') }
     if ($LASTEXITCODE -eq 0 -or (Get-FileHash -LiteralPath $variantDll).Hash -ne $variantHash) {
         throw 'A failed game build did not preserve the last successful DLL.'
     }
@@ -90,7 +98,7 @@ try {
     $env:VK_INSTANCE_LAYERS = 'VK_LAYER_KHRONOS_validation'
     $env:VK_LAYER_VALIDATE_SYNC = '1'
     $log = Join-Path $scratch 'smoke.log'
-    & "$runtime/Raven3DSmoke.exe" $probe $variantDll *> $log
+    Invoke-Native { & "$runtime/Raven3DSmoke.exe" $probe $variantDll *> $log }
     $probeStatus = $LASTEXITCODE
     Get-Content -LiteralPath $log
     if ($probeStatus -ne 0 -or (Select-String -LiteralPath $log -Pattern 'VUID-|SYNC-HAZARD|Validation (Error|Warning)' -Quiet)) {

@@ -66,7 +66,8 @@ namespace Raven
 			if (!candidate.World)
 				throw std::runtime_error("Scene factory returned no world");
 			if (Project.IsWatching())
-				candidate.Watch = std::make_unique<Watcher>(candidate.Path, "scene", ReadScene, DecodeSnapshot, candidate.Bytes);
+				candidate.Watch = std::make_unique<Watcher>(candidate.Path, "scene", ImporterVersion::Scene, ReadScene,
+					DecodeSnapshot, candidate.Bytes);
 			if (ReadScene(candidate.Path) != candidate.Bytes)
 				throw std::runtime_error("Scene save was superseded while preparing its replacement");
 			return candidate;
@@ -85,6 +86,7 @@ namespace Raven
 
 		bool UpdateProject(SceneProjectDefinition& candidate)
 		{
+			const auto start = std::chrono::steady_clock::now();
 			const auto scene = std::find_if(candidate.Scenes.begin(), candidate.Scenes.end(), [this](const auto& value)
 			{
 				return value.Id == Description.Id && value.Type == Type;
@@ -104,7 +106,8 @@ namespace Raven
 				Publish(std::move(*world));
 			else
 				std::swap(Description, nextDescription);
-			Log(LogLevel::Info, "Published project metadata");
+			Log(LogLevel::Info, "Published project metadata; " +
+				Project.ReportPublished(std::chrono::steady_clock::now() - start));
 			return world.has_value();
 		}
 
@@ -194,7 +197,13 @@ namespace Raven
 					m_Impl->PendingScene.reset();
 					return false;
 				}
-				m_Impl->Publish(m_Impl->Prepare(m_Impl->Description, m_Impl->Project.GetCatalog(), *m_Impl->PendingScene));
+				// The summary comes from the watch that saw the save; publishing replaces it.
+				const auto start = std::chrono::steady_clock::now();
+				auto prepared = m_Impl->Prepare(m_Impl->Description, m_Impl->Project.GetCatalog(), *m_Impl->PendingScene);
+				const auto summary = m_Impl->Watch ? m_Impl->Watch->Published(std::chrono::steady_clock::now() - start)
+					: std::string("not watched");
+				m_Impl->Publish(std::move(prepared));
+				Log(LogLevel::Info, "Reloaded scene " + PathToUtf8(m_Impl->Path) + "; " + summary);
 				m_Impl->PendingScene.reset();
 				m_Impl->ReportedError.clear();
 				return true;

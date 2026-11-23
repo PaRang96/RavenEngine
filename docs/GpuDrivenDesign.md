@@ -120,7 +120,7 @@ The Registry gains a general, opt-in journal of structural events. It serves the
   - The header starts minimal and grows only when a material feature needs it.
   - The existing lit shaders are ported once.
   - The fragment interface check moves to the new layout. Live reload and the rejection of incompatible shaders stay.
-  - **The header is a reload dependency of every watched lit shader**, so editing it reloads them. This is a small special case until M5 adds general include tracking.
+  - **The header is a reload dependency of every watched lit shader**, so editing it reloads them. This is a small special case until M5 adds general include tracking. *M5 replaced it with DXC-reported includes for every program ([HotReloadDesign.md](HotReloadDesign.md#h2--shader-programs-for-every-stage-q2)).*
   - **Raw declarations are allowed** as a documented advanced path, with the layout marked "may change between versions". A shader that declares the same bindings passes the same check.
 - **Fallback:** if a device lacks update-after-bind or non-uniform indexing (some MoltenVK configurations), the engine batches per texture with a fixed-size array. The header hides the difference, so shaders are identical on every platform. A device with neither path gets a clear unsupported-device error.
 - **Scope:** the textured and sprite path keeps its per-texture descriptors and is untouched in M3 (Q5).

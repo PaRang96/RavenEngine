@@ -13,10 +13,12 @@
 #include "Renderer/Vulkan/VulkanClearPass.hpp"
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
-#include "Renderer/Shaders/FragmentShaderWatch.hpp"
+#include "Renderer/Shaders/ShaderLibrary.hpp"
+#include "Renderer/Vulkan/FragmentShaderInterface.hpp"
+#include "Renderer/Vulkan/ShaderInterface.hpp"
+#include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Core/PathText.hpp"
 #include "Core/FrameTrace.hpp"
-#include "ShaderWatchConfig.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 #include "Renderer/Vulkan/VulkanGpuScene.hpp"
 #include "Renderer/RenderWorldState.hpp"
@@ -103,10 +105,9 @@ namespace Raven
 
 		bool PrepareSwapchain();
 		void ResetSwapchain();
-		struct FragmentProgram;
-		void ApplyLitShaderReload();
-		void ApplyTexturedShaderReload();
-		void WatchFragment(FragmentProgram& program, FragmentShaderKind kind);
+		void ApplyShaderReloads();
+		void UpdateLitBuild();
+		VulkanClearPass::LitShaders GetLitShaders() const;
 		void CollectResources() noexcept;
 		std::size_t CreateMeshSlot(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices, bool managed);
@@ -130,18 +131,19 @@ namespace Raven
 		const std::uint64_t m_MeshContextId = AllocateMeshContextId();
 		const Window& m_Window;
 		const std::filesystem::path m_ShaderDirectory;
-		struct ShaderReloadTiming
+		// Every engine program's SPIR-V; watched compiles replace it (docs/HotReloadDesign.md, H2).
+		ShaderLibrary m_Shaders;
+		// Published shader changes, logged once their first frame is presented.
+		struct ShaderReloadReport
 		{
+			const char* Group;
+			std::string Programs;
+			std::string Trigger;
 			double CompileMs;
 			double PipelineMs;
 		};
-		struct FragmentProgram
-		{
-			const std::vector<std::uint32_t> Vertex;
-			std::vector<std::uint32_t> Fragment;
-			std::unique_ptr<FragmentShaderWatch> Watcher;
-			std::optional<ShaderReloadTiming> Timing;
-		};
+		std::vector<ShaderReloadReport> m_ShaderReports;
+		RenderView m_View = RenderView::Shaded;
 
 		// Owners are destroyed in reverse declaration order.
 		VulkanInstance m_Instance;
@@ -168,20 +170,20 @@ namespace Raven
 		std::uint64_t m_FramebufferRevision = 0;
 		bool m_HasPresentedFrame = false;
 
-		FragmentProgram m_Lit;
-		FragmentProgram m_Textured;
+		// Lit pipelines (every view) build on a worker; a resize may retire the pass meanwhile.
 		struct LitPipelineResult
 		{
-			std::shared_ptr<const VulkanColorPipeline> Pipeline;
+			std::shared_ptr<const VulkanClearPass::LitPipelines> Pipelines;
 			double BuildMs;
 		};
 		struct LitPipelineBuild
 		{
-			std::shared_ptr<FragmentShaderWatch::Candidate> Shader;
+			std::vector<ShaderLibrary::Candidate> Shaders;
 			VulkanClearPass::LitPipelineFactory Factory;
 			std::future<LitPipelineResult> Result;
 		};
-		std::optional<FragmentShaderWatch::Candidate> m_LitQueued;
+		// Lit candidates waiting for the build in progress.
+		std::vector<ShaderLibrary::Candidate> m_LitQueued;
 		std::optional<LitPipelineBuild> m_LitBuild;
 		// Pipelines kept across swapchain recreation while attachment formats match (R2).
 		std::optional<VulkanClearPass::Pipelines> m_RetainedPipelines;
@@ -190,6 +192,7 @@ namespace Raven
 	VulkanContext::Impl::Impl(const Window& window)
 		: m_Window(window),
 		  m_ShaderDirectory(Paths::GetShaderPath()),
+		  m_Shaders(m_ShaderDirectory),
 		  m_Instance(m_Window.GetRequiredVulkanInstanceExtensions()),
 #ifdef RAVEN_ENABLE_VALIDATION
 		  m_DebugMessenger(std::in_place, m_Instance),
@@ -203,12 +206,7 @@ namespace Raven
 		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
 		  m_GpuScene(m_Device, m_PhysicalDevice, m_Timeline,
-			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Scatter.comp.spv"),
-			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Cull.comp.spv")),
-		  m_Lit{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.vert.spv"),
-			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Color.frag.spv"), {}, {} },
-		  m_Textured{ VulkanShaderModule::ReadWords(m_ShaderDirectory / "Texture.vert.spv"),
-			  VulkanShaderModule::ReadWords(m_ShaderDirectory / "Texture.frag.spv"), {}, {} }
+			  m_Shaders.Get(ShaderProgram::Scatter), m_Shaders.Get(ShaderProgram::Cull))
 	{
 		Log(LogLevel::Info,
 			std::string("Selected GPU: ") +
@@ -257,7 +255,8 @@ namespace Raven
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
 				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
-				m_TextureDescriptors.GetBindlessLayout(), m_FrameLayout.Get(), m_GpuScene, m_Lit.Vertex, m_Lit.Fragment, m_Textured.Vertex, m_Textured.Fragment, m_Timeline,
+				m_TextureDescriptors.GetBindlessLayout(), m_FrameLayout.Get(), m_GpuScene, GetLitShaders(),
+				m_Shaders.Get(ShaderProgram::TexturedVertex), m_Shaders.Get(ShaderProgram::TexturedFragment), m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
 			m_RetainedPipelines.reset();
 		}
@@ -277,14 +276,178 @@ namespace Raven
 		return true;
 	}
 
-	void VulkanContext::Impl::ApplyLitShaderReload()
+	namespace
 	{
-		auto& program = m_Lit;
-		if (!program.Watcher)
-			return;
-		if (auto candidate = program.Watcher->TakeCandidate())
-			m_LitQueued = std::move(candidate);
+		bool IsLitProgram(ShaderProgram program)
+		{
+			return program == ShaderProgram::LitVertex || program == ShaderProgram::LitFragment ||
+				program == ShaderProgram::UnlitFragment || program == ShaderProgram::NormalsFragment ||
+				program == ShaderProgram::WireframeFragment;
+		}
 
+		std::string ProgramNames(const std::vector<ShaderLibrary::Candidate>& candidates)
+		{
+			std::string names;
+			for (const auto& candidate : candidates)
+				names += (names.empty() ? "" : ", ") + std::string(ShaderLibrary::GetSourceName(candidate.Program));
+			return names;
+		}
+
+		// The changed inputs behind a group of compiles, for example "Material.hlsli".
+		std::string Triggers(const std::vector<ShaderLibrary::Candidate>& candidates)
+		{
+			std::vector<std::string> names;
+			for (const auto& candidate : candidates)
+				for (const auto& name : candidate.Trigger)
+					if (std::find(names.begin(), names.end(), name) == names.end())
+						names.push_back(name);
+			std::string text;
+			for (const auto& name : names)
+				text += (text.empty() ? "" : ", ") + name;
+			return text.empty() ? "-" : text;
+		}
+
+		double MaxCompile(const std::vector<ShaderLibrary::Candidate>& candidates)
+		{
+			double result = 0.0;
+			for (const auto& candidate : candidates)
+				result = std::max(result, candidate.CompileMs);
+			return result;
+		}
+
+		// Replaces queued entries for the same program; the newest compile wins.
+		void Merge(std::vector<ShaderLibrary::Candidate>& queue, std::vector<ShaderLibrary::Candidate> candidates)
+		{
+			for (auto& candidate : candidates)
+			{
+				std::erase_if(queue, [&](const ShaderLibrary::Candidate& queued) { return queued.Program == candidate.Program; });
+				queue.push_back(std::move(candidate));
+			}
+		}
+
+		std::span<const std::uint32_t> WordsOf(const ShaderLibrary& library,
+			const std::vector<ShaderLibrary::Candidate>& candidates, ShaderProgram program)
+		{
+			for (const auto& candidate : candidates)
+				if (candidate.Program == program)
+					return candidate.Words;
+			return library.Get(program);
+		}
+
+		// The fixed interfaces reloaded shaders are checked against (docs/HotReloadDesign.md, H2).
+		ShaderInterface LitVertexInterface()
+		{
+			ShaderInterface result;
+			result.Inputs = { { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 2 } };
+			// RavenFragmentInput in Raven/Material.hlsli.
+			result.Outputs = { { 0, 3 }, { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 3 }, { 5, 3 }, { 6, 1, true } };
+			result.Buffers.push_back({ 1, 0, 0, { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
+				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
+				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor) } });
+			// The vertex stage sees the objects, visible slots and materials of the scene set.
+			for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
+				if (buffer.Binding <= 2)
+					result.Buffers.push_back(std::move(buffer));
+			return result;
+		}
+
+		ShaderInterface TexturedVertexInterface()
+		{
+			ShaderInterface result;
+			result.Inputs = { { 0, 3 }, { 1, 2 }, { 2, 4 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 4 } };
+			result.Outputs = { { 0, 2 }, { 1, 4 } };
+			return result;
+		}
+
+		void CheckProgram(ShaderProgram program, std::span<const std::uint32_t> words)
+		{
+			switch (program)
+			{
+			case ShaderProgram::LitVertex:
+				CheckShaderInterface(words, LitVertexInterface());
+				break;
+			case ShaderProgram::TexturedVertex:
+				CheckShaderInterface(words, TexturedVertexInterface());
+				break;
+			case ShaderProgram::TexturedFragment:
+				CheckFragmentShaderInterface(words, FragmentShaderKind::Textured);
+				break;
+			case ShaderProgram::Scatter:
+				CheckShaderInterface(words, VulkanGpuScene::GetScatterInterface());
+				break;
+			case ShaderProgram::Cull:
+				CheckShaderInterface(words, VulkanGpuScene::GetCullInterface());
+				break;
+			default:
+				// Every lit view's fragment shader uses the material interface.
+				CheckFragmentShaderInterface(words, FragmentShaderKind::Lit);
+				break;
+			}
+		}
+	}
+
+	VulkanClearPass::LitShaders VulkanContext::Impl::GetLitShaders() const
+	{
+		return { m_Shaders.Get(ShaderProgram::LitVertex), m_Shaders.Get(ShaderProgram::LitFragment),
+			m_Shaders.Get(ShaderProgram::UnlitFragment), m_Shaders.Get(ShaderProgram::NormalsFragment),
+			m_Shaders.Get(ShaderProgram::WireframeFragment) };
+	}
+
+	void VulkanContext::Impl::ApplyShaderReloads()
+	{
+		if (!m_Shaders.IsWatching())
+			return;
+		// Candidates arrive only once every program has settled, so a header edit's dependents
+		// publish in the same frame and a vertex/fragment pair never mixes versions (H2).
+		std::vector<ShaderLibrary::Candidate> textured;
+		std::vector<ShaderLibrary::Candidate> compute;
+		std::vector<ShaderLibrary::Candidate> lit;
+		for (auto& candidate : m_Shaders.TakeReady())
+		{
+			if (IsLitProgram(candidate.Program))
+				lit.push_back(std::move(candidate));
+			else if (candidate.Program == ShaderProgram::Scatter || candidate.Program == ShaderProgram::Cull)
+				compute.push_back(std::move(candidate));
+			else
+				textured.push_back(std::move(candidate));
+		}
+		const auto publish = [&](const char* group, std::vector<ShaderLibrary::Candidate>& candidates,
+			const std::function<void()>& replace)
+		{
+			if (candidates.empty())
+				return;
+			try
+			{
+				const auto start = std::chrono::steady_clock::now();
+				replace();
+				const std::chrono::duration<double, std::milli> pipelines = std::chrono::steady_clock::now() - start;
+				m_ShaderReports.push_back({ group, ProgramNames(candidates), Triggers(candidates), MaxCompile(candidates),
+					pipelines.count() });
+				for (auto& candidate : candidates)
+					m_Shaders.Set(candidate.Program, std::move(candidate.Words), pipelines);
+			}
+			catch (const std::exception& error)
+			{
+				Log(LogLevel::Warning, std::string("Cannot replace ") + group + " pipelines for " +
+					ProgramNames(candidates) + ": " + error.what());
+			}
+		};
+		publish("Textured", textured, [&]
+		{
+			m_ClearPass->ReplaceTexturedPipelines(WordsOf(m_Shaders, textured, ShaderProgram::TexturedVertex),
+				WordsOf(m_Shaders, textured, ShaderProgram::TexturedFragment));
+		});
+		publish("GPU scene", compute, [&]
+		{
+			m_GpuScene.ReplacePipelines(WordsOf(m_Shaders, compute, ShaderProgram::Scatter),
+				WordsOf(m_Shaders, compute, ShaderProgram::Cull));
+		});
+		Merge(m_LitQueued, std::move(lit));
+		UpdateLitBuild();
+	}
+
+	void VulkanContext::Impl::UpdateLitBuild()
+	{
 		try
 		{
 			if (m_LitBuild)
@@ -294,63 +457,49 @@ namespace Raven
 				auto build = std::move(*m_LitBuild);
 				m_LitBuild.reset();
 				auto result = build.Result.get();
-				if (!m_LitQueued && program.Watcher->IsCurrent(*build.Shader))
+				if (m_LitQueued.empty() && m_ClearPass->IsCurrent(build.Factory))
 				{
-					if (m_ClearPass->IsCurrent(build.Factory))
-					{
-						m_ClearPass->UseLitPipeline(std::move(result.Pipeline));
-						program.Fragment.swap(build.Shader->Words);
-						program.Timing = ShaderReloadTiming{ build.Shader->CompileTime.count(), result.BuildMs };
-					}
-					else
-						m_LitQueued = std::move(*build.Shader);
+					m_ClearPass->UseLitPipelines(std::move(result.Pipelines));
+					m_ShaderReports.push_back({ "Lit", ProgramNames(build.Shaders), Triggers(build.Shaders),
+						MaxCompile(build.Shaders), result.BuildMs });
+					for (auto& candidate : build.Shaders)
+						m_Shaders.Set(candidate.Program, std::move(candidate.Words),
+							std::chrono::duration<double, std::milli>(result.BuildMs));
+				}
+				else
+				{
+					// Newer shaders or new attachment formats: rebuild with everything still unpublished.
+					auto newer = std::move(m_LitQueued);
+					m_LitQueued = std::move(build.Shaders);
+					Merge(m_LitQueued, std::move(newer));
 				}
 			}
-			if (auto candidate = std::exchange(m_LitQueued, std::nullopt);
-				candidate && candidate->Words != program.Fragment && program.Watcher->IsCurrent(*candidate))
-			{
-				auto shader = std::make_shared<FragmentShaderWatch::Candidate>(std::move(*candidate));
-				const auto factory = m_ClearPass->GetLitPipelineFactory();
-				// A resize may retire this pass while the worker still prepares its pipeline.
-				auto result = std::async(std::launch::async, [factory, shader, vertex = std::span(program.Vertex)]
-				{
-					const auto start = std::chrono::steady_clock::now();
-					auto pipeline = factory.Create(vertex, shader->Words);
-					const std::chrono::duration<double, std::milli> time = std::chrono::steady_clock::now() - start;
-					return LitPipelineResult{ std::move(pipeline), time.count() };
-				});
-				m_LitBuild.emplace(LitPipelineBuild{ std::move(shader), factory, std::move(result) });
-			}
-		}
-		catch (const std::exception& error)
-		{
-			Log(LogLevel::Warning, "Cannot replace shader pipelines for " +
-				PathToUtf8(program.Watcher->GetSource()) + ": " + error.what());
-		}
-	}
-
-	void VulkanContext::Impl::ApplyTexturedShaderReload()
-	{
-		auto& program = m_Textured;
-		if (!program.Watcher)
-			return;
-		auto candidate = program.Watcher->TakeCandidate();
-		if (!candidate || candidate->Words == program.Fragment)
-			return;
-		try
-		{
-			const auto start = std::chrono::steady_clock::now();
-			const auto canPublish = [&] { return program.Watcher->IsCurrent(*candidate); };
-			if (!m_ClearPass->ReplaceTexturedPipelines(program.Vertex, candidate->Words, canPublish))
+			if (m_LitQueued.empty())
 				return;
-			program.Fragment.swap(candidate->Words);
-			const std::chrono::duration<double, std::milli> pipeline = std::chrono::steady_clock::now() - start;
-			program.Timing = ShaderReloadTiming{ candidate->CompileTime.count(), pipeline.count() };
+			auto shaders = std::make_shared<std::vector<ShaderLibrary::Candidate>>(std::move(m_LitQueued));
+			m_LitQueued.clear();
+			// The worker reads its own copy of every lit program's words.
+			auto words = std::make_shared<std::array<std::vector<std::uint32_t>, 5>>();
+			const std::array programs{ ShaderProgram::LitVertex, ShaderProgram::LitFragment, ShaderProgram::UnlitFragment,
+				ShaderProgram::NormalsFragment, ShaderProgram::WireframeFragment };
+			for (std::size_t index = 0; index < programs.size(); ++index)
+			{
+				const auto source = WordsOf(m_Shaders, *shaders, programs[index]);
+				(*words)[index].assign(source.begin(), source.end());
+			}
+			const auto factory = m_ClearPass->GetLitPipelineFactory();
+			auto result = std::async(std::launch::async, [factory, words]
+			{
+				const auto start = std::chrono::steady_clock::now();
+				auto pipelines = factory.Create({ (*words)[0], (*words)[1], (*words)[2], (*words)[3], (*words)[4] });
+				const std::chrono::duration<double, std::milli> time = std::chrono::steady_clock::now() - start;
+				return LitPipelineResult{ std::move(pipelines), time.count() };
+			});
+			m_LitBuild.emplace(LitPipelineBuild{ std::move(*shaders), factory, std::move(result) });
 		}
 		catch (const std::exception& error)
 		{
-			Log(LogLevel::Warning, "Cannot replace shader pipelines for " +
-				PathToUtf8(program.Watcher->GetSource()) + ": " + error.what());
+			Log(LogLevel::Warning, std::string("Cannot replace lit pipelines: ") + error.what());
 		}
 	}
 
@@ -476,8 +625,7 @@ namespace Raven
 		if (!cameraView)
 			return std::nullopt;
 
-		ApplyLitShaderReload();
-		ApplyTexturedShaderReload();
+		ApplyShaderReloads();
 		const Mat4& view = cameraView->View;
 		const Mat4 viewProjection = cameraView->Projection * view;
 
@@ -486,12 +634,12 @@ namespace Raven
 		// Lit meshes: plan the GPU scene's upload; culling happens on the GPU (G5).
 		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh);
 		if (metrics)
-			metrics->DrawCalls = m_GpuScene.GetDrawCount() + m_DrawQueue.OpaqueBatches.size() +
-				m_DrawQueue.TransparentBatches.size();
+			metrics->DrawCalls = m_GpuScene.GetDrawCount() * (m_View == RenderView::Wireframe ? 2 : 1) +
+				m_DrawQueue.OpaqueBatches.size() + m_DrawQueue.TransparentBatches.size();
 		preparation.End();
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
-			m_DrawQueue, m_MeshPool, m_TextureDescriptors.GetBindlessSet(), metrics))
+			m_DrawQueue, m_MeshPool, m_TextureDescriptors.GetBindlessSet(), metrics, m_View))
 		{
 			ResetSwapchain();
 			return std::nullopt;
@@ -503,20 +651,15 @@ namespace Raven
 			Log(LogLevel::Info, "First Vulkan frame presented");
 			m_HasPresentedFrame = true;
 		}
-		const auto reportShaderReload = [&](const char* label, FragmentProgram& program)
-		{
-			if (!program.Timing)
-				return;
-			const auto present = std::chrono::steady_clock::now();
-			const std::chrono::duration<double, std::milli> frameWork = present - frameStart;
+		// One line per published group: the H7 summary, with the presentation clock for timing.
+		const auto present = std::chrono::steady_clock::now();
+		const std::chrono::duration<double, std::milli> frameWork = present - frameStart;
+		for (const auto& report : m_ShaderReports)
 			Log(LogLevel::Info, std::format(
-				"{} fragment reload presented: compile {:.3f} ms, pipelines {:.3f} ms, frame {:.3f} ms, clock {} ns",
-				label, program.Timing->CompileMs, program.Timing->PipelineMs, frameWork.count(),
+				"{} shader reload presented: {}; trigger {}; compile {:.3f} ms, pipelines {:.3f} ms, frame {:.3f} ms, clock {} ns",
+				report.Group, report.Programs, report.Trigger, report.CompileMs, report.PipelineMs, frameWork.count(),
 				std::chrono::duration_cast<std::chrono::nanoseconds>(present.time_since_epoch()).count()));
-			program.Timing.reset();
-		};
-		reportShaderReload("Lit", m_Lit);
-		reportShaderReload("Textured", m_Textured);
+		m_ShaderReports.clear();
 		return RenderedCameraView{ *cameraView, extent.width, extent.height };
 	}
 
@@ -686,30 +829,27 @@ namespace Raven
 		return result;
 	}
 
-	void VulkanContext::Impl::WatchFragment(FragmentProgram& program, FragmentShaderKind kind)
+	void VulkanContext::WatchShaders()
 	{
-#ifdef _WIN32
-		if (program.Watcher)
-			return;
-		const bool lit = kind == FragmentShaderKind::Lit;
-		const auto source = std::filesystem::path(ShaderWatchConfig::SourceDirectory) /
-			(lit ? ShaderWatchConfig::LitSource : ShaderWatchConfig::TexturedSource);
-		program.Watcher = std::make_unique<FragmentShaderWatch>(source, kind);
-		Log(LogLevel::Info, std::string(lit ? "Watching lit fragment shader " : "Watching textured fragment shader ") +
-			PathToUtf8(program.Watcher->GetSource()));
-#else
-		throw std::runtime_error("Live shader compilation currently requires Windows");
-#endif
+		m_Impl->m_Shaders.Watch(CheckProgram);
 	}
 
-	void VulkanContext::WatchLitFragment()
+	bool VulkanContext::IsRenderViewAvailable(RenderView view) const noexcept
 	{
-		m_Impl->WatchFragment(m_Impl->m_Lit, FragmentShaderKind::Lit);
+		return view != RenderView::Wireframe || m_Impl->m_PhysicalDevice.FillModeNonSolid;
 	}
 
-	void VulkanContext::WatchTexturedFragment()
+	bool VulkanContext::SetRenderView(RenderView view)
 	{
-		m_Impl->WatchFragment(m_Impl->m_Textured, FragmentShaderKind::Textured);
+		if (!IsRenderViewAvailable(view))
+			return false;
+		m_Impl->m_View = view;
+		return true;
+	}
+
+	RenderView VulkanContext::GetRenderView() const noexcept
+	{
+		return m_Impl->m_View;
 	}
 
 	bool VulkanContext::ReplaceTexturedFragment(std::span<const std::uint32_t> words)
@@ -717,9 +857,8 @@ namespace Raven
 		CheckFragmentShaderInterface(words, FragmentShaderKind::Textured);
 		if (!m_Impl->PrepareSwapchain())
 			return false;
-		std::vector<std::uint32_t> candidate(words.begin(), words.end());
-		m_Impl->m_ClearPass->ReplaceTexturedPipelines(m_Impl->m_Textured.Vertex, candidate);
-		m_Impl->m_Textured.Fragment.swap(candidate);
+		m_Impl->m_ClearPass->ReplaceTexturedPipelines(m_Impl->m_Shaders.Get(ShaderProgram::TexturedVertex), words);
+		m_Impl->m_Shaders.Set(ShaderProgram::TexturedFragment, { words.begin(), words.end() });
 		return true;
 	}
 

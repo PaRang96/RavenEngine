@@ -32,6 +32,7 @@ namespace Raven
 			bool DrawIndirectCount = false;
 			bool MultiDrawIndirect = false;
 			bool DrawIndirectFirstInstance = false;
+			bool FillModeNonSolid = false;
 		};
 
 		// Extension feature structures are chained only when the extension is present.
@@ -74,6 +75,7 @@ namespace Raven
 				// One fixed-count indirect draw whose commands start at their mesh's region (G5).
 				features.features.multiDrawIndirect == VK_TRUE,
 				features.features.drawIndirectFirstInstance == VK_TRUE,
+				features.features.fillModeNonSolid == VK_TRUE,
 			};
 		}
 
@@ -236,6 +238,7 @@ namespace Raven
 				selected.Extensions.push_back(PortabilitySubset);
 			selected.DescriptorIndexing = support.DescriptorIndexing;
 			selected.DrawIndirectCount = support.DrawIndirectCount;
+			selected.FillModeNonSolid = support.FillModeNonSolid;
 
 			if (!best || rank(selected.Properties.deviceType) > rank(best->Properties.deviceType))
 				best = std::move(selected);

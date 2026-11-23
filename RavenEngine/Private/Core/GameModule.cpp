@@ -3,13 +3,17 @@
 #include "Raven/Core/Log.hpp"
 #include "Platform/GameModulePlatform.hpp"
 #include "Platform/BuildProcess.hpp"
-#include "Platform/DirectoryWatch.hpp"
+#include "Core/ImporterVersions.hpp"
+#include "Core/ReloadService.hpp"
+#include "Core/ReloadTrace.hpp"
 #include "GameBuildConfig.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -71,6 +75,46 @@ namespace Raven
 			return stamp;
 		}
 
+		bool IsSourceFile(const std::filesystem::path& path)
+		{
+			const auto extension = path.extension();
+			return extension == ".hpp" || extension == ".cpp" || extension == ".cmake" || extension == ".in" ||
+				path.filename() == "CMakeLists.txt";
+		}
+
+		// The same files SourceSignature hashes, as reload-service inputs.
+		std::vector<ReloadInput> SourceInputs()
+		{
+			const std::filesystem::path root(GameBuild::Root);
+			const auto named = [](std::initializer_list<const char*> names)
+			{
+				std::vector<std::string> list(names.begin(), names.end());
+				return [list](const std::filesystem::path& path)
+				{
+					return std::find(list.begin(), list.end(), path.filename().string()) != list.end();
+				};
+			};
+			std::vector<ReloadInput> inputs;
+			inputs.push_back({ root, nullptr, named({ "CMakeLists.txt", "CMakePresets.json" }) });
+			inputs.push_back({ root / "RavenEngine", nullptr, named({ "CMakeLists.txt" }) });
+			for (const auto* name : { "RavenEngine/Public", "RavenEngine/Private/Game", "cmake" })
+				inputs.push_back({ root / name, nullptr, IsSourceFile, true });
+			return inputs;
+		}
+
+		// Wakes the game worker once the reload service settles a change; the worker rereads.
+		class WakeConsumer final : public ReloadConsumer
+		{
+		public:
+			explicit WakeConsumer(std::function<void()> wake) : m_Wake(std::move(wake)) {}
+			std::string Import(const ReloadSnapshot&, std::stop_token) override { return "change notice"; }
+			void Accept(const ReloadRecord&) override { m_Wake(); }
+			void Discard() noexcept override {}
+
+		private:
+			std::function<void()> m_Wake;
+		};
+
 		// Content changes drive builds; timestamps alone are not a compatibility check.
 		std::uint64_t SourceSignature()
 		{
@@ -80,9 +124,7 @@ namespace Raven
 			{
 				for (const auto& entry : std::filesystem::recursive_directory_iterator(directory))
 				{
-					const auto extension = entry.path().extension();
-					if (entry.is_regular_file() && (extension == ".hpp" || extension == ".cpp" ||
-						extension == ".cmake" || extension == ".in" || entry.path().filename() == "CMakeLists.txt"))
+					if (entry.is_regular_file() && IsSourceFile(entry.path()))
 						files.push_back(entry.path());
 				}
 			}
@@ -108,6 +150,50 @@ namespace Raven
 			SystemPhase Phase = SystemPhase::Update;
 			std::int32_t Order = 0;
 			SystemFunction Run = nullptr;
+			// Set when the system throws; a new generation (rebuild or F5) starts it again (H4).
+			bool Suspended = false;
+		};
+
+		const char* PhaseName(SystemPhase phase)
+		{
+			return phase == SystemPhase::FixedUpdate ? "FixedUpdate" : "Update";
+		}
+
+		// One log line per system added, removed, or moved to another phase or order (H4).
+		void LogSystemChanges(const std::vector<LoadedSystem>& previous, const std::vector<LoadedSystem>& next)
+		{
+			const auto find = [](const std::vector<LoadedSystem>& systems, const std::string& name)
+			{
+				return std::find_if(systems.begin(), systems.end(), [&](const LoadedSystem& system)
+				{
+					return system.Name == name;
+				});
+			};
+			const auto describe = [](const LoadedSystem& system)
+			{
+				return std::string(PhaseName(system.Phase)) + " order " + std::to_string(system.Order);
+			};
+			for (const auto& system : next)
+			{
+				const auto old = find(previous, system.Name);
+				if (old == previous.end())
+					Log(LogLevel::Info, "Game system added: '" + system.Name + "' in " + describe(system));
+				else if (old->Phase != system.Phase || old->Order != system.Order)
+					Log(LogLevel::Info, "Game system moved: '" + system.Name + "' from " + describe(*old) +
+						" to " + describe(system));
+			}
+			for (const auto& system : previous)
+				if (find(next, system.Name) == next.end())
+					Log(LogLevel::Info, "Game system removed: '" + system.Name + "'");
+		}
+
+		// Points of one automatic reload, for the summary line and RAVEN_RELOAD_TRACE (H5).
+		struct BuildTrace
+		{
+			ReloadTrace::Time Observed{};
+			ReloadTrace::Time BuildStarted{};
+			ReloadTrace::Time BuildFinished{};
+			ReloadTrace::Time Offered{};
 		};
 
 		struct LoadedGame
@@ -137,6 +223,7 @@ namespace Raven
 			std::optional<FileStamp> File;
 			std::string Error;
 			std::uint64_t Revision = 0;
+			BuildTrace Trace{};
 		};
 
 		std::filesystem::path Path;
@@ -187,7 +274,7 @@ namespace Raven
 			return std::exchange(Pending, std::nullopt);
 		}
 
-		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0);
+		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0, const BuildTrace& trace = {});
 		void Watch(std::stop_token stop, FileStamp initial);
 		GameUpdateResult RunPhase(SystemPhase phase, GameInstance& game, const InputState& input,
 			const FrameTime& frame, GameBindings bindings);
@@ -228,22 +315,23 @@ namespace Raven
 	{
 		GameUpdateResult result;
 		SystemContext context{ game, input, frame, bindings, result };
-		for (const auto& system : Active->Systems)
+		for (auto& system : Active->Systems)
 		{
-			if (system.Phase != phase)
+			if (system.Phase != phase || system.Suspended)
 				continue;
 			const auto start = Clock::now();
+			std::string failure;
 			try
 			{
 				system.Run(context);
 			}
 			catch (const std::exception& error)
 			{
-				Log(LogLevel::Error, "Game system '" + system.Name + "' failed: " + error.what());
+				failure = error.what();
 			}
 			catch (...)
 			{
-				Log(LogLevel::Error, "Game system '" + system.Name + "' failed with an unknown exception");
+				failure = "unknown exception";
 			}
 			const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
 			auto stats = Stats.find(system.Name);
@@ -251,16 +339,27 @@ namespace Raven
 				stats = Stats.emplace(system.Name, GameSystemStats{ system.Name, system.Phase }).first;
 			++stats->second.Calls;
 			stats->second.Nanoseconds += static_cast<std::uint64_t>(elapsed);
+			stats->second.Phase = system.Phase;
+			if (!failure.empty())
+			{
+				// One line, then skip it: calling it again would repeat a partial update every frame.
+				// What the failing call already wrote stays in the world.
+				system.Suspended = true;
+				stats->second.Suspended = true;
+				Log(LogLevel::Error, "Game system '" + system.Name + "' failed: " + failure +
+					". Suspended until the next module reload.");
+			}
 		}
 		return result;
 	}
 
-	bool GameModule::Impl::Activate(std::optional<FileStamp> expected, std::uint64_t revision)
+	bool GameModule::Impl::Activate(std::optional<FileStamp> expected, std::uint64_t revision, const BuildTrace& trace)
 	{
 		if (expected && (*expected == AttemptedFile || SourceRevision.load() != revision))
 			return false;
 		try
 		{
+			const auto started = ReloadTrace::Now();
 			const auto before = Stamp(Path);
 			if (expected && before != *expected)
 				return false;
@@ -273,10 +372,13 @@ namespace Raven
 				directory = Path.parent_path() / (".raven-game-" + std::to_string(++NextCopy));
 			} while (!std::filesystem::create_directory(directory));
 			candidate->Copy = directory / Path.filename();
+			const auto stamped = ReloadTrace::Now();
 			std::filesystem::copy_file(Path, candidate->Copy);
 			if (!(Stamp(Path) == before) || Stamp(candidate->Copy).Digest != before.Digest)
 				throw std::runtime_error("Game DLL changed during copy; retry reload");
+			const auto copied = ReloadTrace::Now();
 			candidate->Library = Platform::LoadGameLibrary(candidate->Copy);
+			const auto loaded = ReloadTrace::Now();
 			const auto contract = reinterpret_cast<GetGameContractFunction>(
 				Platform::FindGameEntryPoint(candidate->Library, GameContractEntryPoint));
 			const char* value = contract();
@@ -291,11 +393,34 @@ namespace Raven
 				throw std::runtime_error("Game DLL registered no systems");
 			if (expected && SourceRevision.load() != revision)
 				return false;
+			if (Active)
+				LogSystemChanges(Active->Systems, candidate->Systems);
+			// A new generation starts every system again, including ones suspended before.
+			for (auto& [name, stats] : Stats)
+				stats.Suspended = false;
 			Active.swap(candidate);
 			AttemptedFile = before;
 			++Generation;
 			Error.clear();
-			Log(LogLevel::Info, "Game module activated, generation " + std::to_string(Generation));
+			const auto activated = ReloadTrace::Now();
+			std::string message = "Game module activated, generation " + std::to_string(Generation);
+			if (const auto total = ReloadTrace::Milliseconds(trace.Observed, activated); total >= 0)
+				message += ", " + std::to_string(total) + " ms after the change was seen";
+			// The H7 summary's publish time: stamping, copying, loading and registering.
+			message += ", activation " + std::to_string(ReloadTrace::Milliseconds(started, activated)) + " ms";
+			Log(LogLevel::Info, message);
+			if (ReloadTrace::Enabled())
+			{
+				Log(LogLevel::Info, "Reload trace game: " +
+					ReloadTrace::Span("wait", trace.Observed, trace.BuildStarted) + ", " +
+					ReloadTrace::Span("build", trace.BuildStarted, trace.BuildFinished) + ", " +
+					ReloadTrace::Span("offer", trace.BuildFinished, trace.Offered) + ", " +
+					ReloadTrace::Span("handoff", trace.Offered, started) + ", " +
+					ReloadTrace::Span("stamp", started, stamped) + ", " +
+					ReloadTrace::Span("copy", stamped, copied) + ", " +
+					ReloadTrace::Span("load", copied, loaded) + ", " +
+					ReloadTrace::Span("register", loaded, activated) + " ms");
+			}
 			return true;
 		}
 		catch (const std::exception& error)
@@ -311,23 +436,11 @@ namespace Raven
 		using BuildProcess = std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)>;
 		BuildProcess build{ nullptr, &Platform::DestroyBuildProcess };
 		const auto directory = std::filesystem::path(GameBuild::BuildDirectory);
-		std::vector<Platform::WatchDirectory> directories{ { Path.parent_path() } };
-		if (AutoBuild)
-		{
-			const std::filesystem::path root(GameBuild::Root);
-			directories.insert(directories.end(), {
-				{ root }, { root / "RavenEngine" }, { root / "RavenEngine/Public", true },
-				{ root / "RavenEngine/Private/Game", true }, { root / "cmake", true }
-			});
-		}
-		Platform::DirectoryWatch watch(directories);
-		auto observedFile = initial;
 		auto publishedFile = initial;
 		std::uint64_t publishedRevision = 0;
 		std::optional<std::uint64_t> observedSource;
 		std::uint64_t builtSource = 0;
-		Clock::time_point nextPoll{};
-		Clock::time_point sourceChanged{};
+		BuildTrace trace;
 		bool buildQueued = AutoBuild;
 		bool buildFailed = false;
 		std::string lastError;
@@ -343,9 +456,12 @@ namespace Raven
 		{
 			if (observedSource != signature)
 			{
+				// The first observation is startup, not an edit.
+				trace = {};
+				if (observedSource)
+					trace.Observed = ReloadTrace::Now();
 				observedSource = signature;
 				++SourceRevision;
-				sourceChanged = Clock::now();
 				buildQueued = true;
 				DiscardCandidate();
 			}
@@ -358,7 +474,9 @@ namespace Raven
 				publishedFile = file;
 				publishedRevision = revision;
 				lastError.clear();
-				Publish({ file, {}, revision });
+				trace.Offered = ReloadTrace::Now();
+				Publish({ file, {}, revision, trace });
+				trace = {};
 			}
 			else if (successfulBuild && !lastError.empty())
 			{
@@ -367,22 +485,49 @@ namespace Raven
 			}
 		};
 
+		// The shared reload service settles source and DLL changes (docs/HotReloadDesign.md, H1).
+		// This worker only starts and polls the build process.
+		std::mutex wakeMutex;
+		std::condition_variable_any wakeup;
+		bool sourcesSettled = false;
+		bool outputSettled = false;
+		const auto wake = [&](bool& flag)
+		{
+			{
+				const std::scoped_lock lock(wakeMutex);
+				flag = true;
+			}
+			wakeup.notify_all();
+		};
+		WakeConsumer sources([&] { wake(sourcesSettled); });
+		WakeConsumer output([&] { wake(outputSettled); });
+		// Declared after their consumers, so they are destroyed first.
+		std::unique_ptr<ReloadSubscription> sourceWatch;
+		ReloadOptions sourceOptions{ "game sources", ImporterVersion::GameSources };
+		if (AutoBuild)
+			sourceWatch = ReloadService::Subscribe(SourceInputs(), sources, sourceOptions);
+		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ Path } }, output,
+			{ "game DLL", ImporterVersion::GameSources });
+		bool checkSources = AutoBuild;
+		bool checkOutput = false;
+
 		while (!stop.stop_requested())
 		{
 			try
 			{
-				const auto now = Clock::now();
 				int exitCode = 0;
 				if (build && Platform::PollBuildProcess(*build, exitCode))
 				{
 					build.reset();
 					Building.store(false);
+					outputWatch->SetPaused(false);
+					trace.BuildFinished = ReloadTrace::Now();
 					if (exitCode != 0)
 					{
 						buildFailed = true;
 						report("Game build failed; keeping active code. See " + (directory / "AutoBuild.log").string());
 					}
-					// Keep external observation suspended until the build's inputs can be rechecked.
+					// Recheck the build's inputs directly; the service may not have settled an edit yet.
 					const bool superseded = buildQueued;
 					buildQueued = true;
 					const auto signature = SourceSignature();
@@ -397,38 +542,45 @@ namespace Raven
 						buildQueued = false;
 					}
 				}
-
-				if (now >= nextPoll)
+				if (checkSources)
 				{
-					nextPoll = now + 500ms;
-					if (AutoBuild)
-						observeSource(SourceSignature());
-					if (!build && buildQueued && now - sourceChanged >= 350ms)
-					{
-						build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
-							{ L"-P", (directory / "BuildGame.cmake").wstring() }, directory / "AutoBuild.log"));
-						Building.store(true);
-						builtSource = *observedSource;
-						buildQueued = false;
-						DiscardCandidate();
-						Log(LogLevel::Info, "Building game module in background");
-					}
+					checkSources = false;
+					observeSource(SourceSignature());
+				}
+				// The service already waited for the sources to settle, so the build starts at once.
+				if (!build && buildQueued && observedSource)
+				{
+					build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
+						{ L"-P", (directory / "BuildGame.cmake").wstring() }, directory / "AutoBuild.log"));
+					// The linker needs the DLL unopened, so the service must not read it meanwhile.
+					// Linking starts long after this, past any read already in progress.
+					outputWatch->SetPaused(true);
+					Building.store(true);
+					trace.BuildStarted = ReloadTrace::Now();
+					builtSource = *observedSource;
+					buildQueued = false;
+					DiscardCandidate();
+					Log(LogLevel::Info, "Building game module in background");
+				}
+				if (checkOutput)
+				{
+					checkOutput = false;
 					if (!build && !buildQueued && !buildFailed)
-					{
-						const auto file = Stamp(Path);
-						if (file == observedFile)
-							offer(file);
-						observedFile = file;
-					}
+						offer(Stamp(Path));
 				}
 			}
 			catch (const std::exception& error)
 			{
 				report(error.what());
 			}
-			const bool settling = build || buildQueued || (!buildFailed && observedFile != publishedFile);
-			if (watch.Wait(stop, settling || !watch.IsAvailable() ? 40ms : 2000ms))
-				nextPoll = {};
+			std::unique_lock lock(wakeMutex);
+			const auto settled = [&] { return sourcesSettled || outputSettled; };
+			if (build)
+				wakeup.wait_for(lock, stop, 40ms, settled);
+			else
+				wakeup.wait(lock, stop, settled);
+			checkSources |= std::exchange(sourcesSettled, false);
+			checkOutput |= std::exchange(outputSettled, false);
 		}
 	}
 
@@ -470,7 +622,7 @@ namespace Raven
 				if (*event->File == state.AttemptedFile && event->Revision == state.SourceRevision.load())
 					state.Error.clear();
 				else
-					state.Activate(event->File, event->Revision);
+					state.Activate(event->File, event->Revision, event->Trace);
 			}
 			else if (event->Error.empty())
 				state.Error.clear();

@@ -1,10 +1,33 @@
 # This script configures/builds only the standalone child, never the live host.
+cmake_minimum_required(VERSION 3.24)
 set(root [==[@PROJECT_SOURCE_DIR@]==])
 set(build_directory [==[@RAVEN_GAME_BUILD_DIRECTORY@]==])
 set(environment_file [==[@RAVEN_GAME_ENVIRONMENT_FILE@]==])
 set(stamp "${build_directory}/BuildInputs.sha256")
 set(cache "${build_directory}/CMakeCache.txt")
 set(outputs_file "${build_directory}/GameOutputs.txt")
+set(inputs_file "${build_directory}/BuildInputs.list")
+
+# Opt-in phase timing (docs/HotReloadDesign.md, H5): one line in the build log.
+set(raven_trace "$ENV{RAVEN_RELOAD_TRACE}")
+if(raven_trace STREQUAL "0")
+    set(raven_trace "")
+endif()
+string(TIMESTAMP raven_trace_mark "%s%f")
+set(raven_trace_line "")
+macro(raven_trace_phase label)
+    if(raven_trace)
+        string(TIMESTAMP raven_trace_now "%s%f")
+        math(EXPR raven_trace_elapsed "(${raven_trace_now} - ${raven_trace_mark}) / 1000")
+        string(APPEND raven_trace_line " ${label} ${raven_trace_elapsed}")
+        set(raven_trace_mark "${raven_trace_now}")
+    endif()
+endmacro()
+macro(raven_trace_report result)
+    if(raven_trace)
+        message(STATUS "Reload trace build (${result}):${raven_trace_line} ms")
+    endif()
+endmacro()
 
 # Watchers, editor builds and manual requests share one child directory.
 # Acquire before reading inputs/stamps so a waiting request sees committed results.
@@ -14,6 +37,7 @@ file(LOCK "${build_directory}/Build.lock" GUARD PROCESS TIMEOUT 120
 if(NOT locked STREQUAL "0")
     message(FATAL_ERROR "Could not acquire game-build lock: ${locked}")
 endif()
+raven_trace_phase(lock)
 
 include("${root}/cmake/GameContract.cmake")
 raven_game_contract_inputs("${root}" inputs)
@@ -27,9 +51,11 @@ list(APPEND inputs ${RAVEN_GAME_SOURCES} "${environment_file}"
 # Hash contents so equal/coarse timestamps still detect edits.
 file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" recipe_digest)
 set(data "${recipe_digest}")
+set(input_entries "recipe|${recipe_digest}")
 foreach(input IN LISTS inputs)
     file(SHA256 "${input}" digest)
     string(APPEND data "\n${input}:${digest}")
+    list(APPEND input_entries "${input}|${digest}")
 endforeach()
 string(SHA256 input_digest "${data}")
 set(cache_digest "")
@@ -59,6 +85,7 @@ function(raven_game_output_digest output)
 endfunction()
 
 raven_game_output_digest(output_digest)
+raven_trace_phase(hash)
 set(repair_outputs true)
 if(EXISTS "${stamp}")
     file(READ "${stamp}" previous)
@@ -73,6 +100,7 @@ if(EXISTS "${stamp}")
     if(NOT RAVEN_GAME_FORCE_REBUILD AND output_digest AND
         EXISTS "${cache}" AND EXISTS "${build_directory}/build.ninja" AND
         previous STREQUAL "${input_digest}|${cache_digest}|${output_digest}")
+        raven_trace_report(unchanged)
         return()
     endif()
 endif()
@@ -80,11 +108,38 @@ if(RAVEN_GAME_FORCE_REBUILD)
     set(repair_outputs true)
 endif()
 
+# Configure only when something besides game .cpp bodies changed (docs/HotReloadDesign.md, H5).
+# Configuration stamps each source's content into its compile command, which is what rebuilds
+# an edit with an unchanged timestamp. Skipping it is safe only for sources written after the
+# last completed build, which Ninja rebuilds by timestamp.
+set(configure_needed true)
+if(NOT repair_outputs AND EXISTS "${stamp}" AND EXISTS "${cache}" AND
+    EXISTS "${build_directory}/build.ninja" AND EXISTS "${inputs_file}")
+    file(STRINGS "${inputs_file}" previous_entries ENCODING UTF-8)
+    list(LENGTH previous_entries previous_count)
+    list(LENGTH input_entries current_count)
+    if(previous_count EQUAL current_count)
+        set(configure_needed false)
+        file(TIMESTAMP "${stamp}" built_at "%s" UTC)
+        foreach(entry IN LISTS input_entries)
+            if(NOT entry IN_LIST previous_entries)
+                string(REGEX REPLACE "\\|[^|]*$" "" changed "${entry}")
+                file(TIMESTAMP "${changed}" modified "%s" UTC)
+                if(NOT changed IN_LIST RAVEN_GAME_SOURCES OR NOT modified GREATER built_at)
+                    set(configure_needed true)
+                    break()
+                endif()
+            endif()
+        endforeach()
+    endif()
+endif()
+
 # Keep the last completed build record until a new build succeeds. It can
 # only be reused when inputs, cache and all output hashes still match; this
 # preserves cheap recovery after a compile failure without certifying it.
 # Restore the selected toolchain only for real work; fast checks stay cheap.
 include("${environment_file}")
+if(configure_needed)
 execute_process(
     COMMAND [==[@CMAKE_COMMAND@]==] -S "${root}/RavenEngine/Private/Game"
         -B "${build_directory}" -G Ninja
@@ -99,10 +154,13 @@ execute_process(
         [==[-DCMAKE_CXX_FLAGS_RELEASE=@CMAKE_CXX_FLAGS_RELEASE@]==]
         [==[-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=@CMAKE_CXX_FLAGS_RELWITHDEBINFO@]==]
         [==[-DCMAKE_CXX_FLAGS_MINSIZEREL=@CMAKE_CXX_FLAGS_MINSIZEREL@]==]
+        [==[-DRAVEN_USE_PCH=@RAVEN_USE_PCH@]==]
     RESULT_VARIABLE configured)
 if(NOT configured EQUAL 0)
     message(FATAL_ERROR "Game module configuration failed: ${configured}")
 endif()
+endif()
+raven_trace_phase(configure)
 set(build_arguments --build "${build_directory}" --target RavenGame)
 if(repair_outputs)
     # Reconfigure first, then clean only this child project. Its imported host
@@ -115,10 +173,16 @@ execute_process(
 if(NOT built EQUAL 0)
     message(FATAL_ERROR "Game module build failed: ${built}")
 endif()
+raven_trace_phase(compile)
 raven_game_output_digest(output_digest)
 if(NOT output_digest)
     message(FATAL_ERROR "Game build did not produce all expected runtime artifacts.")
 endif()
 file(SHA256 "${cache}" cache_digest)
+string(REPLACE ";" "\n" input_lines "${input_entries}")
+file(WRITE "${inputs_file}.tmp" "${input_lines}\n")
+file(RENAME "${inputs_file}.tmp" "${inputs_file}")
 file(WRITE "${stamp}.tmp" "${input_digest}|${cache_digest}|${output_digest}")
 file(RENAME "${stamp}.tmp" "${stamp}")
+raven_trace_phase(verify)
+raven_trace_report(built)

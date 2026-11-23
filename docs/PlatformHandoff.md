@@ -53,6 +53,17 @@ Preserve these public entry points. Replacing an existing overload with a longer
 
 See [EngineModules.md](EngineModules.md), [RuntimeUtilities.md](RuntimeUtilities.md), and [ImageLoading.md](ImageLoading.md) for contracts and the reasons for recent fixes. On every OS, a separate client using only public headers must link against the engine shared library. Verify public entry-point linking and calls; do not apply Windows export-name counts directly to other platforms.
 
+## Hot reload since M5
+
+M5 ([HotReloadDesign.md](HotReloadDesign.md)) moved every reload path onto shared code. Each platform supplies only the backends below.
+- **Directory watching:** the reload service ([ReloadService.cpp](../RavenEngine/Private/Core/ReloadService.cpp)) watches assets, scenes, the project, game sources, the game DLL and shaders through `Platform::DirectoryWatch`.
+  - Notifications are only wake-ups: the service compares sizes and write times, and reads contents every 2 s as an audit.
+  - The shared `PollDirectoryWatch.cpp` works everywhere as a fallback. FSEvents or inotify only make detection faster.
+- **Build processes:** shader watching ([ShaderLibrary.cpp](../RavenEngine/Private/Renderer/Shaders/ShaderLibrary.cpp)) and game builds run `cmake -P` through `Platform::StartBuildProcess`. Until a platform implements it, `VulkanContext::WatchShaders` reports that live shader compilation needs Windows.
+- **Game modules:** the shared `GameModule` builds and activates the DLL. Your loader backend replaces `UnsupportedGameModule.cpp`.
+- **DXC on your host:** the watcher runs DXC twice per compile, a `-M -MF` dependency pass and then the compile. Check that your DXC build supports `-MF`.
+- **Verify:** `scripts/Test-Windows3DLive.py` drives the Windows executable. Its cases are the checklist for a native port: shader stages, rejections, views, DLL, scene, PNG and FBX.
+
 ## New platform hook for common assets
 
 UUIDv4 `AssetId`, `AssetRef<T>`, the in-memory `AssetCatalog`, and ID-based texture reuse are implemented. Reuse the shared generation/parsing/formatting and asset code. Windows Debug/Release public DLL calls and GPU reuse are verified; macOS/Linux contributors must connect their native random providers. Keep native UUID/GUID types out of shared asset headers.
@@ -166,7 +177,9 @@ Since M3 the renderer needs the following, and reports an unsupported device oth
 - **Descriptor indexing for bindless textures:** update-after-bind, partially bound sampled-image arrays (4,096 elements).
 - **Indirect drawing:** `multiDrawIndirect` and `drawIndirectFirstInstance`.
 - **Queues:** one queue family with graphics *and* compute (the GPU-scene compute passes run on the graphics queue), plus a family that can present. The two may differ; the swapchain then uses concurrent sharing.
-- **Optional:** `drawIndirectCount` is queried but unused, kept for a future compaction pass ([GpuDrivenDesign.md](GpuDrivenDesign.md)).
+- **Optional:**
+  - `drawIndirectCount` is queried but unused, kept for a future compaction pass ([GpuDrivenDesign.md](GpuDrivenDesign.md)).
+  - `fillModeNonSolid` enables the wireframe debug view. Without it, `IsRenderViewAvailable(RenderView::Wireframe)` is false and F7 skips the view ([HotReloadDesign.md](HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3)).
 
 Among devices that meet every requirement, a discrete GPU is preferred, then an integrated one, then any other; enumeration order breaks ties (owner decision, 2026-11-23). On Windows the loader already sorts devices by the OS GPU preference, and listing the Intel driver first with `VK_DRIVER_FILES` did not change that order, so the ranking path for an integrated-first order has not run.
 

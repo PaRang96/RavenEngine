@@ -80,7 +80,9 @@ namespace Raven
 		// From SPIR-V 1.4 the entry point lists every global it uses, including the texture
 		// and sampler; earlier versions list only the stage inputs and outputs.
 		const bool listsGlobals = words[1] >= 0x00010400;
-		const std::size_t interfaceSize = widths.size() + 1 + (listsGlobals ? 2 : 0);
+		// A shader may read fewer inputs, and skip the texture and sampler: optimized builds
+		// remove what it does not use, and Vulkan allows vertex outputs a fragment shader ignores.
+		const std::size_t maxInterface = widths.size() + 1 + (listsGlobals ? 2 : 0);
 
 		std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> types;
 		std::unordered_map<std::uint32_t, Decorations> decorations;
@@ -116,7 +118,7 @@ namespace Raven
 				Reject("extensions and decoration groups are outside the reload interface");
 			case Op::EntryPoint:
 				// Null-terminated PSMain occupies two little-endian SPIR-V words.
-				if (!entry.empty() || size != 5 + interfaceSize || instruction[1] != FragmentModel ||
+				if (!entry.empty() || size < 6 || size > 5 + maxInterface || instruction[1] != FragmentModel ||
 					instruction[3] != 0x614d5350 || instruction[4] != 0x00006e69)
 					Reject("expected one PSMain fragment entry with the configured stage variables");
 				entry = instruction;
@@ -231,17 +233,18 @@ namespace Raven
 			else
 				Reject("stage location, type, or interpolation differs from the pipeline interface");
 		}
-		if (!descriptors[0] || !descriptors[1] || !output)
-			Reject("missing texture, sampler, or stage variable");
+		if (!output)
+			Reject("missing color output");
+		// Each declared input matched its location above; absent ones are simply unused.
 		const auto exposed = entry.subspan(5);
 		for (const auto id : std::span(inputs).first(widths.size()))
-			if (id == 0 || std::ranges::find(exposed, id) == exposed.end())
-				Reject("entry point does not expose the expected stage variables");
+			if (id != 0 && std::ranges::find(exposed, id) == exposed.end())
+				Reject("entry point does not expose its stage variables");
 		if (std::ranges::find(exposed, output) == exposed.end())
 			Reject("entry point does not expose its color output");
 		if (listsGlobals)
-			for (const auto id : descriptorIds)
-				if (std::ranges::find(exposed, id) == exposed.end())
+			for (std::size_t binding = 0; binding < descriptors.size(); ++binding)
+				if (descriptors[binding] && std::ranges::find(exposed, descriptorIds[binding]) == exposed.end())
 					Reject("entry point does not expose its texture and sampler");
 	}
 }

@@ -6,6 +6,7 @@
 #include "Raven/Renderer/MeshHandle.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
+#include "Raven/Renderer/RenderView.hpp"
 #include "Raven/Renderer/OrthographicCamera.hpp"
 #include "Raven/Renderer/TextureDesc.hpp"
 #include "Raven/Renderer/TextureHandle.hpp"
@@ -100,9 +101,15 @@ namespace Raven
 		// with the textured fragment interface. False means no drawable render pass yet.
 		RAVEN_API bool ReplaceTexturedFragment(std::span<const std::uint32_t> words);
 
-		// Opt in to the development watcher for the configured textured fragment shader.
-		RAVEN_API void WatchTexturedFragment();
-		RAVEN_API void WatchLitFragment();
+		// Development: recompile every engine shader (vertex, fragment and compute) when it or an
+		// include changes, and publish compatible results between frames (docs/HotReloadDesign.md, H2).
+		RAVEN_API void WatchShaders();
+
+		// How lit meshes are drawn; debug views need no reload (docs/HotReloadDesign.md, H3).
+		// False when the device cannot draw the view (wireframe needs fillModeNonSolid).
+		RAVEN_API bool SetRenderView(RenderView view);
+		RAVEN_API RenderView GetRenderView() const noexcept;
+		RAVEN_API bool IsRenderViewAvailable(RenderView view) const noexcept;
 
 		using CameraViewBuilder = std::function<std::optional<CameraView>(
 			std::uint32_t width, std::uint32_t height)>;

@@ -49,27 +49,38 @@ namespace Raven
 
 	VulkanClearPass::LitPipelineFactory::LitPipelineFactory(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
-		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout)
+		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout, bool lines)
 		: m_Device(device), m_ColorFormat(colorFormat), m_DepthFormat(depthFormat), m_TextureLayout(textureLayout),
-		  m_FrameLayout(frameLayout), m_SceneLayout(sceneLayout)
+		  m_FrameLayout(frameLayout), m_SceneLayout(sceneLayout), m_Lines(lines)
 	{
 	}
 
-	std::shared_ptr<const VulkanColorPipeline> VulkanClearPass::LitPipelineFactory::Create(
-		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment) const
+	std::shared_ptr<const VulkanClearPass::LitPipelines> VulkanClearPass::LitPipelineFactory::Create(
+		const LitShaders& shaders) const
 	{
-		return std::make_shared<VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
-			m_FrameLayout, m_SceneLayout, vertex, fragment);
+		const auto create = [&](std::span<const std::uint32_t> fragment, VulkanColorPipeline::Mode mode)
+		{
+			return std::make_shared<const VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
+				m_FrameLayout, m_SceneLayout, shaders.Vertex, fragment, mode);
+		};
+		auto pipelines = std::make_shared<LitPipelines>();
+		pipelines->Shaded = create(shaders.Shaded, VulkanColorPipeline::Mode::Fill);
+		pipelines->Unlit = create(shaders.Unlit, VulkanColorPipeline::Mode::Fill);
+		pipelines->Normals = create(shaders.Normals, VulkanColorPipeline::Mode::Fill);
+		if (m_Lines)
+			pipelines->Lines = create(shaders.Wireframe, VulkanColorPipeline::Mode::Lines);
+		return pipelines;
 	}
 
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
-		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_BindlessLayout, m_FrameLayout, m_Scene.GetLayout() };
+		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_BindlessLayout, m_FrameLayout, m_Scene.GetLayout(),
+			m_PhysicalDevice.FillModeNonSolid };
 	}
 
 	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
 	{
-		return { m_LitPipeline, m_TexturedPipelines, m_ColorFormat, m_DepthFormat };
+		return { m_LitPipelines, m_TexturedPipelines, m_ColorFormat, m_DepthFormat };
 	}
 
 	bool VulkanClearPass::IsCurrent(const LitPipelineFactory& factory) const noexcept
@@ -78,11 +89,11 @@ namespace Raven
 		return factory.m_ColorFormat == m_ColorFormat && factory.m_DepthFormat == m_DepthFormat;
 	}
 
-	void VulkanClearPass::UseLitPipeline(std::shared_ptr<const VulkanColorPipeline> pipeline) noexcept
+	void VulkanClearPass::UseLitPipelines(std::shared_ptr<const LitPipelines> pipelines) noexcept
 	{
-		// Submitted frames may still use the previous pipeline (R3).
-		m_Timeline.Retire(std::move(m_LitPipeline));
-		m_LitPipeline = std::move(pipeline);
+		// Submitted frames may still use the previous pipelines (R3).
+		m_Timeline.Retire(std::move(m_LitPipelines));
+		m_LitPipelines = std::move(pipelines);
 	}
 
 	VulkanClearPass::TexturedPipelines::TexturedPipelines(const VulkanDevice& device,
@@ -112,7 +123,7 @@ namespace Raven
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
 		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
 		VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene,
-		std::span<const std::uint32_t> litVertex, std::span<const std::uint32_t> litFragment,
+		const LitShaders& lit,
 		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
 		VulkanFrameTimeline& timeline, const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
@@ -131,12 +142,12 @@ namespace Raven
 				reuse->ColorFormat == m_ColorFormat && reuse->DepthFormat == m_DepthFormat)
 			{
 				// Resizing keeps the attachment formats, so the existing pipelines remain valid.
-				m_LitPipeline = reuse->Lit;
+				m_LitPipelines = reuse->Lit;
 				m_TexturedPipelines = reuse->Textured;
 			}
 			else
 			{
-				UseLitPipeline(GetLitPipelineFactory().Create(litVertex, litFragment));
+				UseLitPipelines(GetLitPipelineFactory().Create(lit));
 				ReplaceTexturedPipelines(texturedVertex, texturedFragment);
 			}
 
@@ -232,7 +243,7 @@ namespace Raven
 		for (auto& frame : m_Frames)
 			frame.Ring = {};
 		m_TexturedPipelines.reset();
-		m_LitPipeline.reset();
+		m_LitPipelines.reset();
 		m_DepthAttachments.clear();
 	}
 
@@ -305,7 +316,8 @@ namespace Raven
 	}
 
 	void VulkanClearPass::Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps)
+		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps,
+		RenderView view)
 	{
 		const auto commands = frame.Commands;
 		const auto instanceBuffer = frame.Ring.Get();
@@ -392,8 +404,14 @@ namespace Raven
 		vkCmdSetViewport(commands, 0, 1, &viewport);
 		vkCmdSetScissor(commands, 0, 1, &scissor);
 		// Every lit mesh lives in the two pools (R6) and is drawn by the culled indirect commands.
-		m_Scene.RecordDraw(commands, m_FrameIndex, *m_LitPipeline, bindlessTextures, frame.FrameSet,
+		const auto& lit = *m_LitPipelines;
+		const auto& filled = view == RenderView::Unlit ? *lit.Unlit : view == RenderView::Normals ? *lit.Normals : *lit.Shaded;
+		m_Scene.RecordDraw(commands, m_FrameIndex, filled, bindlessTextures, frame.FrameSet,
 			meshes.GetVertices(), meshes.GetIndices());
+		// The wireframe view draws the same commands again as lines over the shaded image (H3).
+		if (view == RenderView::Wireframe && lit.Lines)
+			m_Scene.RecordDraw(commands, m_FrameIndex, *lit.Lines, bindlessTextures, frame.FrameSet,
+				meshes.GetVertices(), meshes.GetIndices());
 		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Opaque,
 			queue.OpaqueBatches);
 		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Transparent,
@@ -422,7 +440,7 @@ namespace Raven
 
 	bool VulkanClearPass::Draw(const VulkanSwapchain& swapchain, VkQueue graphics,
 		VkQueue present, const VulkanDrawQueue& queue, const VulkanMeshPool& meshes,
-		VkDescriptorSet bindlessTextures, FrameMetrics* metrics)
+		VkDescriptorSet bindlessTextures, FrameMetrics* metrics, RenderView view)
 	{
 		auto& frame = m_Frames[m_FrameIndex];
 		constexpr auto timeout = std::numeric_limits<std::uint64_t>::max();
@@ -457,7 +475,7 @@ namespace Raven
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
-		Record(frame, imageIndex, queue, meshes, bindlessTextures, texturedOffset, timestamps);
+		Record(frame, imageIndex, queue, meshes, bindlessTextures, texturedOffset, timestamps, view);
 
 		// The binary semaphores serve acquire and present; the timeline value marks this frame.
 		VkSemaphoreSubmitInfoKHR acquired{};

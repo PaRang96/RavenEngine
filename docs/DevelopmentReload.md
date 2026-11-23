@@ -1,6 +1,6 @@
 # Default Windows 3D development workflow
 
-The Windows `x64-debug` and `x64-release` builds launch the ECS-driven Perspective sample in free-fly mode with no arguments. The executable uses the source checkout selected at configuration for game code, project metadata, the active level, PNGs, FBX meshes, and `Color.frag.hlsl`. Press F4 four times to open Collection. Click the gold pickups, then fly to the cyan exit. F3 restarts the current level.
+The Windows `x64-debug` and `x64-release` builds launch the ECS-driven Perspective sample in free-fly mode with no arguments. The executable uses the source checkout selected at configuration for game code, project metadata, the active level, PNGs, FBX meshes, and every engine shader. Press F4 four times to open Collection. Click the gold pickups, then fly to the cyan exit. F3 restarts the current level. F7 cycles the lit-mesh render views: shaded, unlit, normals and wireframe ([HotReloadDesign.md](HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3)).
 
 ```powershell
 cmake --preset x64-debug
@@ -9,47 +9,57 @@ cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --no-watch
 ```
 
-`--no-watch` runs the same gameplay from staged `Content` beside the executable. It disables source and DLL watching and automatic game builds. Manual F5 still requests a DLL reload. A relocated run needs the executable, `RavenCore.dll`, `RavenGame.dll`, and the staged `Content` tree together, with a writable directory for the DLL execution copy. `--perspective` opens standalone orbit. `--free-fly --watch-shader` opts in to the lit watcher on an explicit free-fly launch. `--orthographic --game --watch-shader` selects the existing textured fragment watcher.
+`--no-watch` runs the same gameplay from staged `Content` beside the executable. It disables source and DLL watching and automatic game builds. Manual F5 still requests a DLL reload. A relocated run needs the executable, `RavenCore.dll`, `RavenGame.dll`, and the staged `Content` tree together, with a writable directory for the DLL execution copy. `--perspective` opens standalone orbit. `--watch-shader` opts in to shader watching on an explicit launch, for example `--free-fly --watch-shader` or `--orthographic --game --watch-shader`. Set `RAVEN_RELOAD_TRACE=1` to log each reload's phase timing, including the game build's phases in `AutoBuild.log`.
 
 ## Publication and recovery
 
-- Windows directory notifications wake the file workers. They read settled contents and periodically audit unchanged files as a fallback for missed notifications. The game worker checks source contents and DLL stamps and manages the standalone build. The application checks for a pending result between updates. An unchanged build keeps the existing DLL, and a failed or incompatible build keeps the last usable code. Shared host/game contract edits require rebuilding and restarting the host.
-- The fragment watcher compiles a settled source snapshot with the same DXC and SPIR-V validation as the build. Since M3, the lit interface is defined by `Raven/Material.hlsli` (docs/GpuDrivenDesign.md, G4). It fixes the bindless texture array and sampler at set 0 bindings 0 and 1. It also fixes seven inputs, including three flat lighting fields and a flat `uint` texture index, plus one color output. Editing the header reloads every watched lit shader. Compatible edits can change shading calculations. A worker builds the lit pipeline against a retained render pass. The frame thread rechecks the source and render pass before publishing the finished pipeline, and each in-flight frame retains its pipeline until its fence completes. Swapchain recreation uses the accepted shader bytes. If resize overtakes a pending build, the candidate is prepared for the new pass.
+- **One reload service watches everything** (M5, [HotReloadDesign.md](HotReloadDesign.md#h1--one-reload-service-with-dependency-records-q1-q4)): shaders, PNG and FBX assets, scenes, the project, game sources and the game DLL.
+  - One thread waits for Windows directory notifications. A pass reads an input's contents only when its size or write time changed, and treats a change as settled once the contents stay unchanged for 100 ms. Every 2 s an audit reads all contents, which catches missed notifications and edits that keep their timestamp.
+  - Two workers decode or compile. A result superseded by a newer save is dropped.
+  - Each consumer keeps an in-memory dependency record: its inputs with content hashes, an importer version, and its last import time and error.
+  - The service exists only while something is watched, so `--no-watch` and player builds start no thread.
+- **The game worker** only starts and polls the standalone build. It starts as soon as the sources settle, and it pauses the DLL watch while the linker runs. The application checks for a pending result between updates. An unchanged build keeps the existing DLL, and a failed or incompatible build keeps the last usable code. Shared host/game contract edits require rebuilding and restarting the host.
+- **Every engine shader reloads:** the lit and textured vertex and fragment shaders, the three debug-view fragment shaders, and the `Scatter` and `Cull` compute passes.
+  - Each program compiles with the same DXC and SPIR-V validation as the build. DXC's dependency list makes every include an input, so editing `Raven/Material.hlsli` or `GpuScene.hlsli` recompiles exactly the programs that include it.
+  - Fragment shaders keep the M3 check. Since M3, the lit interface is defined by `Raven/Material.hlsli` (docs/GpuDrivenDesign.md, G4): the bindless texture array and sampler at set 0 bindings 0 and 1, seven inputs including three flat lighting fields and a flat `uint` texture index, and one color output. Since M5 a shader may read any subset of the inputs and skip the texture and sampler. Optimized builds remove what a shader does not read, which the debug views rely on. Everything it does declare must match.
+  - Vertex and compute shaders are checked against what the C++ code binds and writes: stage inputs and outputs, buffer strides and member offsets, push constants, and the compute workgroup size ([H2](HotReloadDesign.md#h2--shader-programs-for-every-stage-q2)). A mismatch is rejected with a message naming it, and the last good shader stays active.
+  - Results are published only once every watched program has settled, so a header edit's dependents change in the same frame.
+  - Lit pipelines (every view) build on a worker against a retained render pass. The frame thread checks the render pass before publishing them, and each in-flight frame keeps its pipelines until its timeline value completes. Textured and compute pipelines are replaced between frames. Swapchain recreation uses the accepted shader words.
 - Compatible DLL edits and shader or asset replacements retain the active ECS attempt. A valid authored level save starts a new attempt, and a rejected save leaves the active world in place. An accepted project edit can update metadata while the current level stays active.
 
 ## Validation
 
-From a Visual Studio x64 developer shell with PowerShell 7, Python 3, and the Vulkan SDK validation and screenshot layers installed, run:
+From a Visual Studio x64 developer shell with Python 3 and the Vulkan SDK validation and screenshot layers installed, run (Windows PowerShell 5.1 or PowerShell 7):
 
 ```powershell
-pwsh -File scripts/Test-Windows3D.ps1 -Preset x64-debug -DefaultLaunch
-pwsh -File scripts/Test-Windows3D.ps1 -Preset x64-release -DefaultLaunch
+powershell -File scripts/Test-Windows3D.ps1 -Preset x64-debug -DefaultLaunch
+powershell -File scripts/Test-Windows3D.ps1 -Preset x64-release -DefaultLaunch
 ```
 
-The checks build a copy of the sources and content under `out/live3d-*`, drive the stock executable, and edit only that copy. They compare rendered frames through shader success and failure, a compatible game rule edit and failed build, malformed and recovered scenes, resize, and PNG and FBX replacement. The Release run also verifies a relocated no-watch launch and compares alternating stationary Collection runs at the same window extent. Results, raw timing traces, screenshots, and logs are saved in the run directory.
+The checks build a copy of the sources and content under `out/live3d-*`, drive the stock executable, and edit only that copy. They compare rendered frames through:
+- fragment, vertex and compute shader edits, the shared headers, and five shader rejections
+- the four render views
+- a compatible game rule edit and a failed build
+- malformed and recovered scenes, resize, and PNG and FBX replacement The Release run also verifies a relocated no-watch launch and compares alternating stationary Collection runs at the same window extent. Results, raw timing traces, screenshots, and logs are saved in the run directory.
 
-The opt-in `RAVEN_FRAME_TRACE` environment variable names a CSV to write at shutdown. The recorder keeps up to 32,768 frame samples in memory. CPU-side frame work is elapsed frame-loop time before the application's pacing sleep and can include Vulkan driver waits. Frame interval is the time between consecutive frame starts. Release idle samples run without screenshot or validation layers and separately report process CPU time per frame, including watcher threads. The Release reload run repeats the scenario without either layer to distinguish render and capture costs. Shader and FBX save-to-visible measurements use the presentation clock. DLL, PNG, and scene visibility measurements include the screenshot sampling delay. The layer-free pass records publication for those three operations.
+The opt-in `RAVEN_FRAME_TRACE` environment variable names a CSV to write at shutdown. Two more files go beside it: `<name>.systems.csv` with per-system timing and suspension, and `<name>.reloads.csv` with every watched input's dependency record (inputs, importer version, imports, failures, superseded imports, trigger, output, import and publish times, and last error). Every reload also logs one summary line with its trigger and its import and publish times. The recorder keeps up to 32,768 frame samples in memory. CPU-side frame work is elapsed frame-loop time before the application's pacing sleep and can include Vulkan driver waits. Frame interval is the time between consecutive frame starts. Release idle samples run without screenshot or validation layers and separately report process CPU time per frame, including watcher threads. The Release reload run repeats the scenario without either layer to distinguish render and capture costs. Shader and FBX save-to-visible measurements use the presentation clock. DLL, PNG, and scene visibility measurements include the screenshot sampling delay. The layer-free pass records publication for those three operations.
 
 ## Measured Windows results
 
-Both presets completed Collection through the default launch after a visible shader edit and a DLL rule edit. Failed shader compilation, incompatible descriptor bindings, a failed DLL build, and a malformed scene left the prior image or attempt active. A valid shader recovered, survived resize, and accepted an equal-size edit with its timestamp preserved. The latest of two rapid saves won. Project metadata, PNG, and FBX also reloaded. The Vulkan core and synchronization checks reported no warnings or errors. Separate Release checks finished a partially completed Collection attempt after replacing PNG and FBX assets, and verified shared-header contract rejection and recovery. Release also loaded Collection from the relocated staged tree under `--no-watch`.
+Results after M5 (2026-11-23, final code), from `Test-Windows3DLive.py x64-release`, its layer-free pass and separate probes. All runs used the RTX 3070 Ti Laptop GPU. Both presets completed every case with no Vulkan validation messages. The full record, including the earlier pre-M5 numbers it replaces, is the [M5 exit record](HotReloadDesign.md#m5-exit-record-2026-11-23).
 
-Idle values below are medians across three eight-second samples per mode in Release, after settling on Collection at 600 × 400 on an RTX 3070 Ti Laptop GPU. All values are milliseconds.
-
-| Launch | Process CPU per frame | CPU-side work p95 / p99 | Frame interval p95 / p99 |
-| --- | ---: | ---: | ---: |
-| Default watching | 0.293 | 24.274 / 27.418 | 24.276 / 27.419 |
-| `--no-watch` | 0.295 | 24.305 / 26.652 | 24.306 / 26.654 |
-
-The first Release comparison measured 0.588 ms of idle process CPU per frame with watching and 0.228 ms with watching disabled. Directory notifications replaced repeated reads of unchanged files and brought the two modes into the same range. The final per-run p99 ranges overlapped at 20.28–27.87 ms for watching and 26.14–27.97 ms for `--no-watch`. The elapsed-work percentiles include presentation waits, which also appear in the no-watch baseline.
-
-| Release operation | Save to visible, with visual verification | Longest frame, layer-free |
+| Release operation | Save to visible | Longest frame, layer-free |
 | --- | ---: | ---: |
-| Lit shader, ordinary replacement | 234–289 ms | 24.28 ms |
-| Latest shader save during resize | 294 ms | 78.09 ms |
-| Compatible DLL rule edit | 4,682 ms | 49.67 ms |
-| Valid scene recovery | 580 ms | 24.77 ms |
-| PNG replacement | 667 ms | 34.45 ms |
-| FBX replacement | 133 ms | 40.35 ms |
+| Lit fragment shader | 248–432 ms (median 268 ms) | 38 ms |
+| Vertex / compute shader | 270–281 ms / 218–251 ms | 28 ms / 27 ms |
+| `Material.hlsli` edit (every dependent) | 337 ms | 27 ms |
+| Compatible DLL rule edit, save to active | 1.63–1.87 s (median 1.69 s); Debug 1.3–1.6 s | 37 ms |
+| Valid scene recovery | 761 ms (with screenshot sampling) | 44 ms |
+| PNG / FBX replacement | 640 ms / 141–173 ms | 38 ms / 27 ms |
+| Edit that keeps its size and timestamp | about 2.3 s, by the 2 s audit | 28 ms |
 
-The layer-free rejection cases peaked at 24.14 ms for shader syntax, 24.24 ms for the incompatible shader, 34.61 ms for the failed game build, and 17.05 ms for the malformed scene. The resize case includes the existing swapchain recreation wait. The game edit includes the separate compile and link. These are observations from one machine. The raw Release traces and visual checks are under `out/live3d-x64-release-76deea9/`.
+Shader and interface rejections took 211–313 ms, and a failed game build 605 ms.
+
+Idle process CPU per frame in Release was 0.46–0.68 ms with watching and 0.42–0.91 ms with `--no-watch`. Those ranges overlap each other and the pre-M5 build measured the same day (0.36–0.49 and 0.42–0.75 ms). The 0.29 ms recorded before M3 came from a different machine state.
+
+The reload service ran 17 watched consumers on 3 threads in a Collection session. Before M5, that session needed one thread per watched file, 8 in total, and the count grew with every asset. These are observations from one machine.
