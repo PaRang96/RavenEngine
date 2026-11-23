@@ -1,10 +1,58 @@
 # M5 hot reload completeness design
 
 Status:
-- Drafted 2026-11-23. **The owner decided Q1–Q7 on 2026-11-23**; see [Owner decisions](#owner-decisions).
-- **Implemented 2026-11-23** in one pass, for one owner review at the end. See [Implementation notes](#implementation-notes-2026-11-23) and the [M5 exit record](#m5-exit-record-2026-11-23).
-- Each decision below states how it serves the v1 goals in [ROADMAP.md](../ROADMAP.md).
-- Windows is designed and verified here. macOS and Linux follow through the same platform interfaces (directory watching, build processes, module loading) as their M4 backends land.
+- **Done on Windows, 2026-11-23.**
+  - Designed and decided by the owner (Q1–Q7).
+  - Implemented in one pass and reviewed by the owner (D1–D3), with the gaps found in that review fixed.
+  - Committed as `8536ac0`. Windows CI passed (x64-debug and x64-release).
+- Sections H1–H7 below are the agreed design. Where the code differs, [Implementation notes](#implementation-notes-2026-11-23) says how and why, and the [M5 exit record](#m5-exit-record-2026-11-23) has the measurements.
+- macOS and Linux follow through the same platform interfaces (directory watching, build processes, module loading) as their M4 backends land.
+
+## Reviewer guide
+
+M5 is one commit, `8536ac0` ("Complete hot reload with a shared reload service (M5)"). Earlier milestones have their own records: [ECSDesign.md](ECSDesign.md) (M1), [RendererDesign.md](RendererDesign.md) (M2), [GpuDrivenDesign.md](GpuDrivenDesign.md) (M3), and [InputProcessing.md](InputProcessing.md) and [PlatformHandoff.md](PlatformHandoff.md) for the Windows M4 items in `869ea05`.
+
+**Where the code is, by decision:**
+
+| Area | Files |
+| --- | --- |
+| H1 Reload service, records | [ReloadService.hpp/.cpp](../RavenEngine/Private/Core/ReloadService.cpp), [ImporterVersions.hpp](../RavenEngine/Private/Core/ImporterVersions.hpp), [SettledFileWatch.hpp](../RavenEngine/Private/Assets/SettledFileWatch.hpp) (typed adapter), consumers in `AssetStore.cpp`, `AssetResources.cpp`, `SceneSession.cpp`, `SceneProject.cpp`, and the records file in `Application.cpp` |
+| H2 Shader programs and checks | [ShaderLibrary.hpp/.cpp](../RavenEngine/Private/Renderer/Shaders/ShaderLibrary.cpp), [ShaderInterface.hpp/.cpp](../RavenEngine/Private/Renderer/Vulkan/ShaderInterface.cpp) (vertex and compute), `FragmentShaderInterface.cpp` (fragment), [CompileShader.cmake](../cmake/CompileShader.cmake), publication in `VulkanContext.cpp` (`ApplyShaderReloads`, `UpdateLitBuild`), `VulkanGpuScene.cpp` (`ReplacePipelines`, expected layouts) |
+| H3 Debug views | [RenderView.hpp](../RavenEngine/Public/Raven/Renderer/RenderView.hpp), `VulkanClearPass.*`, `VulkanColorPipeline.*` (line mode), `Unlit`/`Normals`/`Wireframe.frag.hlsl`, F7 in `PerspectiveSample.cpp`, `fillModeNonSolid` in `VulkanPhysicalDevice.cpp`/`VulkanDevice.cpp` |
+| H4 System policy | `GameModule.cpp` (`RunPhase`, `LogSystemChanges`), `GameSystemStats::Suspended` in `GameModule.hpp` |
+| H5 DLL loop | `GameModule.cpp` (worker on the service, phase timing), [ReloadTrace.hpp](../RavenEngine/Private/Core/ReloadTrace.hpp), [BuildGame.cmake.in](../cmake/BuildGame.cmake.in) (configure skip, phase timing), `Game/CMakeLists.txt` and `RavenBuildSettings.cmake` (PCH) |
+| Scripts | `Test-Windows3DLive.py` (new cases), `Benchmark-Windows3D.py` (`--view`), `Test-Windows3D.ps1` (PowerShell 5.1) |
+
+**Worth the closest look:**
+1. **Concurrency in `ReloadService.cpp`.**
+   - The watch thread and two workers share per-subscription state under one mutex each, plus a service mutex. A thread never holds a state mutex while taking the service mutex.
+   - A subscription's destructor waits for its running import, so a consumer is never called after destruction.
+   - Consumers are called under their state mutex (`Accept`, `Changed`) and must not call back into their own subscription there.
+2. **The supersede and rebase rules** in `Service::Run`.
+   - An import is accepted only if its inputs still match the snapshot it read.
+   - When an import replaces its inputs (a shader's includes), the new contents are taken right after that check, and dropped if the import was superseded.
+3. **`GameModule`'s DLL watch pause.** The linker fails if anything holds the DLL open, so the watch pauses while a build runs.
+4. **The configure skip** in `BuildGame.cmake.in`. It must still configure for any change other than a `.cpp` written after the last completed build, because configuring is what rebuilds an edit that keeps its timestamp.
+5. **Shader interface expectations** come from C++ `offsetof` (`VulkanGpuScene::GetBufferLayouts`, `LitVertexInterface` in `VulkanContext.cpp`). Changing a GPU struct in C++ updates them automatically; changing the fixed vertex or fragment interface does not.
+
+**How to reproduce** (Visual Studio x64 developer shell, Python 3, Vulkan SDK layers):
+
+```powershell
+cmake --build out/build/x64-debug
+ctest --test-dir out/build/x64-debug --output-on-failure
+python scripts/Test-Windows3DLive.py x64-release
+python scripts/Benchmark-Windows3D.py scale review --meshes 50000 --view wireframe --repeats 1
+```
+
+Set `RAVEN_RELOAD_TRACE=1` for per-phase timing, and `RAVEN_FRAME_TRACE=<file.csv>` for frame timing plus the `.systems.csv` and `.reloads.csv` files beside it.
+
+**Evidence that is not tracked:** some results came from temporary probes in the ignored `out/m5-probe/` folder, and they are not in the repository:
+- the DLL save-to-active timings
+- the system-policy check
+- the record and thread-count measurement
+- the equal-timestamp game edit
+
+Each result below says where it came from. The tracked live script reproduces every reload path except the system policy.
 
 ## Goals and fixed constraints
 
@@ -15,7 +63,7 @@ Status:
   - Set a policy for added or removed systems.
   - Cut DLL save-to-present from about 3.5 s.
   - Extend last-good recovery and diagnostics to every new path.
-- **Owner request (2026-11-23):** prepare general-use shaders such as unlit and wireframe. They are covered by H2.
+- **Owner request (2026-11-23):** prepare general-use shaders such as unlit and wireframe. They are covered by H3.
 - ECS and hot reload stay joint goals:
   - Reload must keep host-owned world state.
   - Renderer and cache state must survive game-DLL replacement.
@@ -56,14 +104,16 @@ A host-owned `ReloadService` replaces the per-asset and per-shader watcher threa
   - the Content source root
   - the engine shader directory
   - the game sources and CMake inputs the DLL builder already watches
-- **Settling:** the existing rules move into the service unchanged.
-  - A file counts as changed only after its bytes settle.
-  - A periodic content audit catches missed notifications.
-  - Equal-size, equal-timestamp replacements are still detected.
+- **Settling:**
+  - A file counts as changed only after its bytes stay unchanged for 100 ms.
+  - A pass reads an input's contents only when its size or write time changed.
+  - A 2 s content audit catches missed notifications, and edits that keep both size and timestamp (D3; see [Implementation notes](#implementation-notes-2026-11-23)).
 - **Dependency records:** each consumer (an asset ID, a shader program, a scene, the project, the game module) has one in-memory record. It holds:
   - every input path, with the content hash of its last successful import
-  - what was produced (a GPU resource or SPIR-V words), and when
-  - the last diagnostic, and the import and publish durations
+  - the importer version (Q4 A+)
+  - the inputs that triggered the last import
+  - what was produced (as the consumer describes it), and when
+  - import, publish, failure and superseded counts and times, and the last diagnostic
 - **Invalidation:** a settled input change marks every consumer whose record lists that input.
   - Dependents reimport on a small worker pool (two threads), or through an external compiler process.
   - A result superseded during its import is dropped, as today: the latest save wins.
@@ -77,13 +127,13 @@ A host-owned `ReloadService` replaces the per-asset and per-shader watcher threa
 - **Dependencies by type:**
   - PNG: its source file.
   - FBX: its source file. External texture references join when M6 imports multi-object FBX files with materials.
-  - HLSL: the source plus every include, taken from DXC's `-MF` dependency file on each successful compile (DXC 1.9.0.5399 supports `-M`, `-MD` and `-MF`). This replaces the G4 header special case.
+  - HLSL: the source plus every include, from DXC's `-MF` dependency list. DXC writes that list instead of compiling, so it runs as a separate pass before each watched compile. It is read even when the compile fails, so a failed program still follows its includes. This replaces the G4 header special case.
   - Scene: its file. Its asset references keep their own records.
   - The project is its own consumer. `SceneSession::UpdateProject` rebuilds the active scene only when a project edit changes that scene's source. That keeps the existing rule that a metadata edit leaves the running level alone, so the scene's watch does not list the project. *(Corrected in review, 2026-11-23: the draft listed the project as a scene input.)*
 - **Builds without watching:** the service exists only in watching launches. `--no-watch` and player builds create no thread and load staged outputs as today.
 - **Build outputs (Q4, decided A+):** records live in memory only, but their key is cache-ready.
   - **Today's loading is unchanged:** PNG and FBX keep decoding from source at load, and shaders keep the build's SPIR-V at startup.
-  - **The cache-ready key:** the content hash of every input, plus an importer version. Each importer (PNG, FBX, HLSL) bumps its version whenever its output format changes.
+  - **The cache-ready key:** the content hash of every input, plus an importer version. Each importer (PNG, FBX, scene, project, HLSL) has its own version in `ImporterVersions.hpp`, bumped whenever its output can change for the same input. A shader cache must also key on the toolchain.
   - **Adding the cache later:** a persistent derived-data cache (like Unreal's DDC) then only saves and loads these records. Nothing is rewritten.
   - **It is built at the first of these triggers:**
     - GPU texture compression or mip generation
@@ -95,21 +145,26 @@ A host-owned `ReloadService` replaces the per-asset and per-shader watcher threa
 
 ### H2 — Shader programs for every stage (Q2)
 
-- **Program table:** every engine shader is one program entry: source, stage profile, entry point and interface kind. This covers `Color.vert`/`.frag`, `Texture.vert`/`.frag`, `Cull.comp` and `Scatter.comp`.
-  - Compiling uses `CompileShader.cmake` with the same DXC and spirv-val flags as the build, plus `-MF`.
+- **Program table:** every engine shader is one program entry: source, stage profile, entry point and interface kind. This covers nine programs:
+  - `Color.vert`/`.frag`
+  - the three H3 view fragments
+  - `Texture.vert`/`.frag`
+  - `Cull.comp` and `Scatter.comp`
+
+  Compiling uses `CompileShader.cmake` with the same DXC and spirv-val flags as the build, after the `-MF` dependency pass.
   - `FragmentShaderWatch` is deleted. Its compile, scratch and stop logic moves into the program table.
 - **Pipelines:** a graphics pipeline is rebuilt from its (vertex, fragment) pair when either stage changes. A compute pipeline is rebuilt from its compute words.
   - Both publish at the existing frame-thread point.
   - The frame that recorded with the old pipeline keeps it until its timeline value completes.
   - Swapchain recreation reuses the accepted words, as the fragment path does now.
-- **Interface checks (Q2):** the existing SPIR-V reader in `FragmentShaderInterface.cpp` grows to every stage, with no new dependency. A candidate that fails a check is rejected, and last-good stays active.
+- **Interface checks (Q2):** a new SPIR-V reader, `ShaderInterface.cpp`, checks vertex and compute shaders with no new dependency. `FragmentShaderInterface.cpp` keeps checking fragment shaders. A candidate that fails a check is rejected, and last-good stays active.
   - **Vertex:** descriptor bindings match the fixed set layouts (frame set 1, scene set 2). Inputs match the fixed vertex layout. Outputs match the fragment inputs at the same locations and widths.
-  - **Fragment:** the existing check.
+  - **Fragment:** the M3 check, now accepting a shader that reads only some of the inputs and skips the texture and sampler. Everything it declares must still match.
   - **Compute:**
     - Bindings match the GPU-scene set layout.
     - The `LocalSize` execution mode equals the 64 threads the dispatch assumes.
     - The storage-buffer member offsets and array strides equal the C++ record layouts, so a `GpuScene.hlsli` struct edit that the engine is not built for is rejected.
-- **Header edits:** an edit to a shared header recompiles every dependent program in parallel, one process each. The renderer publishes the dependents of one header change together, so a vertex/fragment pair never mixes versions.
+- **Header edits:** an edit to a shared header recompiles every dependent program on the two reload workers, one compiler process each. The renderer publishes the dependents of one header change together, so a vertex/fragment pair never mixes versions.
 - **Launch flags:** watching launches watch every engine shader. `--watch-shader` is kept for explicit non-default launches and now enables the whole table.
 - **Not recoverable:** a shader that hangs the GPU (for example, an endless loop in `Cull.comp`) can cause device loss. Device loss stays fatal in v1.
 
@@ -151,14 +206,13 @@ Unlit shading already exists: `MaterialComponent::Lit = false` makes `RavenApply
     - lock, contract and input hashing, child configure (or its skip), compile and link, and artifact verification (`AutoBuild.log`)
     - the hand-off to the frame thread
     - stamp, copy, load and system registration; the next frame presents the result
-- **Fixes are chosen from that breakdown.** The candidates, roughly in order of expected value:
-  - Wake detection on directory notifications, and shorten the two-sample settle window.
-  - Give the game target the standard-library PCH it lacks today.
-  - Use incremental linking for Debug game builds.
-  - Skip rehashing inputs whose stamps have not changed since the last verified build.
-  - Remove process launches the `cmake -P` wrapper does not need.
-- **Target (Q6, decided A):** ≤ 1.5 s from save to present for a one-file game `.cpp` edit, in Debug and Release on the minimum-spec laptop.
-  - The target is provisional. The owner revisits it once step 1's breakdown is measured.
+- **Fixes are chosen from that breakdown.** Of the candidates, in order of expected value:
+  - *Landed:* start the build as soon as the reload service settles the change. This replaced the 500 ms poll and 350 ms debounce.
+  - *Landed:* give the game target the standard-library PCH it lacked.
+  - *Already in place:* incremental linking for Debug game builds; CMake's Debug defaults already use `/INCREMENTAL`.
+  - *Landed, not in the original list:* skip the child configure for `.cpp`-only edits.
+  - *Not needed:* skip rehashing unchanged inputs, and drop process launches. Hashing measured 31–53 ms, and the breakdown showed no other launch worth removing.
+- **Target:** Q6 set ≤ 1.5 s for Debug and Release, provisionally. After the breakdown, the review set Debug ≤ 1.5 s and Release ≤ 2.0 s (D1), because the optimized build alone takes 1.4–1.7 s.
 
 ### H6 — Field-level component migration (Q7)
 
@@ -179,12 +233,23 @@ Unlit shading already exists: `MaterialComponent::Lit = false` makes `RavenApply
   - the result (published, rejected, or superseded)
   - its import and publish times
 
-  A rejection adds the compiler, decoder or interface-check diagnostic, capped at 8 KiB as now.
+  A rejection adds the compiler, decoder or interface-check diagnostic, capped at 8 KiB as now. As built:
+  - Assets and the legacy asset service: `Replaced PNG <path>; trigger <file>; import … ms, publish … ms`. FBX is the same.
+  - Scenes: `Reloaded scene <path>; …`
+  - The project: `Published project metadata; …`
+  - Shaders, one line per published group: `<group> shader reload presented: <programs>; trigger <includes>; compile …, pipelines …`
+  - The DLL: `Game module activated, generation N, … ms after the change was seen, activation … ms`
+  - Rejections: `Cannot reload <consumer>: <diagnostic>`
+  - Superseded imports: `Reload superseded: <consumer>`
 - **On-screen display** of diagnostics waits for text rendering, which v1 does not have.
 
 ## Proposed budgets (minimum-spec laptop, Release unless noted)
 
-| Measure | Today | M5 target |
+These are the targets as proposed before implementation. Final targets and results are in the [M5 exit record](#m5-exit-record-2026-11-23). Two targets changed:
+- **DLL:** D1 set Release ≤ 2.0 s.
+- **Idle CPU:** the 0.29 ms baseline came from an earlier machine state. The exit check therefore compares against the pre-M5 build measured the same day.
+
+| Measure | Before M5 | Proposed target |
 | --- | ---: | ---: |
 | Fragment shader, save to visible | 234–289 ms | ≤ 300 ms |
 | Vertex or compute shader, save to visible | not reloadable | ≤ 300 ms |
@@ -206,14 +271,14 @@ The PNG figure includes the screenshot sampling delay ([DevelopmentReload.md](De
   - each debug view, cycled with F7
 
   It runs with Python and needs no PowerShell 7. `scripts/Test-Windows3D.ps1 -DefaultLaunch` only forwards to it.
-- **Live Release session:**
-  - every reload path
-  - a system added, removed and made to throw
-  - wireframe on the 50k stress scene, inside the M3 FPS budget
-- **Measurements:** the H5 phase breakdown before and after the fixes, the budget table above, and the reload thread count. All are recorded here.
+- **Live Release session:** every reload path, and wireframe on the 50k stress scene inside the M3 FPS budget.
+- **A system added, removed and made to throw:** checked with a temporary probe. No tracked script covers the system policy.
+- **Measurements:** the H5 phase breakdown before and after the fixes, the budget table above, and the reload thread count. All are recorded in the exit record.
 - **Tracked tests:** none planned. No tracked test covers the watchers, and none is needed for them. If Q7 brings migration forward, it gets one `RegistryTests` case, because it changes a Registry contract.
 
 ## Migration steps
+
+All seven steps were done on 2026-11-23, in one commit.
 
 1. **H5 instrumentation:** record the DLL phase breakdown. The owner sets the target (Q6).
 2. **H1:** the reload service and dependency records. PNG, FBX, scene, project and game-source detection move onto it, and the per-asset `SettledFileWatch` threads are deleted.
@@ -222,8 +287,6 @@ The PNG figure includes the screenshot sampling delay ([DevelopmentReload.md](De
 5. **H4:** the system table diff and failing-system suspension.
 6. **H5 fixes:** chosen from step 1's breakdown, then measured again.
 7. **H7 audit and exit check:** every path, the budgets and Debug validation.
-
-Steps 2 and 3 can be one step if that keeps the review smaller than writing a temporary shader path on the old watcher. Neither order writes throwaway code.
 
 ## Implementation notes (2026-11-23)
 
@@ -267,23 +330,42 @@ Measured on the minimum-spec laptop (RTX 3070 Ti Laptop GPU), Windows only. macO
 | Reload threads | 1 per watched file + game worker (8 in a Collection session) | fixed | 3 service threads + the game builder for 17 consumers, measured in a Collection session | Met |
 | Wireframe at 50k lit meshes, 20% animated | — | inside the M3 FPS budget (≥ 60) | 59.9 FPS (display cap), GPU p95 6.31 ms against 5.98 ms shaded; CPU preparation unchanged (3.2 ms p95) | Met |
 
+**Where each result came from:**
+- **Tracked live script:** the shader, header, asset, frame-time and idle rows (`Test-Windows3DLive.py x64-release`; layer-free pass unless noted).
+- **Temporary probes:** the DLL rows and the thread count, both from `out/m5-probe/`.
+- **Tracked benchmark script:** the wireframe row.
+
+**DLL phase breakdown (H5), Debug, one-file `InteractionGame.cpp` edit,** from `RAVEN_RELOAD_TRACE` (all values in ms):
+
+| Phase | Before the fixes | After the fixes |
+| --- | ---: | ---: |
+| Wait from the change being seen to the build starting | 536–541 | 2 |
+| Build: lock + hash / configure / compile and link / verify | 2 + 31 / 245 / 1,750 / 59 (total 2,030–2,170) | 2 + 46 / skipped / 920–1,000 / 54–89 (total 1,120–1,460) |
+| Hand-off, stamp, copy, load, register | 0–24, 10–11, 22–63, 0, 0 | 0–24, 8–11, 17–46, 0, 0 |
+| Change seen to active | about 2,700 | 1,250–1,530 |
+| Save to active (external probe) | 2,680–2,820 | 1,430–1,640 |
+
+The settle before "change seen" adds about 120 ms.
+
+In Release, the same edit builds in 1,420–1,700 ms and is active 1.63–1.87 s after the save. Before the fixes it took about 3.5 s, and 3.4–4.7 s with the first version of the reload service (see the implementation notes).
+
 **Benchmark environment:** today the NVIDIA GPU also drove an external 3840 × 2160 monitor at 60 Hz. FIFO presentation was therefore capped at 60 FPS and GPU time rose for both views, so these runs are not comparable with M3's 126.5 FPS. Shaded and wireframe ran back to back under the same conditions.
 
 ### What was verified
 
-- **Tracked live check** (`scripts/Test-Windows3DLive.py x64-release`, final code): every case passed with validation and screenshot layers, then again without layers, plus idle samples and a relocated `--no-watch` launch. The cases:
+- **Tracked live check** (`scripts/Test-Windows3DLive.py x64-release`, before the review fixes): every case passed with validation and screenshot layers, then again without layers, plus idle samples and a relocated `--no-watch` launch. The cases:
   - fragment, vertex and compute reloads with visual checks, and each restored
   - `Material.hlsli` and `GpuScene.hlsli` edits
   - rejections of a syntax error, an incompatible fragment input, a vertex/fragment mismatch, wrong `numthreads`, and a struct stride the C++ code does not write (`Color.vert` and `Cull.comp` both rejected)
   - all four render views via F7
   - the game rule edit, a failed game build and recovery
   - scene recovery and a malformed scene, PNG and FBX replacement
-- **Debug live check** (`x64-debug`, final code): every case passed with validation and screenshot layers. Frames over 100 ms came only from startup, the goal-completion sound and level switches, none during a game build.
+- **Debug live check** (`x64-debug`, final code including the review fixes): every case passed with validation and screenshot layers. Frames over 100 ms came only from startup, the goal-completion sound and level switches, none during a game build. The review fixes changed only reload records, log lines and docs; the Release check was not repeated after them.
 - **Validation:** core and synchronization validation reported no messages in the layered passes or the Debug shader probe.
-- **System policy (Debug probe):** an added system that throws logged one failure and stayed suspended. The next generation logged the move of another system and started the suspended one again. Its removal was logged and no further failures followed.
-- **Equal-timestamp game edit:** configured, rebuilt and reloaded (Debug probe, 1.6–1.75 s).
-- **Builds and tests:** Debug and Release build; `ctest` passes in both. `scripts/Test-Windows3D.ps1` now also passes under Windows PowerShell 5.1.
-- **Records and summaries (Debug probe):**
+- **System policy (temporary Debug probe):** an added system that throws logged one failure and stayed suspended. The next generation logged the move of another system and started the suspended one again. Its removal was logged and no further failures followed.
+- **Equal-timestamp game edit:** configured, rebuilt and reloaded (temporary Debug probe, 1.6–1.75 s).
+- **Builds and tests:** Debug and Release build; `ctest` passes in both. `scripts/Test-Windows3D.ps1` now also passes under Windows PowerShell 5.1. Windows CI passed on `8536ac0`.
+- **Records and summaries (temporary Debug probe, confirmed by the Debug live check):**
   - A PNG replacement logged its own name as trigger, with its import and publish times.
   - A `Material.hlsli` edit logged `trigger Material.hlsli` for the three fragment shaders whose output changed.
   - The records file listed all 17 consumers with their importer versions and outputs.
@@ -304,7 +386,9 @@ Measured on the minimum-spec laptop (RTX 3070 Ti Laptop GPU), Windows only. macO
 
 ## Owner decisions
 
-| # | Question | Options | Recommendation |
+Q1–Q7 were decided before implementation; D1–D3 in the owner's review of the implementation.
+
+| # | Question | Options | Decision |
 | --- | --- | --- | --- |
 | Q1 | Watching architecture | **A:** one reload service with dependency records for shaders, assets, scenes, the project and game sources. Fixed thread count, one copy of the settle logic, and the records the editor and a disk cache need. **B:** extend each watcher separately, adding vertex/compute watchers and keeping per-asset threads. Smaller first diff, but four copies of the logic and threads that grow with the asset count. **C** (considered in review): a shared service for assets and shaders only, with scene, project and game-source watching kept separate. | **Decided: A** (owner, 2026-11-23) |
 | Q2 | Shader interface checks for vertex and compute | **A:** reflect and check every stage against the fixed layouts, including `numthreads` and struct strides. Catches mismatches that validation layers miss in Release. **B:** SPIR-V validation only, relying on pipeline creation. No parser work, but a stride mismatch silently corrupts the GPU scene. | **Decided: A** (owner, 2026-11-23) |
