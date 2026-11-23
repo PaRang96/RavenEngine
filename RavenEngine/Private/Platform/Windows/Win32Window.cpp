@@ -101,6 +101,9 @@ namespace Raven
 	void Win32Window::PollEvents()
 	{
 		Win32EventPump::PollEvents();
+		// Keyboard input reaches only the foreground window. Thread-local focus is not
+		// enough: a window created behind another application is focused but receives no keys.
+		m_Input.SetFocused(GetForegroundWindow() == m_Handle);
 		m_Input.Publish();
 	}
 
@@ -304,7 +307,11 @@ namespace Raven
 				const bool down =
 					message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
 
-				self->m_Input.SetKeyDown(key, down);
+				// Bit 30 (KF_REPEAT) marks auto-repeat of a key that was already down.
+				if (down && (HIWORD(lParam) & KF_REPEAT) != 0)
+					self->m_Input.RepeatKey(key);
+				else
+					self->m_Input.SetKeyDown(key, down);
 
 				if (message == WM_KEYDOWN || message == WM_KEYUP)
 					return 0;

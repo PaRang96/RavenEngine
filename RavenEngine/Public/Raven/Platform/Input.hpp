@@ -7,6 +7,9 @@
 
 namespace Raven
 {
+	// Physical key positions, numbered by USB HID keyboard usage and independent of
+	// the keyboard layout. Values are stable across platforms and releases, so saved
+	// key bindings may store them.
 	enum class Key : std::uint16_t
 	{
 		Unknown = 0x00,
@@ -82,7 +85,9 @@ namespace Raven
 	enum class KeyTransition : std::uint8_t
 	{
 		Pressed,
-		Released
+		Released,
+		// Native auto-repeat while the key stays down. Pressed fires once per hold.
+		Repeated
 	};
 
 	struct KeyEvent
@@ -111,8 +116,13 @@ namespace Raven
 		std::array<ButtonState, KeyCount> Keys{};
 		std::array<ButtonState, MouseButtonCount> MouseButtons{};
 
+		// Key transitions in arrival order, including repeats.
 		std::vector<KeyEvent> KeyEvents{};
 		std::vector<MouseButtonPress> MouseButtonPresses{};
+
+		// Whether the window has keyboard focus. Persistent, not cleared per snapshot.
+		// Backends that do not report focus leave it true.
+		bool Focused = true;
 
 		std::int32_t CursorX = 0;
 		std::int32_t CursorY = 0;
@@ -184,6 +194,22 @@ namespace Raven
 			});
 		}
 
+		// A native auto-repeat. A key that is not down yet (for example, held while
+		// focus returned) starts a new press instead.
+		void RepeatKey(Key key)
+		{
+			const auto index = static_cast<std::size_t>(key);
+			if (key == Key::Unknown || index >= Keys.size())
+				return;
+
+			if (!Keys[index].Down)
+			{
+				SetKeyDown(key, true);
+				return;
+			}
+			KeyEvents.push_back({ key, KeyTransition::Repeated, GetModifiers() });
+		}
+
 		void ReleaseAllKeys()
 		{
 			for (std::size_t i = 0; i < Keys.size(); ++i)
@@ -207,6 +233,18 @@ namespace Raven
 		bool WasKeyReleased(Key key) const
 		{
 			return GetKeyState(key).Released;
+		}
+
+		// Auto-repeat for held keys, for menus and text navigation. Gameplay uses
+		// WasKeyPressed and IsKeyDown.
+		bool WasKeyRepeated(Key key) const
+		{
+			for (const KeyEvent& event : KeyEvents)
+			{
+				if (event.Code == key && event.Transition == KeyTransition::Repeated)
+					return true;
+			}
+			return false;
 		}
 
 		bool WasKeyPressed(Key key, Modifier exactModifiers) const

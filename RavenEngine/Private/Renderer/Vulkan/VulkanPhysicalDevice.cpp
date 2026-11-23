@@ -1,6 +1,7 @@
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -118,6 +119,18 @@ namespace Raven
 
 		// Devices that can present but miss a Vulkan 1.2 requirement, for the final error.
 		std::vector<std::string> rejected;
+		// Prefer a discrete GPU, then an integrated one; enumeration order breaks ties.
+		// Order alone is no preference: on hybrid laptops it depends on the driver.
+		const auto rank = [](VkPhysicalDeviceType type)
+		{
+			switch (type)
+			{
+			case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 2;
+			case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 1;
+			default: return 0;
+			}
+		};
+		std::optional<VulkanPhysicalDevice> best;
 
 		for (VkPhysicalDevice device : devices)
 		{
@@ -224,8 +237,12 @@ namespace Raven
 			selected.DescriptorIndexing = support.DescriptorIndexing;
 			selected.DrawIndirectCount = support.DrawIndirectCount;
 
-			return selected;
+			if (!best || rank(selected.Properties.deviceType) > rank(best->Properties.deviceType))
+				best = std::move(selected);
 		}
+
+		if (best)
+			return std::move(*best);
 
 		if (!rejected.empty())
 		{
@@ -235,7 +252,7 @@ namespace Raven
 			throw std::runtime_error(message);
 		}
 		throw std::runtime_error(
-			"No Vulkan GPU supports graphics, presentation, "
+			"No Vulkan GPU supports graphics with compute, presentation, "
 			"and swapchain rendering");
 	}
 }

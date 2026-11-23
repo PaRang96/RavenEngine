@@ -78,6 +78,14 @@ See [PlatformHandoff.md](docs/PlatformHandoff.md) for the interfaces and verific
 - [ ] MoltenVK portability enumeration and subset handling (coordinate with M2).
 - [ ] Native Debug/Release runs of the current 3D samples and reload paths.
 
+Windows-side M4 items:
+
+- [x] Input focus state, key repeat and stable key IDs (2026-11-23). See [InputProcessing.md](docs/InputProcessing.md#focus-key-repeat-and-stable-key-ids-2026-11-23).
+- [x] Require compute on the graphics queue family, document GPU requirements and verify the Intel Iris Xe (2026-11-23). See [PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements).
+- [ ] Manual checks: foreground focus and auto-repeat with a physical keyboard, a non-US layout, and mixed-DPI movement (needs one monitor at a different scale).
+- [x] Prefer a discrete GPU, then an integrated one, in device selection (owner decision, 2026-11-23). See [PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements).
+- [ ] Owner decision: a development option that forces separate graphics and present families on the NVIDIA GPU, to exercise that path.
+
 ## Later milestones
 
 M3 (GPU-driven rendering), M5 (reload completeness), M6 (gameplay services) and M7 (quality and release) are tracked in [ROADMAP.md](ROADMAP.md#milestones). Move their tasks here when work starts.

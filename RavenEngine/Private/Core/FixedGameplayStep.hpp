@@ -25,6 +25,7 @@ namespace Raven
 				pending.Released |= state.Released;
 			}
 			m_Input.KeyEvents.insert(m_Input.KeyEvents.end(), input.KeyEvents.begin(), input.KeyEvents.end());
+			m_Input.Focused = input.Focused;
 			m_Accumulated = std::min(m_Accumulated + deltaSeconds, StepSeconds * MaxSteps);
 		}
 

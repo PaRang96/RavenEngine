@@ -8,6 +8,7 @@ namespace Raven
 {
 	struct VulkanQueueFamilies
 	{
+		// A family supporting both graphics and compute.
 		std::optional<std::uint32_t> Graphics;
 		std::optional<std::uint32_t> Present;
 

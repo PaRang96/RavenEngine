@@ -113,8 +113,8 @@ Run the same engine on Linux and macOS. Platform contributors own native impleme
 - [ ] macOS/Linux: an audio backend for the existing one-shot service.
 - [ ] Shader toolchain (DXC/spirv-val) on all hosts, plus the MoltenVK portability subset.
 - [ ] CI builds and CPU tests on Windows, Linux and macOS.
-- [ ] Finish Win32 key translation, repeat/text input and focus state, and verify mixed-DPI movement. Bring the other backends to the same input contract.
-- [ ] Verify queue-family configurations beyond the single-family device, and document GPU requirements.
+- [ ] Finish Win32 key translation, repeat/text input and focus state, and verify mixed-DPI movement. Bring the other backends to the same input contract. *Windows focus state, key repeat and stable key IDs landed on 2026-11-23 ([InputProcessing.md](docs/InputProcessing.md#focus-key-repeat-and-stable-key-ids-2026-11-23)). Text input waits for a caller. Mixed DPI and real-keyboard checks remain.*
+- [ ] Verify queue-family configurations beyond the single-family device, and document GPU requirements. *Requirements documented, discrete GPUs preferred and the Intel Iris Xe verified on 2026-11-23 ([PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements)). No tested device has separate graphics and present families.*
 
 **Exit:** every sample and every reload path runs in Debug/Release on all three platforms, with native verification recorded by the responsible contributor.
 
@@ -134,6 +134,7 @@ Run the same engine on Linux and macOS. Platform contributors own native impleme
 - [ ] Generalize component and asset serialization beyond the current sample codecs, with round-trip tests.
 - [ ] Import multi-object FBX files with stable sub-asset identities.
 - [ ] Move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, with an owner-requested 2D run. *Moved from M3 (owner decision Q5, 2026-11-22).*
+- [ ] Key bindings and key listening on top of the shared input contract: an action map storing stable `Key`/`MouseButton` values, capture of the next pressed input, and layout-aware key names. *Owner requirement, 2026-11-23; see [InputProcessing.md](docs/InputProcessing.md#planned-key-bindings-and-key-listening).*
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
 - [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.
 

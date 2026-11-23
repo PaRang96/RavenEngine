@@ -13,11 +13,13 @@ namespace Raven
 		void Publish();
 
 		void SetKeyDown(Key key, bool down);
+		void RepeatKey(Key key);
 		void PressMouseButton(MouseButtonPress press);
 		void SetMouseButtonDown(MouseButton button, bool down);
 		void SetCursorPosition(std::int32_t x, std::int32_t y);
 		void AddScroll(float x, float y);
 		void HandleFocusLost();
+		void SetFocused(bool focused);
 		void ReleaseAllMouseButtons();
 		bool HasMouseButtonDown() const;
 

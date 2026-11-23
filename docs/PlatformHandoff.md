@@ -158,10 +158,29 @@ cmake --build out/build/linux-release
 ./out/build/linux-release/RavenEngine/RavenEngine
 ```
 
+## GPU requirements
+
+Since M3 the renderer needs the following, and reports an unsupported device otherwise:
+- **Version:** Vulkan 1.2 with `timelineSemaphore`.
+- **Extensions:** `VK_KHR_dynamic_rendering` and `VK_KHR_synchronization2`, with their features enabled.
+- **Descriptor indexing for bindless textures:** update-after-bind, partially bound sampled-image arrays (4,096 elements).
+- **Indirect drawing:** `multiDrawIndirect` and `drawIndirectFirstInstance`.
+- **Queues:** one queue family with graphics *and* compute (the GPU-scene compute passes run on the graphics queue), plus a family that can present. The two may differ; the swapchain then uses concurrent sharing.
+- **Optional:** `drawIndirectCount` is queried but unused, kept for a future compaction pass ([GpuDrivenDesign.md](GpuDrivenDesign.md)).
+
+Among devices that meet every requirement, a discrete GPU is preferred, then an integrated one, then any other; enumeration order breaks ties (owner decision, 2026-11-23). On Windows the loader already sorts devices by the OS GPU preference, and listing the Intel driver first with `VK_DRIVER_FILES` did not change that order, so the ranking path for an integrated-first order has not run.
+
+| Device (Windows, 2026-11-23) | Vulkan | Queue families | Result |
+| --- | --- | --- | --- |
+| NVIDIA GeForce RTX 3070 Ti Laptop GPU (minimum spec) | 1.4 | 0: graphics+compute+transfer, present; 1: transfer; 2: compute+transfer, present; 3–5: video/optical flow | Selected by default; Debug smoke clean |
+| Intel Iris Xe Graphics (same laptop, forced with `VK_LOADER_DRIVERS_SELECT=*igvk*`) | 1.3 | 0: graphics+compute+transfer, present; 1: compute, present | Debug smoke passed with no validation messages |
+
+Both devices use one combined graphics/present family. The separate-family path (concurrent swapchain images, a separate present queue) has not run on any device.
+
 ## Shared verification criteria
 
 - [ ] **Input:** Accumulate native events in each window's pending buffer. Publish its snapshot in that window's `PollEvents()`, then reset pending transient values. Preserve events processed earlier by another window until publication. Preserve both Pressed/Released and KeyEvents for press/release in one poll; repeated key-down must not create a new Pressed transition.
-- [ ] **Keys and modifiers:** Translate native key identifiers to shared `Key` values, separating physical keys from text input. Check Shift/Control/Alt/Super, left/right modifiers, arrows, Home, R, and Space. Text input and a separate repeat API are also unfinished on Windows; coordinate new shared contracts separately.
+- [ ] **Keys and modifiers:** Translate native key identifiers to shared `Key` values, separating physical keys from text input. Check Shift/Control/Alt/Super, left/right modifiers, arrows, Home, R, and Space. Report native auto-repeat through `RepeatKey()` (macOS `isARepeat`, X11 detectable auto-repeat) and keep `InputState::Focused` current; see [InputProcessing.md](InputProcessing.md#focus-key-repeat-and-stable-key-ids-2026-11-23). Text input is not defined yet on any platform.
 - [ ] **Mouse:** Verify button transitions, cursor position/delta, horizontal/vertical wheel accumulation, and held-state release on focus loss. Avoid a large delta from the first cursor position or focus recovery. Compare units, origin, and wheel directions with Windows and record them.
 - [ ] **Framebuffer:** Report drawable pixels and `0 x 0` when minimized/unavailable. Increment Revision on size changes; getters must not consume or reset it. Check resize, scaling changes, minimize/restore, and closing while minimized.
 - [ ] **Timing and renderer:** Verify zero DeltaSeconds on the first drawable frame and first frame after restore. Check the two cubes, ground slab, PNG quad UV/tint, perspective proportions, depth occlusion, and orbit/zoom/reset/pause against Windows. Preserve the shared Blender axes and matrix contract in [CoordinateSystem.md](CoordinateSystem.md).

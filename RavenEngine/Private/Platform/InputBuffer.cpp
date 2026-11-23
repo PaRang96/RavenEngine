@@ -18,6 +18,11 @@ namespace Raven
 		m_Pending.SetKeyDown(key, down);
 	}
 
+	void InputBuffer::RepeatKey(Key key)
+	{
+		m_Pending.RepeatKey(key);
+	}
+
 	void InputBuffer::PressMouseButton(MouseButtonPress press)
 	{
 		m_Pending.PressMouseButton(press);
@@ -41,6 +46,11 @@ namespace Raven
 	void InputBuffer::HandleFocusLost()
 	{
 		m_Pending.HandleFocusLost();
+	}
+
+	void InputBuffer::SetFocused(bool focused)
+	{
+		m_Pending.Focused = focused;
 	}
 
 	void InputBuffer::ReleaseAllMouseButtons()

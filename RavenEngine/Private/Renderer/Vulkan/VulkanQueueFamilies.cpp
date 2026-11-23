@@ -25,8 +25,10 @@ namespace Raven
 			if (families[i].queueCount == 0)
 				continue;
 
-			const bool graphics =
-				(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+			// The graphics queue also runs the GPU-scene compute passes (M3). Vulkan
+			// guarantees a family with both when any family supports graphics.
+			constexpr VkQueueFlags required = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+			const bool graphics = (families[i].queueFlags & required) == required;
 
 			VkBool32 present = VK_FALSE;
 			const VkResult status = vkGetPhysicalDeviceSurfaceSupportKHR(
