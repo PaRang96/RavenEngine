@@ -17,6 +17,8 @@ Check an item only when its behavior is shown in a sample, a tracked test, or a 
 
 An architecture assessment of the codebase against this goal (2026-11-23) proposes fixes and an M6 order for the owner's review: [ArchitectureAssessment.md](docs/ArchitectureAssessment.md). Its proposals are not decided until the owner adopts them into this roadmap.
 
+A forward-looking companion (2026-11-23) proposes a shape for the remaining milestones and lists the technical decisions they will force, with each option's trade-offs: [FutureDecisions.md](docs/FutureDecisions.md). It is also a proposal until the owner adopts it here.
+
 ## Agreed technical direction (2026-11-20)
 
 | Topic | Decision |
