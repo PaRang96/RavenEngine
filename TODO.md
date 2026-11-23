@@ -104,3 +104,5 @@ Windows-side M4 items:
 ## Later milestones
 
 M6 (gameplay services) and M7 (quality and release) are tracked in [ROADMAP.md](ROADMAP.md#milestones). Move their tasks here when work starts.
+
+- [ ] Owner review of [ArchitectureAssessment.md](docs/ArchitectureAssessment.md) (2026-11-23): decide which fixes, open questions (section 8) and roadmap adjustments (section 7) to adopt before M6 starts.

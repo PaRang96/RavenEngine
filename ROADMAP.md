@@ -15,6 +15,8 @@ Fixed conventions: right-handed world, +X right, +Y forward, +Z up (Blender). Bl
 
 Check an item only when its behavior is shown in a sample, a tracked test, or a recorded measurement. Detailed evidence for completed work is in the subsystem docs under `docs/` and in [MilestoneHistory.md](docs/MilestoneHistory.md).
 
+An architecture assessment of the codebase against this goal (2026-11-23) proposes fixes and an M6 order for the owner's review: [ArchitectureAssessment.md](docs/ArchitectureAssessment.md). Its proposals are not decided until the owner adopts them into this roadmap.
+
 ## Agreed technical direction (2026-11-20)
 
 | Topic | Decision |
