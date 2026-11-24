@@ -68,7 +68,7 @@ Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (presentation a
 
 The milestones are ordered by dependency. M1 and M2 can proceed in parallel after M0. M4 platform work runs in parallel by platform contributors; its parity pass is evaluated after M6A, which breaks the module contract and replaces the scene format. [TODO.md](TODO.md) holds the actionable task list for the current milestones.
 
-Order from here: the pre-M6 hardening list (with the last M0 item), the M6 design note, then M6A → M6B, with M6C alongside.
+Order from here: M6A in the order of the [M6 design note](docs/DataModelDesign.md#step-order-and-what-each-step-uses) (decided 2026-11-24), then M6B, with M6C alongside. The pre-M6 debugger check stays a manual owner item.
 
 ### M0 — Safety net and baseline · *done 2026-11-24*
 
@@ -169,7 +169,7 @@ Small fixes that no later step replaces, so that game-written data cannot end th
 
 ### M6 — Gameplay services and samples
 
-M6 runs in three stages with their own exits and reviews (planning decision 5). One design note comes first and records FD-06 to FD-17, starting with the game project layout (FD-17). The step numbers are the assessment's ([section 6](docs/ArchitectureAssessment.md)).
+M6 runs in three stages with their own exits and reviews (planning decision 5). One design note comes first and records FD-06 to FD-17, starting with the game project layout (FD-17): [DataModelDesign.md](docs/DataModelDesign.md), decided 2026-11-24. The step numbers are the assessment's ([section 6](docs/ArchitectureAssessment.md)).
 
 **Exit for M6 as a whole:** a small 3D game, the stress sample and the 2D sample run on all platforms using only engine APIs.
 

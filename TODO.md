@@ -121,10 +121,26 @@ Planning decision 1 (2026-11-24); see [ROADMAP.md](ROADMAP.md#pre-m6-hardening).
 - [x] ARCH-ECS-01 step 0: a structural-change case (spawn, despawn, reparent) in `EcsBenchmark`, recorded on the minimum-spec laptop, so M6-3 rests on a measurement. *Done 2026-11-24: at 100k entities, spawning 1k takes 17.6 ms, reparenting 1k 17.7 ms and despawning 1k 378 ms ([record](docs/ECSDesign.md#structural-change-record-2026-11-24-pre-m6)).*
 - [x] Add the missing `#include <utility>` for `std::exchange` in `VulkanMesh.cpp:131`. MSVC accepts it through another header; g++ 13 and clang 18 reject it (Linux syntax check, 2026-11-24).
 
-## M6 — design note (next)
+## M6 — design note (done 2026-11-24)
 
 - [x] Owner review of [ArchitectureAssessment.md](docs/ArchitectureAssessment.md) and [FutureDecisions.md](docs/FutureDecisions.md) (2026-11-24): the "decide now" items are recorded as [planning decisions 1–6](ROADMAP.md#planning-decisions-2026-11-24). The other assessment questions go to the M6 note or to the stage that needs them.
-- [ ] Write the M6 design note: FD-06 to FD-17 (the assessment's D-A to D-I), starting with the game project layout and contract (FD-17), and the stage exit checklists.
-- [ ] Owner review of the note before any M6A code.
+- [x] Write the M6 design note: FD-06 to FD-17 (the assessment's D-A to D-I), starting with the game project layout and contract (FD-17), and the stage exit checklists: [DataModelDesign.md](docs/DataModelDesign.md) (2026-11-24).
+- [x] Decisions FD-06 to FD-17, Q16, the M6A exit checklist and the 2D-run timing (2026-11-24). The owner delegated the choice to business alignment and future expandability; every recommendation was adopted, with two refinements (FD-08 metadata outside the layout hash, FD-10 deterministic output). See [Owner decisions](docs/DataModelDesign.md#owner-decisions).
+
+## M6A — Host and data model (next)
+
+Order and decisions per step: [DataModelDesign.md](docs/DataModelDesign.md#step-order-and-what-each-step-uses). Exit: [M6A exit checklist](docs/DataModelDesign.md#m6a-exit-checklist).
+
+- [ ] Add the CPU change-tick case to `RegistryTests` before M6-3.
+- [ ] M6-1: engine frame pipeline, the tiered error rule (FD-06) and the frame boundary; transactional `Sync` reset; process-wide GPU-scene generation.
+- [ ] M6-2: field table from `RAVEN_COMPONENT` with type tags in `LayoutHash` (plus its `static_assert`), registered through the module table (FD-08).
+- [ ] M6-3: persistent ID table and `EntityRef` first (FD-09), then `ParentComponent`, host-owned components and the incremental child index (FD-07).
+- [ ] M6-4: `EntityRef` in components, `AssetRef<MeshAsset>` replacing `MeshHandle` (FD-09).
+- [ ] M6-5: scene/asset seam; `Pick` as a free function; `HierarchyTests` to CPU.
+- [ ] M6-6: generic chunked format with per-section field lists, unknown sections kept, aliases, `dump`/`apply`/`upgrade`/`prune`, `raven-project 2`; regenerate six scenes, convert five, delete the old readers; codec round-trip test (FD-10, FD-11, FD-16).
+- [ ] M6-7: `Games/Samples` and `Games/Courtyard` with one generic host (FD-17), the `SystemContext` break and session play state (FD-12), Commands (FD-14), and the 2D Courtyard run.
+- [ ] Narrow the contract to the engine's public surface, with one CMake-generated input list (FD-17).
+- [ ] M6-8: field migration with the migration case in `RegistryTests`.
+- [ ] M6A exit check against the checklist.
 
 M7 (quality and release) is tracked in [ROADMAP.md](ROADMAP.md#m7--quality-and-release). Move its tasks here when work starts.
