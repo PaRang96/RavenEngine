@@ -149,18 +149,18 @@ namespace Raven
 				if (size < 3)
 					Reject("invalid decoration instruction");
 				auto& value = decorations[instruction[1]];
-				const auto kind = static_cast<Decoration>(instruction[2]);
-				if (kind == Decoration::RelaxedPrecision)
+				const auto decoration = static_cast<Decoration>(instruction[2]);
+				if (decoration == Decoration::RelaxedPrecision)
 					break;
-				if (kind == Decoration::Flat && size == 3)
+				if (decoration == Decoration::Flat && size == 3)
 					value.Flat = true;
 				else if (size != 4)
 					value.Unsupported = true;
-				else if (kind == Decoration::Location)
+				else if (decoration == Decoration::Location)
 					value.Location = instruction[3];
-				else if (kind == Decoration::Binding)
+				else if (decoration == Decoration::Binding)
 					value.Binding = instruction[3];
-				else if (kind == Decoration::DescriptorSet)
+				else if (decoration == Decoration::DescriptorSet)
 					value.Set = instruction[3];
 				else
 					value.Unsupported = true;

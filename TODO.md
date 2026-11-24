@@ -32,10 +32,11 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] `Tests/Benchmarks/EcsBenchmark.cpp` measures Registry iteration, the rotator query, world transforms and random reads at 10k/50k/100k entities. The Release baseline on the minimum-spec laptop and the resulting M1 budgets are in [ECSDesign.md](docs/ECSDesign.md#performance-budgets) (2026-11-21).
 
 ### Build hygiene
-- [ ] Set `/W4` (MSVC) and `-Wall -Wextra` (Clang/GCC) on every target through one shared CMake function, with warnings as errors only in CI. Remove the game DLL's local `/WX` so it follows the same rule. Keep third-party code excluded (planning decision 3). A /W4 probe on 2026-11-24 found five warnings to resolve:
+- [x] Set `/W4` (MSVC) and `-Wall -Wextra` (Clang/GCC) on every target through one shared CMake function, with warnings as errors only in CI. Remove the game DLL's local `/WX` so it follows the same rule. Keep third-party code excluded (planning decision 3). A /W4 probe on 2026-11-24 found five warnings to resolve:
   - Fix the two shadowed names: `FragmentShaderInterface.cpp:152` (C4457) and `VulkanInstance.cpp:121` (C4456).
   - Define `_CRT_SECURE_NO_WARNINGS` for the two `getenv` calls (C4996, `ReloadTrace.hpp:20`, `RavenEngine.cpp:149`).
   - Disable C4324, the intended `alignas` padding in `VulkanDrawQueue.hpp:19`.
+  - Done 2026-11-24 (`raven_apply_warnings`, `RAVEN_WARNINGS_AS_ERRORS` set in CI): Debug and Release build with no warnings locally on VS 18; CI's VS 2022 toolset runs with warnings as errors on the next push.
 
 ## M1 — Data-oriented ECS (done 2026-11-21)
 
@@ -109,15 +110,16 @@ Windows-side M4 items:
 
 Planning decision 1 (2026-11-24); see [ROADMAP.md](ROADMAP.md#pre-m6-hardening). Each item is a small engine snippet that needs the owner's go-ahead. Evidence and the assessment's step lists are in [ArchitectureAssessment.md](docs/ArchitectureAssessment.md).
 
-- [ ] ARCH-RT-01: a non-throwing normal matrix, so a zero-scale lit object is hidden instead of exiting (`Transform.hpp:164-180`, called from `RenderWorld.cpp:209-210`). Owner picks a public or private helper. Update `MeshMaterials.md`. The transactional `Sync` reset waits for M6-1.
-- [ ] ARCH-RT-02: one non-throwing asset lookup for data errors; a bad texture ID draws white, and a bad sprite is skipped.
-- [ ] ARCH-RT-03: a missing ancestor makes the entity a detached root in both world-transform paths, and the changed flag propagates. Port `MoveSprites` to `SceneAccess`.
-- [ ] ARCH-RT-04: wrap the game's system registration while the DLL is loaded, and add `catch(...)` next to the `std::exception` catch in `GameModule.cpp`.
-- [ ] ARCH-PERF-01: present-mode (FIFO, Mailbox, Immediate) and `MaxFrameRate` launch options, FIFO with no extra cap by default, the 30 FPS minimized throttle kept (planning decision 2). Delete the source patch from `scripts/Windows3DHighRefresh.py`, re-run the M3 exit numbers on the stock host, and measure the sleep-cap precision.
-- [ ] The M0 warning level (above, under Build hygiene).
-- [ ] ARCH-BLD-02: debug info in the Debug game DLL, and a debugger check across a reload.
-- [ ] ARCH-ECS-01 step 0: a structural-change case (spawn, despawn, reparent) in `EcsBenchmark`, recorded on the minimum-spec laptop, so M6-3 rests on a measurement.
-- [ ] Add the missing `#include <utility>` for `std::exchange` in `VulkanMesh.cpp:131`. MSVC accepts it through another header; g++ 13 and clang 18 reject it (Linux syntax check, 2026-11-24).
+- [x] ARCH-RT-01: a non-throwing normal matrix, so a zero-scale lit object is hidden instead of exiting (`Transform.hpp:164-180`, called from `RenderWorld.cpp:209-210`). Public `TryNormalMatrix` (one copy of the math; `NormalMatrix` throws on top of it for authored data). `MeshMaterials.md` updated. The transactional `Sync` reset waits for M6-1. *Done 2026-11-24; an ignored probe hid zero and 1e-14 scales and showed the object again at scale 2.*
+- [x] ARCH-RT-02: one non-throwing asset lookup for data errors; a bad texture ID draws white, and a bad sprite is skipped. *Done 2026-11-24: `Scene::TryUseAsset` over `AssetCatalog::Find` and `AssetStore::FindReferenceError`; the probe checked nil, unregistered, missing-file and wrong-kind IDs, one log line each.*
+- [x] ARCH-RT-03: a missing ancestor makes the entity a detached root in both world-transform paths, and the changed flag propagates. *Done 2026-11-24; the probe removed a root's Transform and destroyed a parent outside the Scene, and cache and live compose agreed. Porting `MoveSprites` to `SceneAccess` moved to M6-7: it needs a 2D run and does not lower this risk.*
+- [x] ARCH-RT-04: wrap the game's system registration while the DLL is loaded, and add `catch(...)` next to the `std::exception` catch in `GameModule.cpp`. *Done 2026-11-24; a probe module that throws a `std::runtime_error` and an `int` left the host running with both messages reported.*
+- [x] ARCH-PERF-01: present-mode (FIFO, Mailbox, Immediate) and `MaxFrameRate` launch options, FIFO with no extra cap by default, the 30 FPS minimized throttle kept (planning decision 2). Delete the source patch from `scripts/Windows3DHighRefresh.py`, re-run the M3 exit numbers on the stock host, and measure the sleep-cap precision. *Done 2026-11-24, with `--gpu` and `--borderless` so the patch could go entirely. Stock host: 165 FPS at 50k animated and 163.7 at 100k static under FIFO; a 120 cap gives 109 FPS ([record](docs/GpuDrivenDesign.md#m3-exit-record-2026-11-23)).*
+- [x] The M0 warning level (above, under Build hygiene).
+- [x] ARCH-BLD-02: debug info in the Debug game DLL. *Done 2026-11-24: `/Zi` through the target property on CMake 3.25+, explicit `/Zi /FS` on 3.24; the PDB now names the game sources and functions ([EngineModules.md](docs/EngineModules.md)).*
+- [ ] A debugger breakpoint in game code across one auto-build reload (manual, Visual Studio attached).
+- [x] ARCH-ECS-01 step 0: a structural-change case (spawn, despawn, reparent) in `EcsBenchmark`, recorded on the minimum-spec laptop, so M6-3 rests on a measurement. *Done 2026-11-24: at 100k entities, spawning 1k takes 17.6 ms, reparenting 1k 17.7 ms and despawning 1k 378 ms ([record](docs/ECSDesign.md#structural-change-record-2026-11-24-pre-m6)).*
+- [x] Add the missing `#include <utility>` for `std::exchange` in `VulkanMesh.cpp:131`. MSVC accepts it through another header; g++ 13 and clang 18 reject it (Linux syntax check, 2026-11-24).
 
 ## M6 — design note (next)
 

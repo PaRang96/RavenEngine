@@ -2,6 +2,7 @@
 
 #include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
+#include "Raven/Core/Log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -195,6 +196,7 @@ namespace Raven
 		{
 			m_Registry.Destroy(value);
 			m_Parents.erase(value);
+			m_ReportedDetached.erase(value);
 		}
 		std::erase_if(m_Entities, contains);
 		m_WorldOrderDirty = true;
@@ -205,21 +207,42 @@ namespace Raven
 		if (contains(m_Bindings.Mesh)) m_Bindings.Mesh = {};
 	}
 
+	void Scene::ReportDetachedRoot(ECS::Entity entity) const
+	{
+		if (!m_ReportedDetached.insert(entity).second)
+			return;
+		std::string name = "(unnamed)";
+		for (const auto& [authored, owned] : m_Names)
+			if (owned == entity)
+				name = authored;
+		Log(LogLevel::Warning, "Scene entity " + name + " has an ancestor without a TransformComponent; "
+			"it is placed as a detached root");
+	}
+
 	Mat4 Scene::ComposeTransformUnchecked(ECS::Entity entity, bool rotationOnly) const
 	{
+		auto parent = GetParent(entity);
+		ECS::TransformComponent transform;
+		if (!m_Registry.Read(entity, transform))
+			throw std::invalid_argument("Scene entity has no TransformComponent");
 		Mat4 result = Mat4::Identity();
-		auto ancestor = entity;
-		do
+		for (;;)
 		{
-			const auto parent = GetParent(ancestor);
-			ECS::TransformComponent transform;
-			if (!m_Registry.Read(ancestor, transform))
-				throw std::invalid_argument("Scene transform ancestor has no TransformComponent");
 			const auto local = rotationOnly ? RotationZ(transform.Rotation.Z) * RotationY(transform.Rotation.Y) *
 				RotationX(transform.Rotation.X) : transform.GetMatrix();
 			result = local * result;
-			ancestor = parent;
-		} while (!ancestor.IsNull());
+			if (parent.IsNull())
+				break;
+			// A destroyed or transform-less ancestor ends the chain: the part below it is
+			// composed as a detached root, as UpdateWorldTransforms does.
+			const auto found = m_Parents.find(parent);
+			if (found == m_Parents.end() || !m_Registry.IsAlive(parent) || !m_Registry.Read(parent, transform))
+			{
+				ReportDetachedRoot(entity);
+				break;
+			}
+			parent = found->second;
+		}
 		return result;
 	}
 
@@ -287,7 +310,9 @@ namespace Raven
 			throw std::logic_error("World transforms cannot be updated while a view iterates");
 		if (m_WorldOrderDirty)
 			RebuildWorldOrder();
-		const bool full = std::exchange(m_WorldFull, false);
+		// Stays set until the pass completes, so a pass interrupted by an allocation failure is
+		// followed by a full recompute.
+		const bool full = std::exchange(m_WorldFull, true);
 		const auto since = m_WorldTick;
 		m_WorldTick = m_Registry.AdvanceChangeTick();
 		const auto stamp = m_Registry.GetChangeTick();
@@ -310,11 +335,13 @@ namespace Raven
 			const auto world = findWorld(entity);
 			if (local == NoIndex)
 			{
-				// No local transform (or a stale slot): drop a world the entity no longer drives.
+				// No local transform (or a stale slot): drop a world the entity no longer drives,
+				// and mark it changed so every descendant re-roots in this pass.
 				if (world != NoIndex)
 				{
 					m_Registry.Remove<ECS::WorldTransformComponent>(entity);
 					worlds = m_Registry.GetPool(worldInfo);
+					m_WorldChanged[index] = 1;
 				}
 				continue;
 			}
@@ -326,10 +353,13 @@ namespace Raven
 			Mat4 parentWorld = Mat4::Identity();
 			if (parent != NoWorldParent)
 			{
+				// A parent without a world (destroyed or transform-less) leaves this entity as
+				// a detached root.
 				const auto parentDense = findWorld(m_WorldOrder[parent]);
 				if (parentDense == NoIndex)
-					throw std::invalid_argument("Scene transform ancestor has no TransformComponent");
-				parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+					ReportDetachedRoot(entity);
+				else
+					parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
 			}
 			auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
 			// A parent's intermediate scale can overflow or collapse before the child's scale
@@ -351,6 +381,7 @@ namespace Raven
 			}
 			m_WorldChanged[index] = 1;
 		}
+		m_WorldFull = false;
 	}
 
 	CameraView Scene::GetCameraView(ECS::Entity entity, float aspect) const
@@ -381,6 +412,25 @@ namespace Raven
 			return found->second;
 		}
 		return m_Assets.emplace(id, m_Store.Acquire(catalog, id, kind)).first->second;
+	}
+
+	const AssetLease* Scene::TryUseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind)
+	{
+		const auto found = m_Assets.find(id);
+		const char* error = nullptr;
+		if (found != m_Assets.end())
+		{
+			if (found->second.GetKind() == kind)
+				return &found->second;
+			error = "incorrect asset type";
+		}
+		else
+			error = m_Store.FindReferenceError(catalog, id, kind);
+		if (!error)
+			return &UseAsset(catalog, id, kind);
+		if (m_ReportedAssets.insert(id).second)
+			Log(LogLevel::Warning, std::string("Scene asset reference skipped (") + error + "): " + id.ToString());
+		return nullptr;
 	}
 
 	const AssetLease& Scene::GetAsset(AssetId id) const { return m_Assets.at(id); }

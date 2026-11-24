@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Raven/Renderer/RendererConfig.hpp"
+
 #include "Renderer/Vulkan/VulkanQueueFamilies.hpp"
 
 #include <vector>
@@ -20,5 +22,5 @@ namespace Raven
 	};
 
 	VulkanPhysicalDevice SelectVulkanPhysicalDevice(
-		VkInstance instance, VkSurfaceKHR surface);
+		VkInstance instance, VkSurfaceKHR surface, GpuPreference preference);
 }

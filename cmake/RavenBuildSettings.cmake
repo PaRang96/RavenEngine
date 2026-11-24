@@ -46,6 +46,21 @@ unset(raven_language)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
 
+# One warning level for every project target (planning decision 3, 2026-11-24). Warnings
+# fail the build only when RAVEN_WARNINGS_AS_ERRORS is on, which CI sets. Third-party
+# targets (RavenFbx) and SYSTEM include directories are excluded.
+option(RAVEN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors (set by CI)" OFF)
+function(raven_apply_warnings target)
+    if(MSVC)
+        # C4324: alignas padding is intended on GPU-facing records.
+        target_compile_options(${target} PRIVATE /W4 /wd4324 $<$<BOOL:${RAVEN_WARNINGS_AS_ERRORS}>:/WX>)
+        # getenv is read once on the main thread; the _s variants add nothing here.
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra $<$<BOOL:${RAVEN_WARNINGS_AS_ERRORS}>:-Werror>)
+    endif()
+endfunction()
+
 # Private, stable standard-library headers; project/header edits do not rebuild
 # the PCH. Each target owns its artifact because their export definitions differ.
 # Extra arguments add target-specific standard headers.

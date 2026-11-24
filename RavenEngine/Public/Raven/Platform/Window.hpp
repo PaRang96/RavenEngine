@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -12,11 +13,22 @@
 
 namespace Raven
 {
+	struct WindowPosition
+	{
+		std::int32_t X = 0;
+		std::int32_t Y = 0;
+	};
+
 	struct WindowDesc
 	{
 		std::string Title = "RavenEngine";
 		std::uint32_t Width = 1280;
 		std::uint32_t Height = 720;
+		// Top-left corner in virtual-screen pixels; unset lets the system place the window.
+		std::optional<WindowPosition> Position;
+		// No frame, and kept above other windows, so Width x Height is the whole window (for
+		// measurements that must cover one display). Windows only so far; other backends ignore it.
+		bool Borderless = false;
 	};
 
 	struct FramebufferState

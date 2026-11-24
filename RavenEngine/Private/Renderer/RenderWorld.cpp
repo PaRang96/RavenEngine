@@ -190,6 +190,8 @@ namespace Raven
 			const auto& mesh = m_Meshes.At<ECS::StaticMeshComponent>(m_Meshes.Find(entity));
 			const auto& world = m_Worlds.At<ECS::WorldTransformComponent>(m_Worlds.Find(entity)).World;
 			auto& object = state.Objects[slot];
+			// Resolve everything that can fail before the group counts change.
+			const auto material = added || materialChanged ? FindMaterial(entity) : object.Material;
 			const auto group = FindGroup(mesh.Mesh);
 			if (added)
 				++state.GroupCounts[group];
@@ -199,15 +201,19 @@ namespace Raven
 				++state.GroupCounts[group];
 			}
 			object.Group = group;
-			if (added || materialChanged)
-				object.Material = FindMaterial(entity);
+			object.Material = material;
 			object.Tint = mesh.Tint;
 			object.Flags = IsDrawable(world) ? 0u : GpuObjectHidden;
 			for (std::size_t row = 0; row < 3; ++row)
 				object.WorldRows[row] = { world(row, 0), world(row, 1), world(row, 2), world(row, 3) };
-			// Only drawable lit objects pay for the normal matrix.
-			const Mat4 normal = object.Flags == 0 && state.Materials[object.Material].Lit
-				? NormalMatrix(world) : Mat4::Identity();
+			// Only drawable lit objects pay for the normal matrix. A collapsed or out-of-range
+			// transform rasterizes nothing, so hiding it is exact.
+			Mat4 normal = Mat4::Identity();
+			if (object.Flags == 0 && state.Materials[material].Lit && !TryNormalMatrix(world, normal))
+			{
+				object.Flags = GpuObjectHidden;
+				normal = Mat4::Identity();
+			}
 			for (std::size_t column = 0; column < 3; ++column)
 				object.NormalToWorld[column] = { normal(0, column), normal(1, column), normal(2, column), 0.0f };
 			state.MarkDirty(slot);

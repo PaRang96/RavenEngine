@@ -308,7 +308,9 @@ namespace Raven
 		{
 			if (!material.BaseColorTexture.IsValid())
 				return nullptr;
-			return &level.UseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture).GetTexture();
+			// A bad game-written reference samples the white texture (bindless element 0).
+			const auto* lease = level.TryUseAsset(m_Assets.GetCatalog(), material.BaseColorTexture.Id, AssetKind::Texture);
+			return lease ? &lease->GetTexture() : nullptr;
 		});
 	}
 }

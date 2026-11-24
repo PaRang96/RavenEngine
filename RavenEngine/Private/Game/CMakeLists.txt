@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
+# Must precede project(): it decides whether the debug format comes from the target property.
+if(POLICY CMP0141)
+    cmake_policy(SET CMP0141 NEW)
+endif()
 project(RavenGameModule LANGUAGES CXX)
 if(NOT WIN32 OR NOT RAVEN_ROOT OR NOT RAVEN_CORE_LIBRARY OR NOT RAVEN_GAME_OUTPUT)
     message(FATAL_ERROR "Configure this Windows development module through RavenEngine")
@@ -21,7 +25,17 @@ foreach(source IN LISTS RAVEN_GAME_SOURCES)
     set_property(SOURCE "${source}" APPEND PROPERTY
         COMPILE_DEFINITIONS "RAVEN_GAME_BUILD_ID=${build_digest}")
 endforeach()
-target_compile_options(RavenGame PRIVATE /W4 /WX /utf-8)
+target_compile_options(RavenGame PRIVATE /utf-8)
+raven_apply_warnings(RavenGame)
+# Debug info, so breakpoints bind in game code. /Zi rather than /ZI: the module is replaced by
+# reloading, not by Edit and Continue.
+if(POLICY CMP0141)
+    set_property(TARGET RavenGame PROPERTY MSVC_DEBUG_INFORMATION_FORMAT
+        "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
+else()
+    # CMake 3.24 takes the format from the flags, which the host may pass without /Zi.
+    target_compile_options(RavenGame PRIVATE $<$<CONFIG:Debug,RelWithDebInfo>:/Zi> $<$<CONFIG:Debug,RelWithDebInfo>:/FS>)
+endif()
 # <format> dominates a one-file game edit; this PCH cut its compile from 1.75 to 1.0 s
 # (docs/HotReloadDesign.md, H5). Engine headers stay out: adding them measured no gain.
 raven_enable_precompiled_headers(RavenGame <cmath> <exception> <format> <numbers>)

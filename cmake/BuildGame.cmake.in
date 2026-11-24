@@ -155,6 +155,7 @@ execute_process(
         [==[-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=@CMAKE_CXX_FLAGS_RELWITHDEBINFO@]==]
         [==[-DCMAKE_CXX_FLAGS_MINSIZEREL=@CMAKE_CXX_FLAGS_MINSIZEREL@]==]
         [==[-DRAVEN_USE_PCH=@RAVEN_USE_PCH@]==]
+        [==[-DRAVEN_WARNINGS_AS_ERRORS=@RAVEN_WARNINGS_AS_ERRORS@]==]
     RESULT_VARIABLE configured)
 if(NOT configured EQUAL 0)
     message(FATAL_ERROR "Game module configuration failed: ${configured}")

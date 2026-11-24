@@ -187,7 +187,7 @@ The existing `GameBindings` (camera, player, mesh, interactions) reach systems t
 - The update reprocesses everything after a hierarchy change. Otherwise it recomputes an entity only when its Transform tick is newer than the last pass or its parent was recomputed in this pass. Recomputed worlds are stamped with the new tick for later consumers.
 - Rotated local transforms compose in closed form (`parent · T · Rz · Ry · Rx · S`), and zero-angle axes skip their trigonometry. This halved the 20%-changed update. Unrotated transforms keep the exact scale-and-translate path.
 - Extreme scales keep the earlier retry in the direct multiplication order. A world that stays unrepresentable is stored as-is so descendants can still recompose, and draw gathering skips non-finite worlds instead of throwing.
-- A live entity whose ancestor has no Transform (for example, after its root was destroyed outside the Scene) still makes the update throw `std::invalid_argument`, matching the earlier draw path.
+- A live entity whose ancestor has no Transform (for example, after its root was destroyed outside the Scene) is placed as a detached root below the missing ancestor, in the cached pass and in live `GetWorldTransform` alike, and is logged once. A dropped world marks its entity changed, so static descendants re-root in the same pass. *(Changed 2026-11-24, pre-M6 hardening; until then the update threw `std::invalid_argument`.)*
 - Differences from the plan:
   - **Picking** keeps live composition. It runs per click, so its cost doesn't matter, and it already matches the next frame.
   - **No named host phase:** the Perspective sample calls the update right before its draw gather, instead of a named `PostUpdate`/`Extract` host phase. A shared phase can follow when a second consumer needs it.
@@ -291,6 +291,20 @@ Same command, case, machine and method as the M0 3D baseline, run on the step 6 
 | Frame interval | 11.683 | 6.677 |
 
 The median rose from 114.9 to 162.8 FPS (162.7–162.8), and CPU preparation stayed under 5 ms in 100% of frames. The 165 Hz display now limits the frame rate. The remaining CPU time is mostly renderer preparation and recording (M2). Per-system timing for the same run: Interaction 22.4 µs, FreeFly 3.0 µs, MeshRotation 0.1 µs per frame. Local evidence (ignored): `out/m1-step6/out/benchmark-scale-7n252cng`.
+
+### Structural-change record (2026-11-24, pre-M6)
+
+`EcsBenchmark` gained three structural cases (ARCH-ECS-01 step 0), each one gameplay frame including the world update that follows. Release, minimum-spec laptop, median of 9 runs; the population is the M0 layout (rows, pivots, meshes):
+
+| Case | 10k entities | 50k | 100k | Budget |
+| --- | ---: | ---: | ---: | ---: |
+| Spawn 1k leaves + world update | 1.62 ms | 8.38 ms | 17.55 ms | 4 ms CPU frame preparation |
+| Despawn 1k leaves + world update | 33.8 ms | 196 ms | 378 ms | same |
+| Reparent 500 pivots (1k entities) + world update | 1.27 ms | 7.86 ms | 17.72 ms | same |
+
+- **Spawn and reparent** pay one full world-order rebuild (hash maps and a sorted copy of every entity) and a full recompute, so their cost follows the total entity count, not the 1k that changed. The assessment's extrapolation (about 11 ms at 100k) was low.
+- **Despawn** is quadratic: each `Scene::DestroyEntity` scans every parent link to find descendants and erases from the entity list and the name map, so 1k destroys at 100k entities make about 10^8 visits.
+- At 100k entities all three miss the 4 ms budget by 4× to 95×. This confirms the M6-3 priority (incremental spawn/destroy/reparent with child lists and depth buckets) before gameplay spawns at runtime. Nothing in the current samples spawns or despawns per frame.
 
 ## M1 exit record (2026-11-21)
 

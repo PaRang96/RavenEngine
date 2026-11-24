@@ -231,6 +231,20 @@ Measured on the minimum-spec laptop, Release, 2560 × 1440 on the 165 Hz panel, 
 | DLL reload frame spike, 50k | — | ≤ 100 ms | longest frame 46.5 ms; save-to-present 3.08 s | Met |
 | 4,000 meshes (M2 exit case) | 193 FPS, CPU 1.35–1.54 ms | — | 275 FPS, CPU 0.41 ms | — |
 
+**Stock-host re-run (2026-11-24, planning decision 2).** The numbers above came from a source-patched benchmark host. The same cases were re-run on the unpatched host through its launch options (`--present`, `--borderless`, `--max-fps`), Release, 2560 × 1440 on the 165 Hz panel with no external monitor attached, one run per case. Evidence is under ignored `out/benchmark-scale-ep3o8psa`, `-26cez9d1` and `-nqwspep_`.
+
+| Case | FPS | Frame p50 / p95 | CPU preparation p95 | GPU p95 |
+| --- | ---: | ---: | ---: | ---: |
+| 50k, 20% animated, FIFO (default) | 165.0 | 6.06 / 6.28 ms | 3.05 ms | 2.48 ms |
+| 50k, 20% animated, Mailbox | 126.5 | 7.81 / 9.07 ms | 3.87 ms | 2.16 ms |
+| 100k static, FIFO (default) | 163.7 | 4.98 / 8.75 ms | 1.53 ms | 5.02 ms |
+| 100k static, Mailbox | 119.1 | 8.34 / 9.15 ms | 2.00 ms | 4.02 ms |
+| 50k, 20% animated, Mailbox, `--max-fps 120` | 109.0 | 9.08 / 10.03 ms | 3.59 ms | 2.50 ms |
+
+- Every M3 target is met on the stock host. With the default FIFO and no cap it reaches the panel's 165 Hz, which the old fixed 120 FPS sleep prevented.
+- Mailbox runs slower than FIFO on this panel at both sizes. The cause was not investigated; FIFO is the default.
+- **Sleep-cap precision:** a 120 FPS cap (8.33 ms) delivered 109 FPS: `std::this_thread::sleep_until` overshoots by about 0.75 ms at the median and 1.7 ms at p95. The cap is optional and off by default. A high-resolution waitable timer would tighten it if a caller needs an exact cap.
+
 - **Images:** the six captures match the M2 references exactly as at M2 exit: three bit-identical, and 1, 2 and 1 edge outliers in Assemblies, Gallery and Puzzle. GPU culling, bindless textures and indirect draws reproduce the CPU path's images.
 - **Validation:**
   - The Debug 3D smoke with core and synchronization validation reported nothing.

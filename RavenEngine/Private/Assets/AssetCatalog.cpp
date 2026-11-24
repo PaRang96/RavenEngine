@@ -108,6 +108,14 @@ namespace Raven
 		return m_Impl->Get(id).Record;
 	}
 
+	const AssetRecord* AssetCatalog::Find(const AssetId& id) const noexcept
+	{
+		if (!id.IsValid())
+			return nullptr;
+		const auto found = m_Impl->Entries.find(id);
+		return found == m_Impl->Entries.end() ? nullptr : &found->second.Record;
+	}
+
 	const TextureAssetDesc& AssetCatalog::GetTexture(AssetRef<TextureAsset> asset) const
 	{
 		const auto& entry = m_Impl->Get(asset.Id);

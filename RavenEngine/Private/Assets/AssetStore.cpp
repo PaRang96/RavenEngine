@@ -176,6 +176,19 @@ namespace Raven
 		return AssetLease(std::move(asset));
 	}
 
+	const char* AssetStore::FindReferenceError(const AssetCatalog& catalog, AssetId id, AssetKind kind) const
+	{
+		const auto* record = catalog.Find(id);
+		if (!record)
+			return "unregistered asset ID";
+		if (record->Kind != kind)
+			return "incorrect asset type";
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(ResolveAssetPath(m_Impl->Root, record->SourcePath), error))
+			return "missing asset file";
+		return nullptr;
+	}
+
 	AssetCatalogUpdate AssetStore::PrepareCatalog(const AssetCatalog& catalog)
 	{
 		Collect();

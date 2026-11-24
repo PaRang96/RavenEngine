@@ -81,12 +81,16 @@ namespace
 		Scene scene(registry, world.Store);
 		std::vector<Entity> meshes;
 		meshes.reserve(pivotCount);
+		std::vector<Entity> pivots;
+		pivots.reserve(pivotCount);
+		std::vector<Entity> rows;
 		Entity row;
 		for (std::size_t index = 0; index < pivotCount; ++index)
 		{
 			if (index % 100 == 0)
 			{
 				row = scene.CreateEntity();
+				rows.push_back(row);
 				TransformComponent rowTransform;
 				rowTransform.Position = { 0.0f, static_cast<float>(index / 100) * 2.0f, 0.0f };
 				registry.Add(row, rowTransform);
@@ -96,6 +100,7 @@ namespace
 			pivotTransform.Position = { static_cast<float>(index % 100) * 2.0f, 0.0f, 0.0f };
 			registry.Add(pivot, pivotTransform);
 			scene.SetParent(pivot, row);
+			pivots.push_back(pivot);
 			if (index % 5 == 0)
 			{
 				RotatorComponent rotor;
@@ -238,6 +243,55 @@ namespace
 				sum += transform.Position.X;
 			}
 			Sink = sum;
+		}));
+
+		// Structural changes (ARCH-ECS-01 step 0): one gameplay frame that spawns, despawns or
+		// reparents 1k entities, including the world update that follows. Each run restores the
+		// scene, so every size measures the same steady population.
+		constexpr std::size_t Batch = 1'000;
+		std::vector<Entity> spawned;
+		spawned.reserve(Batch);
+		const auto spawn = [&]
+		{
+			for (std::size_t index = 0; index < Batch; ++index)
+			{
+				const auto entity = scene.CreateEntity();
+				TransformComponent transform;
+				transform.Position = { 0.0f, 0.0f, 2.0f };
+				registry.Add(entity, transform);
+				scene.SetParent(entity, pivots[(index * 7919) % pivots.size()]);
+				spawned.push_back(entity);
+			}
+			scene.UpdateWorldTransforms();
+		};
+		const auto despawn = [&]
+		{
+			for (const auto entity : spawned)
+				scene.DestroyEntity(entity);
+			spawned.clear();
+			scene.UpdateWorldTransforms();
+		};
+		scene.UpdateWorldTransforms();
+		Report("Spawn 1k leaves + world update", entities, Batch, MedianMillisecondsAfter([&]
+		{
+			if (!spawned.empty())
+				despawn();
+		}, spawn));
+		Report("Despawn 1k leaves + world update", entities, Batch, MedianMillisecondsAfter([&]
+		{
+			if (spawned.empty())
+				spawn();
+		}, despawn));
+		if (!spawned.empty())
+			despawn();
+		// 500 pivots move with their meshes (1k entities) between the first two rows.
+		bool moved = false;
+		Report("Reparent 500 pivots (1k entities) + world", entities, Batch, MedianMilliseconds([&]
+		{
+			moved = !moved;
+			for (std::size_t index = 0; index < Batch / 2; ++index)
+				scene.SetParent(pivots[index], rows[moved ? 1 : 0]);
+			scene.UpdateWorldTransforms();
 		}));
 	}
 }

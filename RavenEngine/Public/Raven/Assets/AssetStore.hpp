@@ -75,6 +75,9 @@ namespace Raven
 			bool watchMeshes = false, bool watchTextures = false);
 		RAVEN_API ~AssetStore();
 		RAVEN_API AssetLease Acquire(const AssetCatalog& catalog, AssetId id, AssetKind kind);
+		// Why `id` cannot be acquired as `kind` because of the data (unregistered ID, wrong kind or
+		// missing file), or null when Acquire may proceed. Decode and GPU failures still throw.
+		RAVEN_API const char* FindReferenceError(const AssetCatalog& catalog, AssetId id, AssetKind kind) const;
 		RAVEN_API AssetCatalogUpdate PrepareCatalog(const AssetCatalog& catalog);
 		RAVEN_API AssetReloadResult ApplyReloads();
 		RAVEN_API void Collect();

@@ -41,7 +41,7 @@ jobs:
           stripdown: true
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DRAVEN_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

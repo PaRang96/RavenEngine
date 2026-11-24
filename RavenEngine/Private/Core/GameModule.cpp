@@ -387,7 +387,20 @@ namespace Raven
 			const auto registerSystems = reinterpret_cast<RegisterSystemsFunction>(
 				Platform::FindGameEntryPoint(candidate->Library, RegisterSystemsEntryPoint));
 			SystemTable table;
-			registerSystems(table);
+			// Translate a module exception while the candidate is still loaded: unwinding past
+			// `candidate` unloads it, and the exception's what() and destructor live in its image.
+			try
+			{
+				registerSystems(table);
+			}
+			catch (const std::exception& error)
+			{
+				throw std::runtime_error(std::string("Game system registration failed: ") + error.what());
+			}
+			catch (...)
+			{
+				throw std::runtime_error("Game system registration threw a non-standard exception");
+			}
 			candidate->Systems = LoadSystems(table);
 			if (candidate->Systems.empty())
 				throw std::runtime_error("Game DLL registered no systems");
@@ -426,6 +439,11 @@ namespace Raven
 		catch (const std::exception& error)
 		{
 			Report(error.what());
+			return false;
+		}
+		catch (...)
+		{
+			Report("Game module activation failed");
 			return false;
 		}
 	}

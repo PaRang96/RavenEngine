@@ -89,8 +89,9 @@ def select_view(app, view):
     check(view == "shaded" or f"Render view: {view}".encode() in app.log.read_bytes(), f"Could not select the {view} view")
 
 
-def profile(executable, directory, count, animated, watching, seconds, capture=False, place=None, view="shaded"):
-    args = ["--scene", SCENE_IDS[count]]
+def profile(executable, directory, count, animated, watching, seconds, capture=False, place=None, view="shaded",
+            options=()):
+    args = ["--scene", SCENE_IDS[count], *options]
     if not watching:
         args.append("--no-watch")
     with SMOKE["run_sample"](executable, directory, args, capture=capture) as app:
@@ -264,6 +265,7 @@ def main():
     scale.add_argument("--meshes", type=int, choices=(4000, *STRESS), default=4000)
     scale.add_argument("--static", action="store_true", help="Pause the rotators (M3 100k static target)")
     scale.add_argument("--view", choices=VIEWS, default="shaded", help="Render view selected with F7 before measuring")
+    scale.add_argument("--max-fps", type=int, default=0, help="Frame-rate cap passed to the host (0: none)")
     args = parser.parse_args()
     if args.mode == "generate":
         generate()
@@ -278,24 +280,25 @@ def main():
         result = hot_reload(report, args.meshes)
         print(json.dumps(result, indent=2), flush=True)
     elif args.mode == "scale":
-        from Windows3DHighRefresh import cases, edit_snapshot, fastest_display
+        from Windows3DHighRefresh import cases, fastest_display
 
         check(args.seconds >= 1 and args.repeats >= 1, "Measure at least one run of one second or longer")
         display = fastest_display(SMOKE["USER"])
-        source = build_snapshot(report, edit_snapshot, stress=args.meshes)
+        source = build_snapshot(report, stress=args.meshes)
         selected = args.case or ["auto-fifo"]
         samples = []
         for trial in range(1, args.repeats + 1):
-            for name, environment, place in cases(display, selected, trial, SMOKE["USER"]):
-                with environment:
-                    row = profile(runtime(source) / "RavenEngine.exe", report / name,
-                                  args.meshes, not args.static, True, args.seconds, place=place, view=args.view)
+            for name, options, place in cases(display, selected, trial, SMOKE["USER"]):
+                if args.max_fps:
+                    options += ["--max-fps", str(args.max_fps)]
+                row = profile(runtime(source) / "RavenEngine.exe", report / name, args.meshes, not args.static, True,
+                              args.seconds, place=place, view=args.view, options=options)
                 log = (report / name / "run.log").read_text(encoding="utf-8", errors="replace")
                 _, adapter, mode = name.split("-", 2)
                 selected_adapter = next(line.split("Selected GPU: ", 1)[1] for line in log.splitlines()
                                         if "Selected GPU: " in line)
                 check(adapter == "auto" or selected_adapter.lower().startswith(adapter), "Wrong GPU selected")
-                check(f"[scale] Present {mode}" in log, "Wrong presentation mode selected")
+                check(f"present={mode}" in log, "Wrong presentation mode selected")
                 check(f"Swapchain created: {display.width} x {display.height}," in log,
                       "The renderer did not use the selected display resolution")
                 # One indirect command per lit mesh (cube, sphere) and four textured batches (G5); the
@@ -303,7 +306,7 @@ def main():
                 check(row["draw_calls"] == (8 if args.view == "wireframe" else 6), "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
-        result = {"label": args.label, "view": args.view, "display": display.name, "hz": display.hz,
+        result = {"label": args.label, "view": args.view, "max_fps": args.max_fps, "display": display.name, "hz": display.hz,
                   "resolution": [display.width, display.height], "samples": samples}
     else:
         debug = runtime(preset="x64-debug")

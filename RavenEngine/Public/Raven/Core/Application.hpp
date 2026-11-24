@@ -2,6 +2,7 @@
 
 #include "Raven/Core/Api.hpp"
 #include "Raven/Core/ApplicationClient.hpp"
+#include "Raven/Renderer/RendererConfig.hpp"
 
 #include <filesystem>
 
@@ -19,6 +20,10 @@ namespace Raven
 		bool WatchGameModule = true;
 		// Optional buffered timing capture, written after the run.
 		std::filesystem::path FrameTracePath;
+		RendererConfig Renderer;
+		// Frame-rate cap for drawable frames; 0 means none, because FIFO presentation already
+		// paces to the display. Mailbox and Immediate run uncapped unless this is set.
+		double MaxFrameRate = 0.0;
 	};
 
 	class Application

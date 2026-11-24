@@ -7,8 +7,10 @@
 
 #include <map>
 #include <limits>
+#include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -36,13 +38,18 @@ namespace Raven
 
 		// Host PostUpdate (docs/ECSDesign.md, D7). Refreshes WorldTransformComponent for owned
 		// entities whose Transform changed since the previous call, whose ancestry changed, or
-		// that have no world yet. Parents are processed before children. Throws when a live
-		// entity's ancestor has no TransformComponent. Not callable while a view iterates.
+		// that have no world yet. Parents are processed before children. An entity whose
+		// ancestor was destroyed or has no TransformComponent is placed as a detached root and
+		// logged once. Not callable while a view iterates.
 		RAVEN_API void UpdateWorldTransforms();
 
 		// Full affine position; rotation-only ancestor chain ignores scale/reflection for axes.
 		RAVEN_API CameraView GetCameraView(ECS::Entity entity, float aspect) const;
 		RAVEN_API const AssetLease& UseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
+		// Non-throwing form for game-written references: a data error (nil or unregistered ID,
+		// wrong kind, missing file) returns null and logs once per asset. Decode and GPU failures
+		// still throw.
+		RAVEN_API const AssetLease* TryUseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
 		RAVEN_API const AssetLease& GetAsset(AssetId id) const;
 		const std::vector<ECS::Entity>& GetEntities() const noexcept { return m_Entities; }
 		ECS::Entity GetSelectedCamera() const noexcept { return m_SelectedCamera; }
@@ -72,12 +79,16 @@ namespace Raven
 		void RequireOwned(ECS::Entity entity) const;
 		Mat4 ComposeTransform(ECS::Entity entity, bool rotationOnly) const;
 		Mat4 ComposeTransformUnchecked(ECS::Entity entity, bool rotationOnly) const;
+		void ReportDetachedRoot(ECS::Entity entity) const;
 		void RebuildWorldOrder();
 		std::vector<ECS::Entity> m_Entities;
 		// The index also records membership. Roots have a null parent.
 		std::unordered_map<ECS::Entity, ECS::Entity, EntityHash> m_Parents;
+		// Entities already logged as detached roots, so a broken hierarchy logs once.
+		mutable std::unordered_set<ECS::Entity, EntityHash> m_ReportedDetached;
 		std::map<std::string, ECS::Entity> m_Names;
 		std::map<AssetId, AssetLease> m_Assets;
+		std::set<AssetId> m_ReportedAssets;
 		AssetStore& m_Store;
 		ECS::Entity m_SelectedCamera;
 		GameBindings m_Bindings;

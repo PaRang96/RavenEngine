@@ -74,13 +74,15 @@ namespace Raven
 			static_cast<LONG>(desc.Width),
 			static_cast<LONG>(desc.Height)
 		};
-		if (!AdjustWindowRect(&bounds, WS_OVERLAPPEDWINDOW, FALSE))
+		const DWORD style = desc.Borderless ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+		if (!AdjustWindowRect(&bounds, style, FALSE))
 			throw std::runtime_error("Could not calculate window size");
 
 		const std::wstring title = ToWide(desc.Title);
 		m_Handle = CreateWindowExW(
-			0, ClassName, title.c_str(), WS_OVERLAPPEDWINDOW,
-			CW_USEDEFAULT, CW_USEDEFAULT,
+			desc.Borderless ? WS_EX_TOPMOST : 0, ClassName, title.c_str(), style,
+			desc.Position ? desc.Position->X : CW_USEDEFAULT,
+			desc.Position ? desc.Position->Y : CW_USEDEFAULT,
 			bounds.right - bounds.left,
 			bounds.bottom - bounds.top,
 			nullptr, nullptr, instance, this);

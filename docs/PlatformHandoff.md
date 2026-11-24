@@ -29,7 +29,7 @@ const InputState& GetInputState() const override;
 VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;
 ```
 
-`Window::Create(const WindowDesc&)` creates the selected backend on each OS. Keep `RAVEN_API` on its public declaration and ensure backend objects are correctly destroyed through the virtual `Window` destructor. Pass the UTF-8 `WindowDesc::Title` string to the native title.
+`Window::Create(const WindowDesc&)` creates the selected backend on each OS. Keep `RAVEN_API` on its public declaration and ensure backend objects are correctly destroyed through the virtual `Window` destructor. Pass the UTF-8 `WindowDesc::Title` string to the native title. `WindowDesc::Position` and `WindowDesc::Borderless` (2026-11-24) place a frameless topmost window for native-resolution benchmarks; Win32 implements them, and other backends may ignore them until a contributor needs the benchmark there. `RendererConfig` (present mode, GPU preference) and `ApplicationConfig::MaxFrameRate` are shared code; the frame cap sleeps with `std::this_thread::sleep_until` on every OS.
 
 Follow [InputProcessing.md](InputProcessing.md) for Windows input ownership and execution order. Shared `InputState` provides mouse-button, cursor, and focus-recovery methods; private `InputBuffer` manages per-window pending input and published snapshots. Even when another window's poll processes an event, preserve that event's transitions until its own window calls `PollEvents()`. Windows uses this structure; Linux/macOS contributors must connect and verify their native implementations. Existing public and virtual signatures are preserved.
 

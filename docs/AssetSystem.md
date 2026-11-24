@@ -27,7 +27,7 @@ Mesh entries can be resolved through AssetResources. Model and material entries 
 
 ## Runtime resource service
 
-The migrated sample path uses [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its weak cache shares resources by UUID while host-owned AssetLease values keep them live. Scene owns its acquired leases; the last owner stops the watcher and releases the managed mesh/texture or PCM clip. SceneProject validates source paths against its explicit root, including physical escapes and source existence. See [scene/resource ownership](SceneWorkflow.md#scene-and-resource-ownership).
+The migrated sample path uses [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its weak cache shares resources by UUID while host-owned AssetLease values keep them live. Scene owns its acquired leases; the last owner stops the watcher and releases the managed mesh/texture or PCM clip. SceneProject validates source paths against its explicit root, including physical escapes and source existence. References written by game code at runtime go through `Scene::TryUseAsset` (2026-11-24): a nil or unregistered ID, a wrong kind or a missing file returns null and logs once per asset, so a material samples the white texture and a sprite is skipped. Decode and GPU failures still throw. The placeholder stays until the material or sprite changes again. See [scene/resource ownership](SceneWorkflow.md#scene-and-resource-ownership).
 
 ### Legacy pinned service
 

@@ -26,6 +26,8 @@ namespace Raven
 		RAVEN_API void Register(const AssetRecord& record);
 		RAVEN_API void Register(const TextureAssetDesc& description);
 		RAVEN_API const AssetRecord& Get(const AssetId& id) const;
+		// Null for a nil or unregistered ID.
+		RAVEN_API const AssetRecord* Find(const AssetId& id) const noexcept;
 		RAVEN_API const TextureAssetDesc& GetTexture(AssetRef<TextureAsset> asset) const;
 
 		AssetCatalog(const AssetCatalog&) = delete;

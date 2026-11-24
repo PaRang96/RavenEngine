@@ -1,6 +1,7 @@
 #include "Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Renderer/Vulkan/VulkanDevice.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
+#include "Raven/Core/Log.hpp"
 #include "Raven/Platform/Window.hpp"
 
 #include <algorithm>
@@ -75,7 +76,7 @@ namespace Raven
 
 	VulkanSwapchain::VulkanSwapchain(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice,
-		VkSurfaceKHR surface, const FramebufferState& framebuffer)
+		VkSurfaceKHR surface, const FramebufferState& framebuffer, PresentMode requested)
 		: m_Device(device.Get())
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
@@ -110,6 +111,12 @@ namespace Raven
 		if (formats.empty() ||
 			std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_FIFO_KHR) == modes.end())
 			throw std::runtime_error("Surface has no supported FIFO swapchain configuration");
+		const VkPresentModeKHR wanted = requested == PresentMode::Mailbox ? VK_PRESENT_MODE_MAILBOX_KHR
+			: requested == PresentMode::Immediate ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
+		const bool supported = std::find(modes.begin(), modes.end(), wanted) != modes.end();
+		m_PresentMode = supported ? requested : PresentMode::Fifo;
+		if (!supported)
+			Log(LogLevel::Warning, "Requested present mode is unsupported by the surface; using FIFO");
 
 		auto format = formats.front();
 		for (const auto& candidate : formats)
@@ -155,7 +162,7 @@ namespace Raven
 		}
 		createInfo.preTransform = capabilities.currentTransform;
 		createInfo.compositeAlpha = ChooseSwapchainAlpha(capabilities.supportedCompositeAlpha);
-		createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+		createInfo.presentMode = supported ? wanted : VK_PRESENT_MODE_FIFO_KHR;
 		createInfo.clipped = VK_TRUE;
 
 		const VkResult result = vkCreateSwapchainKHR(

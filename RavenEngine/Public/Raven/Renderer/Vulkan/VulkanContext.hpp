@@ -7,6 +7,7 @@
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
 #include "Raven/Renderer/RenderView.hpp"
+#include "Raven/Renderer/RendererConfig.hpp"
 #include "Raven/Renderer/OrthographicCamera.hpp"
 #include "Raven/Renderer/TextureDesc.hpp"
 #include "Raven/Renderer/TextureHandle.hpp"
@@ -46,6 +47,7 @@ namespace Raven
 	{
 	public:
 		RAVEN_API explicit VulkanContext(const Window& window);
+		RAVEN_API VulkanContext(const Window& window, const RendererConfig& config);
 		RAVEN_API ~VulkanContext();
 
 		// True when the framebuffer is drawable and a swapchain is ready to render (R7). A minimized

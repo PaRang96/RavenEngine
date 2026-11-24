@@ -47,7 +47,7 @@ The mesh pass is opaque and writes depth. Its albedo is vertex RGB multiplied by
 
 ColorVertex retains its position and color fields and adds normal XYZ and UV, giving a 44-byte stride. Existing source aggregate initializers receive a +Z normal and zero UV defaults. The importer applies axis and unit conversion, transforms normals with the inverse transpose of the FBX geometry transform, normalizes them, and preserves winding under reflection. ufbx generates missing normals. Deduplication considers the full vertex tuple, preserving normal, UV and color seams. FBX V coordinates convert to the engine's image-top convention. Missing source UVs use (0, 1).
 
-The renderer uses the model's inverse-transpose linear transform for normals, including nonuniform and reflected scale. Singular or unsupported normal transforms reject lit submissions. Each fence-protected frame slot owns a reusable mesh-instance vertex buffer with a 176-byte record. The same prepared camera matrix drives culling and drawing. The sprite pipeline continues to use its own 80-byte instance layout.
+The renderer uses the model's inverse-transpose linear transform for normals, including nonuniform and reflected scale. A lit object whose transform is singular (for example a zero scale) or whose normal transform leaves the float range is hidden instead, because it rasterizes nothing; authored scenes still reject such transforms at load. Each fence-protected frame slot owns a reusable mesh-instance vertex buffer with a 176-byte record. The same prepared camera matrix drives culling and drawing. The sprite pipeline continues to use its own 80-byte instance layout.
 
 ## Resource lifetime and rejection
 

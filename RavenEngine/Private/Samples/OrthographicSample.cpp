@@ -193,7 +193,11 @@ namespace Raven
 					break;
 				}
 			}
-			const VulkanTexturedDraw draw{ m_Quad, GetLevel().UseAsset(m_Assets.GetCatalog(), sprite.Texture.Id, AssetKind::Texture).GetTexture(), transform.GetMatrix(), tint };
+			// A bad game-written texture reference skips the sprite.
+			const auto* lease = GetLevel().TryUseAsset(m_Assets.GetCatalog(), sprite.Texture.Id, AssetKind::Texture);
+			if (!lease)
+				continue;
+			const VulkanTexturedDraw draw{ m_Quad, lease->GetTexture(), transform.GetMatrix(), tint };
 			if (sprite.BlendMode == ECS::SpriteBlendMode::Opaque)
 				m_OpaqueDraws.push_back(draw);
 			else

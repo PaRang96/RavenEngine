@@ -8,12 +8,17 @@
 #include "Raven/Platform/Window.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
+#include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 
 namespace
 {
@@ -35,6 +40,79 @@ namespace
 	};
 
 	SampleOptions Options;
+
+	// Presentation and placement options. They do not select a sample mode.
+	struct PresentationOptions
+	{
+		RendererConfig Renderer;
+		double MaxFrameRate = 0.0;
+		std::optional<WindowPosition> Position;
+		std::optional<std::pair<std::uint32_t, std::uint32_t>> BorderlessSize;
+	};
+
+	long long ParseInteger(std::string_view text, const char* option)
+	{
+		long long value = 0;
+		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+		if (error != std::errc{} || end != text.data() + text.size())
+			throw std::invalid_argument(std::string(option) + " expects whole numbers");
+		return value;
+	}
+
+	// Returns false when `option` is not a presentation option.
+	bool ParsePresentationOption(std::string_view option, int argc, char* argv[], int& index, PresentationOptions& result)
+	{
+		const auto next = [&](const char* expected) -> std::string_view
+		{
+			if (++index == argc)
+				throw std::invalid_argument(std::string(option) + " expects " + expected);
+			return argv[index];
+		};
+		if (option == "--present")
+		{
+			const auto mode = next("fifo, mailbox or immediate");
+			if (mode == "fifo")
+				result.Renderer.Present = PresentMode::Fifo;
+			else if (mode == "mailbox")
+				result.Renderer.Present = PresentMode::Mailbox;
+			else if (mode == "immediate")
+				result.Renderer.Present = PresentMode::Immediate;
+			else
+				throw std::invalid_argument("--present expects fifo, mailbox or immediate");
+		}
+		else if (option == "--max-fps")
+		{
+			const auto rate = ParseInteger(next("a frame rate (0 for none)"), "--max-fps");
+			if (rate < 0 || rate > 10000)
+				throw std::invalid_argument("--max-fps expects 0 to 10000");
+			result.MaxFrameRate = static_cast<double>(rate);
+		}
+		else if (option == "--gpu")
+		{
+			const auto type = next("discrete or integrated");
+			if (type == "discrete")
+				result.Renderer.Gpu = GpuPreference::Discrete;
+			else if (type == "integrated")
+				result.Renderer.Gpu = GpuPreference::Integrated;
+			else
+				throw std::invalid_argument("--gpu expects discrete or integrated");
+		}
+		else if (option == "--borderless")
+		{
+			const auto x = ParseInteger(next("<x> <y> <width> <height>"), "--borderless");
+			const auto y = ParseInteger(next("<x> <y> <width> <height>"), "--borderless");
+			const auto width = ParseInteger(next("<x> <y> <width> <height>"), "--borderless");
+			const auto height = ParseInteger(next("<x> <y> <width> <height>"), "--borderless");
+			constexpr long long Limit = 1 << 16;
+			if (x < -Limit || x > Limit || y < -Limit || y > Limit || width <= 0 || width > Limit || height <= 0 || height > Limit)
+				throw std::invalid_argument("--borderless expects a position and a positive size within 65536 pixels");
+			result.Position = WindowPosition{ static_cast<std::int32_t>(x), static_cast<std::int32_t>(y) };
+			result.BorderlessSize.emplace(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
+		}
+		else
+			return false;
+		return true;
+	}
 
 	ApplicationClient* CreatePerspectiveSample(VulkanContext& renderer, GameInstance& instance)
 	{
@@ -61,9 +139,12 @@ int main(int argc, char* argv[])
 		bool loadGame = false;
 		bool noWatch = playerBuild;
 		bool defaultMode = true;
+		PresentationOptions presentation;
 		for (int index = 1; index < argc; ++index)
 		{
 			const std::string_view option(argv[index]);
+			if (ParsePresentationOption(option, argc, argv, index, presentation))
+				continue;
 			if (option == "--scene")
 			{
 				if (++index == argc || Options.StartScene)
@@ -91,7 +172,7 @@ int main(int argc, char* argv[])
 			else if (option == "--no-watch")
 				noWatch = true;
 			else
-				throw std::invalid_argument("Usage: RavenEngine [--perspective | --orthographic] [--game | --watch-game] [--free-fly] [--watch-wall] [--watch-shader] [--watch-mesh] [--no-watch] [--scene <UUID>]");
+				throw std::invalid_argument("Usage: RavenEngine [--perspective | --orthographic] [--game | --watch-game] [--free-fly] [--watch-wall] [--watch-shader] [--watch-mesh] [--no-watch] [--scene <UUID>] [--present fifo|mailbox|immediate] [--max-fps <rate>] [--gpu discrete|integrated] [--borderless <x> <y> <width> <height>]");
 		}
 		if (noWatch && (Options.WatchGame || Options.WatchMesh || Options.WatchWall || Options.WatchShader))
 			throw std::invalid_argument("--no-watch cannot be combined with --watch options");
@@ -143,6 +224,15 @@ int main(int argc, char* argv[])
 
 		Raven::ApplicationConfig config;
 		config.WatchGameModule = !noWatch;
+		config.Renderer = presentation.Renderer;
+		config.MaxFrameRate = presentation.MaxFrameRate;
+		if (presentation.BorderlessSize)
+		{
+			description.Position = presentation.Position;
+			description.Borderless = true;
+			description.Width = presentation.BorderlessSize->first;
+			description.Height = presentation.BorderlessSize->second;
+		}
 #ifdef _MSC_VER
 #pragma warning(suppress : 4996)
 #endif

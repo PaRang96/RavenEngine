@@ -9,6 +9,7 @@
 #include "Raven/Core/Log.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <memory>
@@ -61,10 +62,12 @@ namespace Raven
 	{
 		if ((!factory.Create && !factory.CreateGameClient) || !factory.Destroy)
 			throw std::invalid_argument("Application requires client create and destroy callbacks");
+		if (!(config.MaxFrameRate >= 0.0) || !std::isfinite(config.MaxFrameRate))
+			throw std::invalid_argument("MaxFrameRate must be zero or a positive finite rate");
 
 		ApplicationPathsScope paths(config.ContentRoot);
 		auto window = Window::Create(description);
-		VulkanContext renderer(*window);
+		VulkanContext renderer(*window, config.Renderer);
 		GameInstance instance;
 		std::unique_ptr<GameModule> game;
 		if (!config.GameModulePath.empty())
@@ -151,10 +154,12 @@ namespace Raven
 			if (metrics)
 				samples.push_back({ *metrics, TraceNanoseconds(TraceClock::now() - frameStart), drawable });
 
-			// FIFO presentation can already block. Sleep only for the rest of the frame budget.
+			// FIFO presentation paces drawable frames, so only an explicit cap sleeps for them.
+			// A minimized window has nothing to present and is throttled to 30 frames per second.
 			using Seconds = std::chrono::duration<double>;
-			const Seconds frameBudget(drawable ? 1.0 / 120.0 : 1.0 / 30.0);
-			std::this_thread::sleep_until(frameStart + frameBudget);
+			const double rate = drawable ? config.MaxFrameRate : 30.0;
+			if (rate > 0.0)
+				std::this_thread::sleep_until(frameStart + std::chrono::duration_cast<TraceClock::duration>(Seconds(1.0 / rate)));
 		}
 		if (!config.FrameTracePath.empty())
 		{

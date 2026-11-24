@@ -107,7 +107,7 @@ namespace Raven
 	}
 
 	VulkanPhysicalDevice SelectVulkanPhysicalDevice(
-		VkInstance instance, VkSurfaceKHR surface)
+		VkInstance instance, VkSurfaceKHR surface, GpuPreference preference)
 	{
 		const auto devices = Enumerate<VkPhysicalDevice>(
 			[instance](std::uint32_t* count, VkPhysicalDevice* values)
@@ -121,14 +121,15 @@ namespace Raven
 
 		// Devices that can present but miss a Vulkan 1.2 requirement, for the final error.
 		std::vector<std::string> rejected;
-		// Prefer a discrete GPU, then an integrated one; enumeration order breaks ties.
-		// Order alone is no preference: on hybrid laptops it depends on the driver.
-		const auto rank = [](VkPhysicalDeviceType type)
+		// Prefer a discrete GPU, then an integrated one, or the reverse when asked; enumeration
+		// order breaks ties. Order alone is no preference: on hybrid laptops it depends on the driver.
+		const bool integratedFirst = preference == GpuPreference::Integrated;
+		const auto rank = [integratedFirst](VkPhysicalDeviceType type)
 		{
 			switch (type)
 			{
-			case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 2;
-			case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 1;
+			case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return integratedFirst ? 1 : 2;
+			case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return integratedFirst ? 2 : 1;
 			default: return 0;
 			}
 		};

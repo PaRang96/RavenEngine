@@ -141,16 +141,13 @@ namespace
 		const auto replacement = other.CreateEntity("replacement");
 		Check(!scene.GetAccess().IsAlive(root) && !scene.GetAccess().IsAlive(replacement),
 			"Stale or foreign handle was accepted");
-		// Descendants of an externally destroyed root have no valid world, and the other
-		// scene's entity never receives one from this scene.
-		try
-		{
-			scene.UpdateWorldTransforms();
-			throw std::runtime_error("Invalid render transform was accepted");
-		}
-		catch (const std::invalid_argument&)
-		{
-		}
+		// Descendants of an externally destroyed root become detached roots below it (pre-M6
+		// hardening, 2026-11-24), and the other scene's entity never receives a world from this scene.
+		scene.UpdateWorldTransforms();
+		CheckWorld(Cached(pivot), pivotLocal.GetMatrix());
+		CheckWorld(Cached(child), pivotLocal.GetMatrix() * childLocal.GetMatrix());
+		CheckWorld(Cached(sibling), scene.GetWorldTransform(sibling));
+		CheckWorld(scene.GetWorldTransform(child), Cached(child));
 		Check(!registry.Has<ECS::WorldTransformComponent>(replacement), "A foreign entity received a world transform");
 		scene.DestroyEntity(root);
 		Check(scene.GetEntities().empty() && scene.GetSelectedCamera().IsNull() && scene.GetBindings().Camera.IsNull() &&

@@ -87,6 +87,16 @@ namespace Raven
 			return resources.size() - 1;
 		}
 
+		const char* PresentModeName(PresentMode mode) noexcept
+		{
+			switch (mode)
+			{
+			case PresentMode::Mailbox: return "mailbox";
+			case PresentMode::Immediate: return "immediate";
+			default: return "fifo";
+			}
+		}
+
 		std::uint64_t AllocateMeshContextId()
 		{
 			static std::mutex mutex;
@@ -100,7 +110,7 @@ namespace Raven
 
 	struct VulkanContext::Impl
 	{
-		explicit Impl(const Window& window);
+		Impl(const Window& window, const RendererConfig& config);
 		~Impl();
 
 		bool PrepareSwapchain();
@@ -130,6 +140,7 @@ namespace Raven
 
 		const std::uint64_t m_MeshContextId = AllocateMeshContextId();
 		const Window& m_Window;
+		const RendererConfig m_Config;
 		const std::filesystem::path m_ShaderDirectory;
 		// Every engine program's SPIR-V; watched compiles replace it (docs/HotReloadDesign.md, H2).
 		ShaderLibrary m_Shaders;
@@ -189,8 +200,9 @@ namespace Raven
 		std::optional<VulkanClearPass::Pipelines> m_RetainedPipelines;
 	};
 
-	VulkanContext::Impl::Impl(const Window& window)
+	VulkanContext::Impl::Impl(const Window& window, const RendererConfig& config)
 		: m_Window(window),
+		  m_Config(config),
 		  m_ShaderDirectory(Paths::GetShaderPath()),
 		  m_Shaders(m_ShaderDirectory),
 		  m_Instance(m_Window.GetRequiredVulkanInstanceExtensions()),
@@ -199,7 +211,7 @@ namespace Raven
 #endif
 		  m_Surface(m_Instance, m_Window),
 		  m_PhysicalDevice(SelectVulkanPhysicalDevice(
-			  m_Instance.Get(), m_Surface.Get())),
+			  m_Instance.Get(), m_Surface.Get(), config.Gpu)),
 		  m_Device(m_PhysicalDevice),
 		  m_MeshPool(m_Device, m_PhysicalDevice),
 		  m_TextureDescriptors(m_Device),
@@ -245,7 +257,7 @@ namespace Raven
 			ResetSwapchain();
 		}
 
-		m_Swapchain.emplace(m_Device, m_PhysicalDevice, m_Surface.Get(), framebuffer);
+		m_Swapchain.emplace(m_Device, m_PhysicalDevice, m_Surface.Get(), framebuffer, m_Config.Present);
 		if (m_Swapchain->Get() == VK_NULL_HANDLE)
 		{
 			m_Swapchain.reset();
@@ -272,7 +284,7 @@ namespace Raven
 			"Swapchain created: " + std::to_string(extent.width) + " x " +
 			std::to_string(extent.height) + ", images=" +
 			std::to_string(m_Swapchain->GetImages().size()) + ", format=" +
-			std::to_string(m_Swapchain->GetFormat()));
+			std::to_string(m_Swapchain->GetFormat()) + ", present=" + PresentModeName(m_Swapchain->GetPresentMode()));
 		return true;
 	}
 
@@ -676,7 +688,12 @@ namespace Raven
 	}
 
 	VulkanContext::VulkanContext(const Window& window)
-		: m_Impl(std::make_unique<Impl>(window))
+		: VulkanContext(window, RendererConfig{})
+	{
+	}
+
+	VulkanContext::VulkanContext(const Window& window, const RendererConfig& config)
+		: m_Impl(std::make_unique<Impl>(window, config))
 	{
 	}
 

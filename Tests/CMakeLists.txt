@@ -21,6 +21,7 @@ function(raven_add_test_executable name source)
     add_executable(${name} "${source}" ${raven_test_support})
     target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(${name} PRIVATE RavenCore)
+    raven_apply_warnings(${name})
     set_target_properties(${name} PROPERTIES
         FOLDER "Tests"
         RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:RavenCore>")

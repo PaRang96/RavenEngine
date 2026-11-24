@@ -160,28 +160,41 @@ namespace Raven
 		result(1, 1) = cosine;
 		return result;
 	}
-	// Inverse transpose of the affine model's linear part, including reflected scale.
-	inline Mat4 NormalMatrix(const Mat4& model)
+	// Inverse transpose of the affine model's linear part, including reflected scale. Returns false,
+	// leaving `result` unspecified, for a non-affine, singular or out-of-range transform; a collapsed
+	// (zero-scale) object has no normal transform and draws nothing.
+	inline bool TryNormalMatrix(const Mat4& model, Mat4& result) noexcept
 	{
 		if (model(3, 0) != 0.0f || model(3, 1) != 0.0f || model(3, 2) != 0.0f || model(3, 3) != 1.0f)
-			throw std::invalid_argument("Lit mesh model must be affine");
+			return false;
 		const Vec3 x{ model(0, 0), model(1, 0), model(2, 0) };
 		const Vec3 y{ model(0, 1), model(1, 1), model(2, 1) };
 		const Vec3 z{ model(0, 2), model(1, 2), model(2, 2) };
 		const float determinant = Dot(x, Cross(y, z));
 		if (!std::isfinite(determinant) || determinant == 0.0f)
-			throw std::invalid_argument("Lit mesh transform must be nonsingular");
+			return false;
 		const std::array columns{ Cross(y, z), Cross(z, x), Cross(x, y) };
-		Mat4 result = Mat4::Identity();
+		result = Mat4::Identity();
 		for (std::size_t column = 0; column < columns.size(); ++column)
 		{
 			const Vec3 value = columns[column] * (1.0f / determinant);
 			if (!std::isfinite(value.X) || !std::isfinite(value.Y) || !std::isfinite(value.Z))
-				throw std::invalid_argument("Mesh normal transform exceeds the supported numeric range");
+				return false;
 			result(0, column) = value.X;
 			result(1, column) = value.Y;
 			result(2, column) = value.Z;
 		}
+		return true;
+	}
+
+	// Throwing form for authored-data validation.
+	inline Mat4 NormalMatrix(const Mat4& model)
+	{
+		if (model(3, 0) != 0.0f || model(3, 1) != 0.0f || model(3, 2) != 0.0f || model(3, 3) != 1.0f)
+			throw std::invalid_argument("Lit mesh model must be affine");
+		Mat4 result;
+		if (!TryNormalMatrix(model, result))
+			throw std::invalid_argument("Lit mesh transform must be nonsingular and within the supported numeric range");
 		return result;
 	}
 

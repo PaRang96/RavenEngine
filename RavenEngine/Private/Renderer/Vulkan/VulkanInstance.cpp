@@ -118,7 +118,7 @@ namespace Raven
 
 		for (const char* required : enabledExtensions)
 		{
-			const bool found = std::any_of(
+			const bool supported = std::any_of(
 				availableExtensions.begin(),
 				availableExtensions.end(),
 				[required](const VkExtensionProperties& extension)
@@ -126,7 +126,7 @@ namespace Raven
 					return std::strcmp(extension.extensionName, required) == 0;
 				});
 
-			if (!found)
+			if (!supported)
 			{
 				throw std::runtime_error(
 					std::string("Required Vulkan instance extension unavailable: ") +
