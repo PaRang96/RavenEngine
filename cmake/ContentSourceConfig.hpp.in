@@ -1,6 +1,0 @@
-#pragma once
-
-namespace Raven::ContentSourceConfig
-{
-	inline constexpr char Root[] = R"(@PROJECT_SOURCE_DIR@/Content)";
-}

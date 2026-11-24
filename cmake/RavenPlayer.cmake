@@ -6,13 +6,14 @@ elseif(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     set(player_inputs "unavailable\tChoose a Release preset for a player folder.\n")
 else()
     add_custom_target(RavenPlayerInputs)
-    add_dependencies(RavenPlayerInputs RavenEngine RavenCore RavenGame RavenSceneTool)
+    add_dependencies(RavenPlayerInputs RavenEngine RavenCore ${RAVEN_DEFAULT_GAME}Game RavenSceneTool)
     string(CONCAT player_inputs
         "platform\t${raven_player_platform}\n"
         "tool\t$<TARGET_FILE:RavenSceneTool>\n"
         "copy\t$<TARGET_FILE:RavenEngine>\t$<TARGET_FILE_NAME:RavenEngine>\n"
         "copy\t$<TARGET_FILE:RavenCore>\t$<TARGET_FILE_NAME:RavenCore>\n"
-        "copy\t${RAVEN_GAME_OUTPUT_DIRECTORY}/${RAVEN_GAME_MODULE_FILENAME}\t${RAVEN_GAME_MODULE_FILENAME}\n"
+        "game\t${RAVEN_DEFAULT_GAME}\n"
+        "copy\t${RAVEN_GAME_OUTPUT_DIRECTORY}/${RAVEN_DEFAULT_GAME}${CMAKE_SHARED_LIBRARY_SUFFIX}\t${RAVEN_DEFAULT_GAME}${CMAKE_SHARED_LIBRARY_SUFFIX}\n"
         "copy\t${raven_player_readme}\tREADME.txt\n")
     list(LENGTH RAVEN_PLAYER_SUPPORT_SOURCES player_file_count)
     math(EXPR last_player_file "${player_file_count} - 1")

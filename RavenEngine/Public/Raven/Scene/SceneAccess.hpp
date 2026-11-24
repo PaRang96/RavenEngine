@@ -27,6 +27,9 @@ namespace Raven
 			return m_Scene != nullptr;
 		}
 		RAVEN_API ECS::Entity Find(std::string_view authoredId) const;
+		// The live entity a persistent reference names, or null (docs/DataModelDesign.md, FD-09).
+		RAVEN_API ECS::Entity Resolve(ECS::EntityRef id) const noexcept;
+		RAVEN_API ECS::EntityRef GetRef(ECS::Entity entity) const noexcept;
 		RAVEN_API bool IsAlive(ECS::Entity entity) const noexcept;
 		RAVEN_API Mat4 GetWorldTransform(ECS::Entity entity) const;
 
@@ -36,9 +39,11 @@ namespace Raven
 		{
 			return ReadComponent(entity, ECS::ComponentTraits<T>::Info, &value);
 		}
+		// Host-owned components (WorldTransform, Parent) are read-only here (FD-07).
 		template<ECS::ComponentType T>
 		bool Write(ECS::Entity entity, const T& value) const noexcept
 		{
+			static_assert(!ECS::HostOwned<T>, "This component is written only by the host");
 			return WriteComponent(entity, ECS::ComponentTraits<T>::Info, &value);
 		}
 		template<ECS::ComponentType... T>
@@ -51,11 +56,13 @@ namespace Raven
 
 		// Borrowed access to entities owned by this scene (docs/ECSDesign.md, D4). Views,
 		// references and pointers are valid only during the current synchronous update.
-		// Views visit the scene's entities in unspecified order; Query keeps authored order.
+		// Views visit the scene's entities in unspecified order; Query keeps Scene::GetEntities order.
 		template<ECS::ViewComponent... T>
 			requires(sizeof...(T) > 0)
 		ECS::View<T...> View() const noexcept
 		{
+			static_assert(((std::is_const_v<T> || !ECS::HostOwned<std::remove_const_t<T>>) && ...),
+				"View host-owned components as const");
 			return ECS::View<T...>(GetViewSource());
 		}
 		// TryGet<const T> reads without marking the component changed.
@@ -66,12 +73,16 @@ namespace Raven
 			if constexpr (std::is_const_v<T>)
 				return static_cast<T*>(FindComponent(entity, info));
 			else
+			{
+				static_assert(!ECS::HostOwned<T>, "Use TryGet<const T> for host-owned components");
 				return static_cast<T*>(TryGetComponent(entity, info));
+			}
 		}
 		// The first scene-owned component of type T, or null; use for single-instance state.
 		template<ECS::ComponentType T>
 		T* Single() const
 		{
+			static_assert(!ECS::HostOwned<T>, "This component is written only by the host");
 			T* result = nullptr;
 			View<T>().Each([&result](ECS::Entity, T& value)
 			{
@@ -88,7 +99,8 @@ namespace Raven
 			return count;
 		}
 
-		// The mutable form marks the component changed; FindComponent does not.
+		// The mutable form marks the component changed; FindComponent does not. The mutable
+		// and write forms refuse host-owned components.
 		RAVEN_API void* TryGetComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept;
 		RAVEN_API const void* FindComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept;
 		RAVEN_API bool ReadComponent(ECS::Entity entity, const ECS::ComponentInfo& info, void* value) const noexcept;

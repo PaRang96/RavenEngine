@@ -1,6 +1,8 @@
 # M6 design note: host and data model (M6A)
 
-Status: **decided (2026-11-24).** The owner delegated the decisions: "Make best decision based on businesses alignment and expandability in the future". Every recommendation was adopted, with two refinements added for expandability (FD-08 metadata, FD-10 deterministic output). The record and the basis are in [Owner decisions](#owner-decisions). M6A code follows the step order below.
+Status:
+- **Decided (2026-11-24).** The owner delegated the decisions: "Make best decision based on businesses alignment and expandability in the future". Every recommendation was adopted, with two refinements added for expandability (FD-08 metadata, FD-10 deterministic output). The record and the basis are in [Owner decisions](#owner-decisions).
+- **Implemented on Windows (2026-11-24), pending the owner's single review.** Where the code differs from the plan, [Implementation notes](#implementation-notes-2026-11-24) says how and why; the results are in the [M6A exit record](#m6a-exit-record-2026-11-24).
 
 This is the M6 design note required by [planning decision 5](../ROADMAP.md#planning-decisions-2026-11-24). It records the decisions FD-06 to FD-17 from [FutureDecisions.md](FutureDecisions.md) (the assessment's D-A to D-I), plus the M6A exit checklist and the M6 checklist scope (assessment Q16). The M6B and M6C decisions (FD-18 to FD-34) wait for their own stage, as the decision calendar says.
 
@@ -569,3 +571,104 @@ Decided on 2026-11-24. The owner delegated the choice: "Make best decision based
 | Q16 | M6 checklist scope | **(a)** also Commands and overlapping sounds, **(b)** core checklist. | **Decided: (b), plus spawn/despawn if the sample game spawns** | Keeps M6 scope to the roadmap. Commands are checked anyway by exit item 3, and audio in M6C. |
 | — | M6A exit checklist and budgets | As listed in [M6A exit checklist](#m6a-exit-checklist). | **Decided: as listed** | Every budget is measured on the minimum-spec laptop. |
 | — | 2D Courtyard run | When the owner-requested 2D run happens. | **Decided: at M6-7** | Courtyard's movement moves into a game system there. |
+
+## Implementation notes (2026-11-24)
+
+M6A landed as one change on Windows, in the step order above. Where the code differs from the plan:
+
+**Steps M6-6 and M6-7 landed together for the content.** The converted scenes store the final game component names (`Samples::RotatorComponent`, `Courtyard::PlayerComponent`, and so on). Otherwise the converter would have written interim engine names, and an alias pass would have followed one step later. This avoids a loader for the old sample classes that M6-7 would have deleted.
+
+**Game roots.**
+- [Games/Samples](../Games/Samples) holds:
+  - the 3D samples and the stress scenes,
+  - the component and system sources,
+  - `Tools/SamplesTool`, which runs the Puzzle, Collection and benchmark generators.
+- [Games/Courtyard](../Games/Courtyard) holds the 2D Courtyard and Orthographic levels.
+- Each root has `Content/` with its own `Project.ravenproject`, `Source/`, and a three-line `CMakeLists.txt` that calls `raven_add_game` from [RavenGame.cmake](../cmake/RavenGame.cmake).
+- [RavenGameModule.cmake](../cmake/RavenGameModule.cmake) configures one child build per root (`GameBuild/<Name>`, producing `<Name>.dll`). It writes one generated `WatchedInputs.txt` per game, which replaces the four hand-kept lists.
+- A game root's `Tools/*.cpp` build as `<Name>Tool` with the host.
+- The two roots each keep a copy of `UVGrid.png`, `UVGridAlternate.png` and the win sound (under 25 KB).
+
+**The generic host.**
+- `RavenEngine.exe --game <Name>` runs a root; `Samples` is the default (`RAVEN_DEFAULT_GAME`).
+- Any other `--name` option goes to the game, through `GameServices::HasOption`. The Samples game flies freely by default and shows the orbit demo with `--orbit`.
+- `ApplicationClient`, `GameBindings` and `GameUpdateResult` left the public API.
+- The engine session ([GameSession](../RavenEngine/Private/Core/GameSession.cpp)) owns:
+  - the project and the scene session, whose generic factory decodes, instantiates and leases;
+  - the commands and the picks;
+  - the one-shot sound;
+  - the developer keys: F3 restart, F4 next scene, F5 reload the module, F7 render view, and F8 to pause or resume play.
+- F8 is the engine play state of FD-12: game phases do not run while paused.
+
+**Drawing.**
+- The engine draws the entity tagged `ActiveCameraComponent`. This replaces `Scene::SelectCamera`; switching cameras moves the tag through Commands.
+- The engine draws the scene's `LightingComponent`.
+- Sprites are drawn by an engine gather of `SpriteComponent` and the cached world transform, until they move onto the render world in M6B.
+- The transparency demo quads that the old 3D client drew in every scene are now four sprite entities in each 3D scene.
+
+**`SystemContext`.**
+- It carries `World`, `Input`, `Time`, `Picks`, `Commands` and `Services`.
+- `GameServices` offers `PlaySound`, `StopSounds`, `HasOption` and `SetTracePhase`. The benchmark's rotor phase comes from the game, not the host.
+- Audio stays the single one-shot voice until M6C.
+
+**Scene internals.**
+- Each owned entity has a node at its registry slot, with its parent, a child list, its depth and its persistent ID. Entities sit in one bucket per depth.
+- IDs come from SplitMix64 over one OS-random seed per scene. Drawing every ID from the OS would cost one system call per entity, about 100 ms for a 100k scene.
+- Names stay unique labels for now, as before. FD-09 allows shared labels; that relaxation lands with prefabs, its first user.
+
+**Error boundary.** Each engine update stage runs inside a boundary: scene preparation, gameplay, world transforms and the render-world sync. `std::bad_alloc`, `std::logic_error` and non-standard exceptions still end the process. A repeated failure logs once until the stage recovers. `RenderWorld::Sync` clears itself when it throws, and the render-world generation is unique across the process.
+
+**Assets.**
+- A scene load leases every `AssetRef` in the file. A reference to a missing file rejects the candidate, and the last good scene stays.
+- The render world resolves a mesh reference only when the object is added or its mesh component changes.
+- `raven-project 2` drops the scene type and skips unknown records with a warning.
+
+**Tools.**
+- `RavenSceneTool` is generic, with `validate`, `dump`, `apply`, `position|rotation|scale <label>` and `stage-player`. Player staging collects every `AssetRef` of the selected scenes.
+- The `upgrade` and `prune` commands of FD-16 and FD-11 are **not written yet**. The aliases they retire work today in files and in migration. The commands follow when a rename is retired.
+
+**Migration** ([Registry::Migrate](../RavenEngine/Private/ECS/Registry.cpp)).
+- Planned as written in H6.
+- A renamed type takes over its old pool through `RAVEN_COMPONENT_ALIASES`, and converted elements are stamped changed.
+- A field that changes type rejects the module with a message, and the last good module stays.
+
+**Tests.**
+- `HierarchyTests` moved to the CPU through the asset-less `Scene(Registry&)` constructor (M6-5), so CI runs it. The change-tick case lives there, because it needs a `Scene`.
+- `SceneFileTests` (new, CPU) covers:
+  - the save/load and text round trips,
+  - deterministic bytes,
+  - an older layout,
+  - unknown types and sections.
+- `RegistryTests` gained the field-table and migration cases. `Tests/Support/TestWorld.hpp` is deleted.
+- The smoke test runs the Samples game on the engine session.
+
+**Defects found while implementing, all fixed.**
+- `ParentComponent` was missing from the engine registration list, so saved parents did not load (caught by `SceneFileTests`).
+- The public inline `Scene::FindComponent` called a private, unexported function, so game code could not have linked it (caught by the smoke build).
+- Sounds resolved against the engine's `Content` folder instead of the game's, so the win sound failed (caught by the live script). The session now plays the scene's own lease.
+- `Scene` reserved exactly one more element before each new entity, so loading was quadratic: 68.8 s for the 100k-mesh scene, now 0.9 s (caught by a load probe).
+- The first loader created entities in file order, which is sorted by random ID, so nodes and pools ended up in random order relative to the hierarchy. The 50k-animated benchmark dropped from 165 to 151 FPS, and the world pass took 4.5 ms. The loader now creates entities breadth-first, with siblings together, and adds component rows in that order. The world pass also reads a compact 24-byte slot per entity instead of the whole node.
+
+## M6A exit record (2026-11-24)
+
+Windows, RTX 3070 Ti Laptop (minimum spec). Release unless noted. Temporary probes and captures are in the ignored `out/` folder.
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | A game-only component, authored in a file, edited while running | **Pass.** A live Debug session added `Samples::AttemptComponent::Visits` (migrated 1 value), renamed it to `Count` through an alias, and changed its type, which was refused with the last good module kept. It then restored the original layout. Each accepted edit was active 1.7–1.9 s after the save, with about 41 ms of activation. The `RegistryTests` migration case covers rename, added defaults and refusal. |
+| 2 | Generic codec round trip in CI | **Pass locally:** `SceneFileTests` (CPU). CI runs it on the next push. |
+| 3 | Spawn 1k plus despawn 1k ≤ 1.0 ms; reparent 1k ≤ 1.0 ms, at 100k | **Partly met.** Reparenting 1k takes 0.37–0.55 ms. Spawning 1k takes 1.0–1.3 ms and despawning 1k 0.57–0.68 ms, so the pair takes about 1.6–2.0 ms. Each case includes one world update, whose floor at 100k entities is 0.37–0.52 ms. Before M6A these were 17.6, 378 and 17.7 ms. The 1.0 ms target for the pair is missed; see the review question below. |
+| 4 | No steady-state regression: 50k animated CPU p95 ≤ 3.5 ms | **Budget met, with a regression.** In three M6A runs (FIFO, 165 Hz panel): 164.8–165.1 FPS, every frame under 5 ms of CPU, and CPU preparation p95 of 3.24–3.42 ms. In four pre-M6 runs (`9b2cf05`) the same day, p95 was 2.47–3.20 ms. The world pass costs about 0.3 ms more (p50 1.37–1.39 against 1.07–1.19 ms), and the render-world sync about 0.27 ms more (0.90–0.93 against 0.63–0.69 ms). The sync's code is unchanged apart from a cheaper mesh-group path, and the cause is not found. |
+| 5 | 100k scene load no slower than the old reader | **Pass (owner-requested measurement, 2026-11-24).** Same 100k-mesh benchmark scene (200k entities), Release, median of 5. The pre-M6 path (`9b2cf05`) took about 1.67 s: decode 754 ms, building the level 850 ms, first world update 62 ms. M6A takes about 0.66 s: decode 33 ms, instantiate 600 ms, first world update 25 ms. M6A's instantiate time breaks down as follows: creating entities about 200 ms (half of it labels), adding 420k components about 135 ms, applying 200k parents about 75 ms, and putting entities in hierarchy order about 190 ms. That last step first took 0.9 s more, because it looked up each row's position inside the sort comparison; it now looks each row up once. |
+| 6 | Migrating 100k values ≤ 20 ms | **Pass:** 1.0–1.6 ms for every Transform at 100k entities (`EcsBenchmark`). |
+| 7 | Converted scenes give the same world and image | **Pass.** The rewritten generators reproduce the converted Puzzle, Collection and benchmark scenes, compared with IDs replaced by labels. All six 3D captures are within the M2 tolerance of the pre-M6 references; at most 2 pixels in 921,600 differ beyond 2/255, and two scenes are identical. The 2D Orthographic first frame is identical to the pre-M6 engine's. |
+| 8 | A game header edit reloads; an engine header edit asks for a restart | **Pass** in the same live session (`Game contract changed: rebuild and restart the host`). |
+| 9 | Data errors at new stages are logged, not fatal | **Partly verified.** Unknown types, fields and sections, and dangling parents, are covered by `SceneFileTests`. A malformed scene save is covered by the smoke test. Commands on a gone entity follow the same path but have no test. |
+| 10 | Samples, stress and Courtyard run from game roots, using only `RavenEngine/Public` | **Pass.** Game builds include only `RavenEngine/Public` and their own folders. Both CI configurations build with warnings as errors, and the smoke test passes. The 2D run: the Courtyard first frame shows the authored level, and a gameplay probe passed. It checked the wall, the win, the restart, the loss, the F2 camera switch through Commands and the F1 order toggle. |
+
+
+**Live reload scripts** (`Test-Windows3DLive.py`, 2026-11-24): every case passed in Debug and Release. This includes the relocated `--no-watch` launch, shader, scene, PNG and FBX edits, and their rejections. Without validation layers (Release), a game rule edit was active 1.68–1.72 s after the save, against 1.63–1.87 s in the M5 record. Idle CPU per frame was 0.29–0.42 ms with watching and 0.29–0.33 ms with `--no-watch`.
+
+**Review questions.**
+1. Item 3: **accepted (owner, 2026-11-24).** 1.6–2.0 ms for 1k spawns plus 1k despawns at 100k entities stays as measured. The owner sees no valid case for spawning that many units at once, so no optimization is scheduled.
+2. Item 4: **accepted (owner, 2026-11-24).** The remaining 0.3–0.5 ms steady-state cost at 50k animated stays within budget. The render-world sync difference is investigated in M6-9, which rewrites that sync.

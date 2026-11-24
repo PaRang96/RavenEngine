@@ -4,16 +4,17 @@
 // The layout mirrors the 3D benchmark scenes: row roots own pivots, each pivot owns one
 // mesh entity, and one pivot in five has a rotator.
 
-#include "Raven/Components/InteractionComponents.hpp"
 #include "Raven/Components/TransformComponent.hpp"
+#include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
-#include "Support/TestWorld.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <array>
 #include <random>
+#include <span>
 #include <vector>
 
 namespace RavenTests
@@ -23,13 +24,26 @@ namespace RavenTests
 		float Rate = 0.5f;
 		RAVEN_COMPONENT(RavenTests::BenchmarkSpin, Rate);
 	};
+
+	// The layout of the Samples game's rotator (Games/Samples/Source/SampleComponents.hpp), so the
+	// recorded numbers stay comparable now that sample components leave the engine.
+	struct RotatorComponent : Raven::ECS::Component
+	{
+		Raven::ECS::EntityRef Switch;
+		Raven::Vec3 BaseRotation{};
+		Raven::Vec3 Rotation{};
+		float Duration = 1.0f;
+		float Progress = 0.0f;
+		Raven::Vec3 OffsetRotation{};
+		RAVEN_COMPONENT(RavenTests::RotatorComponent, Switch, BaseRotation, Rotation, Duration, Progress, OffsetRotation);
+	};
 }
 
 namespace
 {
 	using Raven::Scene;
 	using Raven::ECS::Entity;
-	using Raven::ECS::RotatorComponent;
+	using RavenTests::RotatorComponent;
 	using Raven::ECS::TransformComponent;
 
 	volatile float Sink = 0.0f;
@@ -75,10 +89,10 @@ namespace
 			milliseconds * 1.0e6 / static_cast<double>(operations));
 	}
 
-	void RunSize(RavenTests::TestWorld& world, std::size_t pivotCount)
+	void RunSize(std::size_t pivotCount)
 	{
-		auto& registry = world.Registry;
-		Scene scene(registry, world.Store);
+		Raven::ECS::Registry registry;
+		Scene scene(registry);
 		std::vector<Entity> meshes;
 		meshes.reserve(pivotCount);
 		std::vector<Entity> pivots;
@@ -293,6 +307,25 @@ namespace
 				scene.SetParent(pivots[index], rows[moved ? 1 : 0]);
 			scene.UpdateWorldTransforms();
 		}));
+
+		// Field migration of every Transform (docs/HotReloadDesign.md, H6): a layout with one
+		// added field, then back. The budget is 20 ms for 100k values (docs/DataModelDesign.md).
+		const auto* current = registry.FindSchema(TransformComponent::TypeId);
+		auto widened = *current;
+		widened.Fields.push_back({ "Extra", static_cast<std::uint32_t>(current->Size), 4, Raven::ECS::FieldKind::Float32,
+			0, { 1, 1 }, 0, {} });
+		widened.Size += 4;
+		widened.LayoutHash ^= 1;
+		widened.Defaults.resize(widened.Size);
+		const std::array layouts{ *current, widened };
+		std::size_t layout = 0;
+		Report("Migrate every Transform (one added field)", entities, registry.Count<TransformComponent>(), MedianMilliseconds([&]
+		{
+			layout = 1 - layout;
+			registry.Migrate(std::span(&layouts[layout], 1));
+		}));
+		if (layout == 1)
+			registry.Migrate(std::span(&layouts[0], 1));
 	}
 }
 
@@ -307,9 +340,8 @@ int main()
 #endif
 		std::printf("| %-48s | %7s | %9s | %8s |\n", "Case", "Entities", "Median ms", "ns/op");
 		std::printf("| %-48s | %7s | %9s | %8s |\n", "---", "---:", "---:", "---:");
-		RavenTests::TestWorld world("RavenEngine EcsBenchmark");
 		for (const std::size_t pivots : { 5'000u, 25'000u, 50'000u })
-			RunSize(world, pivots);
+			RunSize(pivots);
 		return 0;
 	}
 	catch (const std::exception& error)

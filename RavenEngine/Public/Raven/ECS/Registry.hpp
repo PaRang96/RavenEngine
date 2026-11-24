@@ -12,6 +12,8 @@
 #include <memory>
 #include <new>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -20,6 +22,7 @@ namespace Raven
 {
 	class Scene;
 	class SceneAccess;
+	class SceneSerializer;
 	class RenderWorldSync;
 }
 
@@ -111,11 +114,93 @@ namespace Raven::ECS
 	template<typename... T>
 	class View;
 
+	// Host-owned copy of one component's field table (docs/DataModelDesign.md, FD-08). It never
+	// refers to the declaring module, so it outlives module replacement.
+	struct FieldSchema
+	{
+		std::string Name;
+		std::uint32_t Offset = 0;
+		std::uint32_t Size = 0;
+		FieldKind Kind = FieldKind::Opaque;
+		std::uint8_t Flags = 0;
+		std::array<std::uint32_t, 2> Extent{ 1, 1 };
+		std::uint64_t Tag = 0;
+		// Earlier names of this field (RAVEN_COMPONENT_ALIASES).
+		std::vector<std::string> OldNames;
+	};
+
+	struct ComponentSchema
+	{
+		std::uint64_t Id = 0;
+		std::string Name;
+		std::size_t Size = 0;
+		std::size_t Alignment = 0;
+		std::uint64_t LayoutHash = 0;
+		// ComponentInfo::Flags, for example ComponentIsTransient.
+		std::uint32_t Flags = 0;
+		std::vector<FieldSchema> Fields;
+		// The value-initialized component with zeroed padding; new fields and fields missing
+		// from a file take these bytes.
+		std::vector<std::byte> Defaults;
+		// Earlier names of this type (RAVEN_COMPONENT_ALIASES).
+		std::vector<std::string> OldNames;
+
+		// The field whose value a stored field named `name` supplies: same name, or an old name.
+		RAVEN_API const FieldSchema* FindField(std::string_view name) const noexcept;
+	};
+
+	// Same kind, flags, extents, tag and size: the bytes of one can be copied into the other.
+	RAVEN_API bool IsSameFieldType(const FieldSchema& left, const FieldSchema& right) noexcept;
+
+	// What a field migration did to one component (docs/HotReloadDesign.md, H6).
+	struct ComponentMigration
+	{
+		std::string Name;
+		std::size_t Elements = 0;
+		std::vector<std::string> Added;
+		std::vector<std::string> Removed;
+		std::vector<std::string> Renamed;
+	};
+
+	// Copies a module's field table. Throws std::logic_error when it does not describe the type.
+	RAVEN_API ComponentSchema MakeComponentSchema(const ComponentInfo& info, std::span<const std::byte> defaults);
+	// Same identity and byte layout; field names and types are part of the layout hash.
+	RAVEN_API bool IsSameLayout(const ComponentSchema& left, const ComponentSchema& right) noexcept;
+
     class Registry
     {
     public:
         RAVEN_API Registry();
         RAVEN_API ~Registry();
+
+		// Field tables (docs/DataModelDesign.md, FD-08). Typed Add registers its type on first
+		// use; engine and game components are also registered up front, so files can name
+		// types that no entity has yet. Registering an equal layout again does nothing.
+		// False when the type's ID is already registered with another name or layout.
+		// Throws std::logic_error for a field table that does not describe the type.
+		template<ComponentType T>
+		bool Register()
+		{
+			std::array<std::byte, sizeof(T)> defaults;
+			if (!Detail::CaptureDefaults<T>(defaults.data()))
+				throw std::logic_error(std::string("Component fields are not at their natural offsets: ") +
+					std::string(T::TypeName));
+			return RegisterComponent(ComponentTraits<T>::Info, defaults);
+		}
+		RAVEN_API bool RegisterComponent(const ComponentInfo& info, std::span<const std::byte> defaults);
+		RAVEN_API bool RegisterSchema(const ComponentSchema& schema);
+		// Field migration (docs/HotReloadDesign.md, H6; docs/DataModelDesign.md, FD-16). Empty when
+		// every schema is new, unchanged, or can replace its registered layout: fields keep their
+		// values by name or old name, new fields take their defaults, removed fields are dropped,
+		// and a renamed type takes over its old pool. Otherwise the reason, such as a field that
+		// changed type.
+		RAVEN_API std::string CheckMigration(std::span<const ComponentSchema> schemas) const;
+		// Applies the schemas, converting every stored element and stamping it changed. Nothing
+		// changes when CheckMigration fails (std::logic_error) or while a view iterates.
+		RAVEN_API std::vector<ComponentMigration> Migrate(std::span<const ComponentSchema> schemas);
+		RAVEN_API const ComponentSchema* FindSchema(std::uint64_t id) const noexcept;
+		// Ordered by type name.
+		RAVEN_API std::vector<const ComponentSchema*> GetSchemas() const;
 
 		// Throws std::logic_error while a view iterates.
         RAVEN_API Entity Create();
@@ -141,6 +226,8 @@ namespace Raven::ECS
 		template<ComponentType T>
 		bool Add(Entity entity, const T& value)
 		{
+			if (!FindSchema(T::TypeId))
+				Register<T>();
 			return AddComponent(entity, ComponentTraits<T>::Info, &value);
 		}
 		template<ComponentType T>
@@ -238,6 +325,8 @@ namespace Raven::ECS
     private:
 		friend class ::Raven::Scene;
 		friend class ::Raven::SceneAccess;
+		// Reads and writes whole pools for scene files (docs/DataModelDesign.md, FD-10).
+		friend class ::Raven::SceneSerializer;
 		// Reads change ticks of whole pools, like Scene (docs/GpuDrivenDesign.md, G1).
 		friend class ::Raven::RenderWorldSync;
 		template<typename... T>

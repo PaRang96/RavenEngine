@@ -1,5 +1,7 @@
 # Mesh materials and scene lighting
 
+> **Since M6A (2026-11-24):** this game lives in `Games/Samples` ([EngineModules.md](EngineModules.md#game-roots-m6a)), its components are game components (`Samples::...`), and scenes use the generic format ([SceneWorkflow.md](SceneWorkflow.md#scene-files)). Sections that name `SceneDocument`, `PerspectiveLevel`, `GameBindings` or `Private/Game` describe the layout before M6A.
+
 Perspective and Gallery use the same imported-mesh, ECS, renderer and development reload path. F4 follows the project scene order, including Assemblies and Puzzle. F3 restarts the selected level in free-fly mode.
 
 ## Windows launch and live files
@@ -8,10 +10,10 @@ Build the host after adopting shared component, vertex and handle definitions. T
 
 ~~~powershell
 Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
+& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' 
 ~~~
 
-The development run logs its configured absolute source paths and reads the active level under the repository's `Content/Levels`, independent of the working directory. A valid save restarts the attempt automatically. F3 still restarts manually; F4 follows the current family's scene records in `Content/Project.ravenproject`. Ordinary runs use executable-relative staged Content.
+The development run logs its configured absolute source paths and reads the active level under the game's `Games/Samples/Content/Levels`, independent of the working directory. A valid save restarts the attempt automatically. F3 still restarts manually; F4 follows the current family's scene records in `Content/Project.ravenproject`. Ordinary runs use executable-relative staged Content.
 
 Material PNG and FBX workers follow acquired asset UUIDs and source paths from the project catalog. New supported assets and scenes can be added through files and metadata while the development host runs. Source replacements preserve existing runtime identities and game state; level values change by restarting the authored attempt. Compatible `Private/Game/RavenGame.cpp` body edits use the existing game watcher.
 

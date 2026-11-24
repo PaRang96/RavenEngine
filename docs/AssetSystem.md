@@ -86,7 +86,7 @@ Across 12 saves per preset without the screenshot layer, save to present took 13
 
 ## Samples and batching
 
-Both sample clients own a SampleAssets adapter around SceneProject. UUID/type/path/settings and ordered scene records come from `Content/Project.ravenproject`; the adapter retains only explicit leases for the 3D diagnostic quads. Scenes acquire their own dependencies through AssetStore. UUIDs are never regenerated at startup. Host clients, projects and their leases are destroyed before the renderer.
+The engine game session owns the SceneProject of the running game root (before M6A, each sample client owned a SampleAssets adapter). UUID/type/path/settings and ordered scene records come from `Games/<Name>/Content/Project.ravenproject`; the adapter retains only explicit leases for the 3D diagnostic quads. Scenes acquire their own dependencies through AssetStore. UUIDs are never regenerated at startup. Host clients, projects and their leases are destroyed before the renderer.
 
 The samples use the same draw and batching paths for initial and reloaded assets. The asset cache ensures requests for the same ID use the same texture object. Current batching combines adjacent draws using the same mesh and texture within one pass while preserving transparent ordering. A shared FBX file ID alone does not cause its contents to render in one draw.
 

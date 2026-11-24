@@ -1,42 +1,89 @@
-# Engine and sample modules
+# Engine modules and game roots
 
-The Windows build separates reusable engine code from sample code:
+Since M6A (2026-11-24, [DataModelDesign.md](DataModelDesign.md)) the engine and each game build separately. A game lives in its own folder under `Games/` and sees only `RavenEngine/Public`:
 
 | Target | Output | Responsibility |
 | --- | --- | --- |
-| `RavenCore` | `RavenCore.dll` and import library `RavenCore.lib` | Application loop, platform backend, input, logging, scene/project services, scoped asset ownership and Vulkan resources |
-| `RavenEngine` | `RavenEngine.exe` | Entry point, window description, perspective/orthographic samples, camera controls, and animation |
-| `RavenGame` | `RavenGame.dll` | Replaceable sample movement code; standalone child build links the completed engine import library |
+| `RavenCore` | `RavenCore.dll` and import library `RavenCore.lib` | Application loop, the engine game session, platform backends, input, logging, ECS, scene/project services, scene files, asset ownership and Vulkan resources |
+| `RavenEngine` | `RavenEngine.exe` | The generic host ([Private/Host](../RavenEngine/Private/Host/RavenEngine.cpp)): runs one game root with `--game <Name>` (default `Samples`) |
+| `<Name>Game` | `<Name>.dll` | One game module per `Games/<Name>`, built by a standalone child project that links the completed engine import library |
+| `<Name>Tool` | `<Name>Tool.exe` | Optional tools of a game root (`Games/<Name>/Tools/*.cpp`), for example the Samples scene generators |
+| `RavenSceneTool` | `RavenSceneTool.exe` | Generic scene file commands: `validate`, `dump`, `apply`, `position`/`rotation`/`scale`, `stage-player` |
 | `RavenShaders` | Validated SPIR-V under `Shaders/<config>/` | Build dependency of `RavenCore` |
-| `RavenContent` | Runtime copies under `Content/` beside the sample | Stages validated shaders, discovered Content files, metadata and licenses before the engine/sample build |
+| `RavenContent` | Runtime copies beside the executable | Stages engine shaders and licenses under `Content/`, and each game's content under `Games/<Name>/Content/` |
 
-The DLL and executable are emitted together under `out/build/x64-debug/RavenEngine/` or `out/build/x64-release/RavenEngine/`. Existing executable paths and launch configurations remain valid. The `.lib` is an import library used when linking the sample; the engine implementation remains in the DLL, which is required at runtime. Shader lookup now uses executable-relative `Content/Shaders`; see [RuntimeUtilities.md](RuntimeUtilities.md) for relocation and content-root overrides.
+Everything is emitted under `out/build/<preset>/RavenEngine/`. Shader lookup uses executable-relative `Content/Shaders`; see [RuntimeUtilities.md](RuntimeUtilities.md).
 
-## Current scene and asset workflow
+## Game roots (M6A)
 
-Both sample families use SceneProject, SceneSession and Scene. The project catalog stores asset UUID/type/path/settings and family-specific scene order. Scene owns entities, selected camera/gameplay bindings and AssetStore leases. Compatible game replacement retains these host objects. Successful level saves restart the authored attempt; PNG/FBX and compatible DLL replacement preserve its runtime state. Development reads configured source paths, including an absolute shader source path, while ordinary execution reads staged Content. See [SceneWorkflow.md](SceneWorkflow.md) for ownership, format, complete commands, rejection policies and validation.
+```
+Games/<Name>/
+    CMakeLists.txt     three lines: project, include RavenGame.cmake, raven_add_game(<Name>)
+    Source/            the module: components, systems, RavenRegisterSystems
+    Content/           Project.ravenproject, scenes and assets
+    Tools/             optional host-built tools
+```
+
+- **Samples** holds the 3D samples (Perspective, Gallery, Assemblies, Puzzle, Collection) and the benchmark scenes. It flies freely by default and runs the orbit demo with `--orbit`. `SamplesTool create-puzzle|create-collection|create-benchmark` regenerates the tool-made scenes.
+- **Courtyard** holds the 2D Courtyard and Orthographic levels: WASD, arrows/wheel/PageUp/PageDown/Home for the camera, F1 order, F2 camera.
+- The engine host owns the developer keys: F3 restart scene, F4 next scene, F5 reload the module, F7 render view, F8 pause.
+- Any other `--name` launch option is the game's, through `GameServices::HasOption("name")`.
+
+**Writing game code.**
+- Components derive from `ECS::Component`, list their fields with `RAVEN_COMPONENT`, and are declared to the host with `systems.Component<T>()` in `RavenRegisterSystems`.
+- Systems receive a `SystemContext`:
+  - `World`, the scene access;
+  - `Input` and `Time`;
+  - `Picks`, the left-click hits of the presented frame;
+  - `Commands`, deferred spawns, despawns, reparenting and component adds or removes, applied after each fixed step and after `Update`;
+  - `Services`: sound, launch options, and the benchmark trace value.
+- Entities refer to each other through `EntityRef`, resolved with `World.Resolve`. Assets are referenced with `AssetRef<T>`.
+- `WorldTransformComponent` and `ParentComponent` are host-owned: game code reads them, and changes the parent through `Commands.SetParent`.
+
+**What reloads.** The module contract hashes only the engine's public surface: `RavenEngine/Public`, the game-facing CMake (`GameContract.cmake`, `RavenBuildSettings.cmake`, `RavenGame.cmake`, `RavenGameSources.cmake`) and the toolchain.
+- **Game code:** any edit in a game root rebuilds and reloads the module. Component layout changes migrate retained values by field name ([HotReloadDesign.md](HotReloadDesign.md#h6--field-level-component-migration-q7)):
+  - matching names and types copy;
+  - new fields take their defaults;
+  - removed fields are dropped;
+  - `RAVEN_COMPONENT_ALIASES("Old::TypeName", "OldField=NewField")` carries renames;
+  - a field that changes type is refused, and the last good module stays.
+- **Engine public headers:** an edit still needs a host rebuild and restart, and the running host says so.
 
 ## CMake layout
-
-The build entry points keep target names, output directories and preset commands stable. Build rules are grouped by responsibility:
 
 | File | Responsibility |
 | --- | --- |
 | `CMakeLists.txt` | Project, host debugger policy, tooling, Vulkan discovery and loading shared defaults |
-| `cmake/RavenBuildSettings.cmake` | Shared language/runtime/export defaults and the optional private standard-library PCH helper |
-| `RavenEngine/CMakeLists.txt` | RavenCore/RavenEngine target setup, interfaces, compile definitions and module ordering |
-| `cmake/RavenSourceDiscovery.cmake` | Cached folder discovery shared by enrollment and game compatibility/build checks |
-| `cmake/RavenSources.cmake` | Assign discovered public/common/sample files to their owning target |
-| `cmake/RavenGameSources.cmake` | Game folder discovery shared by compilation and content-based rebuild checks |
+| `cmake/RavenBuildSettings.cmake` | Shared language/runtime/export defaults, the warning policy and the optional private standard-library PCH helper |
+| `RavenEngine/CMakeLists.txt` | RavenCore/RavenEngine/RavenSceneTool target setup, interfaces, compile definitions and module ordering |
+| `cmake/RavenSourceDiscovery.cmake` | Cached folder discovery shared by enrollment and game builds |
+| `cmake/RavenSources.cmake` | Assign discovered public/private/host/tool files to their owning target |
 | `cmake/RavenPlatform.cmake` | Select the native folder from the shared discovery result; configure platform dependencies/settings |
-| `cmake/RavenContent.cmake` | Shader registration/validation, automatic Content discovery/staging, and configured development source roots |
+| `cmake/RavenContent.cmake` | Shader registration/validation, and staging of shaders, licenses and every game root's content |
 | `cmake/RavenBuildEnvironment.cmake` | Capture selected compiler/SDK environment variables once at host configuration |
-| `cmake/RavenGameModule.cmake` | Optional standalone game build, host contract, generated environment and build configuration |
-| `RavenEngine/Private/Game/CMakeLists.txt` | Independent game-DLL project linking the completed engine import library |
+| `cmake/RavenGameModule.cmake` | Discover `Games/*`, the engine contract, one child build (`GameBuild/<Name>`), one `WatchedInputs.txt` and one `<Name>Game` target per game, and the game tools |
+| `cmake/RavenGame.cmake` | `raven_add_game(<Name>)` for a game root's child project |
+| `cmake/RavenGameSources.cmake` | A game root's `Source/` files, shared by compilation and content-based rebuild checks |
+| `cmake/GameContract.cmake` | The engine contract inputs and their hash |
 
-These included modules configure the existing targets in the engine source/binary directory scope. They do not introduce extra libraries or move build outputs. Shader outputs and staging lists are generated from registrations. Presets inherit common output paths, platform toolchains, architecture and Debug/Release settings; unused C compiler entries are removed from the C++ projects.
+While the host runs, build a game only through `cmake -P out/build/<preset>/RavenEngine/GameBuild/<Name>/BuildGame.cmake`; full engine builds can try to overwrite loaded files.
 
-Keep shared build helpers under `cmake/`: `GameContract.cmake` fingerprints its `.cmake` and `.in` files, and the runtime source poller watches that directory. Extracted rules therefore remain covered by the rebuild/restart contract. The standalone project and generated `GameBuild/BuildGame.cmake` continue to avoid rebuilding the loaded host; use the generated script during a running session.
+### Where to make a build change
+
+| Change | Edit once |
+| --- | --- |
+| Add an engine C++ file or header | Place it under `RavenEngine/Public` or `RavenEngine/Private`; `cmake/RavenSources.cmake` discovers it |
+| Add a native backend file | Place it in Private/Platform/Windows, Mac or Linux; only the selected folder is compiled |
+| Add a platform dependency | Configure it once in `cmake/RavenPlatform.cmake` |
+| Add a game C++ file or header | Place it in `Games/<Name>/Source`; the child build and the build-input check use the same discovered set |
+| Add a game | Create `Games/<Name>` with the three-line `CMakeLists.txt`, `Source/` and `Content/Project.ravenproject`, and reconfigure |
+| Add a shader | Add one `raven_add_shader(source, profile, entry)` call in `cmake/RavenContent.cmake` |
+| Add an engine runtime file | Add one `raven_stage_file(project_relative_path)` call in `cmake/RavenContent.cmake` |
+| Change language/CRT/export defaults | Change `cmake/RavenBuildSettings.cmake`; every project includes it |
+| Disable engine PCH | Configure with `-DRAVEN_USE_PCH=OFF` |
+| Change the game the host runs by default | Configure with `-DRAVEN_DEFAULT_GAME=<Name>` |
+
+The sections below are earlier records, kept for their evidence. Where they name `Private/Game`, `Private/Samples`, `RavenGame.dll`, `ApplicationClient` or `GameBindings`, they describe the layout before M6A.
 
 ### Automatic C++ enrollment - 2026-11-01
 
@@ -45,20 +92,6 @@ Ordinary file additions/removals require no CMake source-list edit. Public .hpp 
 RavenSourceDiscovery scans each folder once per CMake invocation and caches that result only for that invocation. The host reuses its Private scan for common code, sample code and native backend selection, and reuses its Public scan for the compatibility contract. Generated out/, Content and ThirdParty trees are outside C++ source discovery. Shader profiles/entry points, platform dependencies and runtime staging retain explicit registrations because those files need additional build metadata.
 
 CONFIGURE_DEPENDS checks filename changes at build time and regenerates the build system when needed. This intentionally uses scoped discovery for the current Ninja workflow; CMake documents its per-build check cost and generator limitations in the [file command reference](https://cmake.org/cmake/help/v3.24/command/file.html#filesystem). Ordinary source-body edits continue through compiler dependency tracking. Public/game header and build-rule changes remain covered by the conservative host-rebuild/restart contract.
-
-### Where to make a build change
-
-| Change | Edit once |
-| --- | --- |
-| Add an engine/sample C++ file or header | Place it under the owning Public/Private folder; `cmake/RavenSources.cmake` discovers it automatically |
-| Add a native backend file | Place it in Private/Platform/Windows, Mac or Linux; only the selected folder is compiled |
-| Add a platform dependency | Configure it once in `cmake/RavenPlatform.cmake` |
-| Add a game C++ file or header | Place it in Private/Game; the standalone target and build-input check use the same discovered set |
-| Add a shader | Add one `raven_add_shader(source, profile, entry)` call in `cmake/RavenContent.cmake` |
-| Add a runtime file | Add one `raven_stage_file(project_relative_path)` call in `cmake/RavenContent.cmake`; supply an optional destination for an alias |
-| Change language/CRT/export defaults | Change `cmake/RavenBuildSettings.cmake`; both projects include it |
-| Disable engine/sample PCH | Configure with `-DRAVEN_USE_PCH=OFF`; the game target does not use PCH |
-| Change common build paths/toolchain/profile settings | Change the corresponding hidden base in `CMakePresets.json` |
 
 A shader registration adds the source to the engine target, marks it as a source-only HLSL file, creates its compile/validation rule and derives its SPIR-V/staged output name. Runtime-file registration supplies both dependencies and source/destination lists for the generic StageContent template; that template contains no asset names. One generated staging script restores missing runtime shaders, textures and licenses, while identical files retain their timestamps.
 

@@ -127,20 +127,25 @@ Planning decision 1 (2026-11-24); see [ROADMAP.md](ROADMAP.md#pre-m6-hardening).
 - [x] Write the M6 design note: FD-06 to FD-17 (the assessment's D-A to D-I), starting with the game project layout and contract (FD-17), and the stage exit checklists: [DataModelDesign.md](docs/DataModelDesign.md) (2026-11-24).
 - [x] Decisions FD-06 to FD-17, Q16, the M6A exit checklist and the 2D-run timing (2026-11-24). The owner delegated the choice to business alignment and future expandability; every recommendation was adopted, with two refinements (FD-08 metadata outside the layout hash, FD-10 deterministic output). See [Owner decisions](docs/DataModelDesign.md#owner-decisions).
 
-## M6A — Host and data model (next)
+## M6B — Rendering and content (next)
+
+- [ ] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4).
+
+## M6A — Host and data model (implemented 2026-11-24, pending review)
 
 Order and decisions per step: [DataModelDesign.md](docs/DataModelDesign.md#step-order-and-what-each-step-uses). Exit: [M6A exit checklist](docs/DataModelDesign.md#m6a-exit-checklist).
 
-- [ ] Add the CPU change-tick case to `RegistryTests` before M6-3.
-- [ ] M6-1: engine frame pipeline, the tiered error rule (FD-06) and the frame boundary; transactional `Sync` reset; process-wide GPU-scene generation.
-- [ ] M6-2: field table from `RAVEN_COMPONENT` with type tags in `LayoutHash` (plus its `static_assert`), registered through the module table (FD-08).
-- [ ] M6-3: persistent ID table and `EntityRef` first (FD-09), then `ParentComponent`, host-owned components and the incremental child index (FD-07).
-- [ ] M6-4: `EntityRef` in components, `AssetRef<MeshAsset>` replacing `MeshHandle` (FD-09).
-- [ ] M6-5: scene/asset seam; `Pick` as a free function; `HierarchyTests` to CPU.
-- [ ] M6-6: generic chunked format with per-section field lists, unknown sections kept, aliases, `dump`/`apply`/`upgrade`/`prune`, `raven-project 2`; regenerate six scenes, convert five, delete the old readers; codec round-trip test (FD-10, FD-11, FD-16).
-- [ ] M6-7: `Games/Samples` and `Games/Courtyard` with one generic host (FD-17), the `SystemContext` break and session play state (FD-12), Commands (FD-14), and the 2D Courtyard run.
+- [x] The CPU change-tick case, in `HierarchyTests` (it needs a `Scene`, which runs on the CPU since M6-5).
+- [x] M6-1: engine frame pipeline, the tiered error rule (FD-06) and the frame boundary; transactional `Sync` reset; process-wide GPU-scene generation.
+- [x] M6-2: field table from `RAVEN_COMPONENT` with type tags in `LayoutHash` (plus its `static_assert`), registered through the module table (FD-08).
+- [x] M6-3: persistent ID table and `EntityRef` first (FD-09), then `ParentComponent`, host-owned components and the incremental child index (FD-07).
+- [x] M6-4: `EntityRef` in components, `AssetRef<MeshAsset>` replacing `MeshHandle` (FD-09).
+- [x] M6-5: scene/asset seam; `Pick` as a free function; `HierarchyTests` to CPU.
+- [x] M6-6: generic chunked format with per-section field lists, unknown sections kept, aliases, `dump`/`apply`, `raven-project 2`; six scenes regenerated (generators moved to `SamplesTool`), five converted, old readers deleted; `SceneFileTests` (FD-10, FD-11, FD-16).
+- [ ] `RavenSceneTool upgrade` and `prune` (FD-16, FD-11), when a rename is first retired.
+- [x] M6-7: `Games/Samples` and `Games/Courtyard` with one generic host (FD-17), the `SystemContext` break and session play state (FD-12), Commands (FD-14), and the 2D Courtyard run.
 - [ ] Narrow the contract to the engine's public surface, with one CMake-generated input list (FD-17).
-- [ ] M6-8: field migration with the migration case in `RegistryTests`.
-- [ ] M6A exit check against the checklist.
+- [x] M6-8: field migration with the migration case in `RegistryTests`.
+- [x] M6A exit check against the checklist, in the [exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24). The owner accepted item 3 (spawn plus despawn: 1.6–2.0 ms at 100k) and item 4 (0.3–0.5 ms steady-state cost within budget, followed up in M6-9). Item 5 measured: the 100k load is 0.66 s, against 1.67 s for the pre-M6 reader.
 
 M7 (quality and release) is tracked in [ROADMAP.md](ROADMAP.md#m7--quality-and-release). Move its tasks here when work starts.

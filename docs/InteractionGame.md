@@ -1,5 +1,7 @@
 # Reloadable 3D interaction game
 
+> **Since M6A (2026-11-24):** this game lives in `Games/Samples` ([EngineModules.md](EngineModules.md#game-roots-m6a)), its components are game components (`Samples::...`), and scenes use the generic format ([SceneWorkflow.md](SceneWorkflow.md#scene-files)). Sections that name `SceneDocument`, `PerspectiveLevel`, `GameBindings` or `Private/Game` describe the layout before M6A.
+
 The Windows 3D path uses machine-readable binary scenes and reusable DLL gameplay. Launch free-fly development mode, press **F4 three times** to select Puzzle, left-click both orange switches, wait for the purple gate to rise, then fly through it to the cyan goal. Active switches turn green. The goal completes once and plays the existing win cue. F3 restarts. F4 order is Perspective, Gallery, Assemblies, Puzzle.
 
 WASD moves, Q/E changes height, right-drag looks, wheel changes FOV, and left-click picks. Space pauses/resumes component animation while leaving camera control available. F6 swaps the explicitly bound mesh sources. The original Perspective T rotation and standalone orbit/Home controls remain available. The puzzle gates completion through switch/rotator/door state; it uses the existing free-fly controller and does not add general collision or physics.
@@ -11,11 +13,11 @@ Build the full host in a Visual Studio developer environment before launching. S
 ```powershell
 # Debug
 Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
+& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' 
 
 # Release
 Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-release\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
+& 'D:\RavenEngine\out\build\x64-release\RavenEngine\RavenEngine.exe' 
 
 # Game-only builds while a host is running
 cmake -P 'D:\RavenEngine\out\build\x64-debug\RavenEngine\GameBuild\BuildGame.cmake'

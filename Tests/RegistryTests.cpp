@@ -6,7 +6,14 @@
 #include "Support/Check.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <span>
 #include <stdexcept>
+#include <string>
+#include <tuple>
 #include <vector>
 
 namespace RavenTests
@@ -21,6 +28,18 @@ namespace RavenTests
 	{
 		RAVEN_COMPONENT(RavenTests::Marker);
 	};
+
+	// Health after an edit: the type and its field were renamed, and a field was added.
+	namespace Next
+	{
+		struct Health : Raven::ECS::Component
+		{
+			float Points = 100.0f;
+			float Armor = 5.0f;
+			RAVEN_COMPONENT(RavenTests::Next::Health, Points, Armor);
+			RAVEN_COMPONENT_ALIASES("RavenTests::Health", "Value=Points");
+		};
+	}
 }
 
 namespace
@@ -30,6 +49,7 @@ namespace
 	using Raven::ECS::TransformComponent;
 	using RavenTests::Health;
 	using RavenTests::Marker;
+	namespace Next = RavenTests::Next;
 
 	bool Equal(Raven::Vec3 left, Raven::Vec3 right)
 	{
@@ -40,6 +60,95 @@ namespace
 	{
 		return Equal(left.Position, right.Position) && Equal(left.Rotation, right.Rotation) &&
 			Equal(left.Scale, right.Scale);
+	}
+
+	// A field type change of equal size must change the layout hash (docs/DataModelDesign.md, FD-08),
+	// or a reload would reinterpret retained bytes.
+	template<typename... T>
+	constexpr std::uint64_t LayoutOf() noexcept
+	{
+		return Raven::ECS::Detail::ComponentFields<std::tuple<T&...>>::HashLayout(Raven::ECS::Detail::HashOffset);
+	}
+	static_assert(LayoutOf<float>() != LayoutOf<std::int32_t>());
+	static_assert(LayoutOf<std::uint32_t>() != LayoutOf<std::int32_t>());
+	static_assert(LayoutOf<std::array<float, 4>>() != LayoutOf<Raven::Vec4>());
+
+	// The field table names, places and types every field, and the registered defaults are
+	// the value-initialized component.
+	void FieldTables()
+	{
+		using Raven::ECS::FieldKind;
+		const auto& table = Raven::ECS::ComponentTraits<TransformComponent>::FieldTable;
+		RAVEN_CHECK(table.size() == 3);
+		RAVEN_CHECK(table[0].Name == "Position" && table[1].Name == "Rotation" && table[2].Name == "Scale");
+		RAVEN_CHECK(table[1].Offset == offsetof(TransformComponent, Rotation));
+		RAVEN_CHECK(table[2].Offset == offsetof(TransformComponent, Scale) && table[2].Kind == FieldKind::Vec3);
+		RAVEN_CHECK(Raven::ECS::ComponentTraits<Marker>::FieldTable.empty());
+
+		Registry registry;
+		RAVEN_CHECK(!registry.FindSchema(Health::TypeId));
+		const auto entity = registry.Create();
+		Health wounded;
+		wounded.Value = 5.0f;
+		RAVEN_CHECK(registry.Add(entity, wounded));
+		const auto* health = registry.FindSchema(Health::TypeId);
+		RAVEN_CHECK(health && health->Name == "RavenTests::Health" && health->Fields.size() == 1);
+		if (!health)
+			return;
+		if (health->Defaults.size() == sizeof(float))
+		{
+			float value = 0;
+			std::memcpy(&value, health->Defaults.data(), sizeof(value));
+			RAVEN_CHECK(value == 100.0f && health->Fields[0].Kind == FieldKind::Float32);
+		}
+		RAVEN_CHECK(registry.Register<Health>());
+		RAVEN_CHECK(registry.Register<TransformComponent>() && registry.GetSchemas().size() == 2);
+
+		// The same ID with another layout is refused, and the registered schema stays.
+		auto changed = Raven::ECS::MakeComponentSchema(Raven::ECS::ComponentTraits<Health>::Info,
+			health->Defaults);
+		changed.LayoutHash ^= 1;
+		RAVEN_CHECK(!registry.RegisterSchema(changed));
+		RAVEN_CHECK(registry.FindSchema(Health::TypeId)->LayoutHash == Raven::ECS::ComponentTraits<Health>::Info.LayoutHash);
+	}
+
+	// Field migration (docs/HotReloadDesign.md, H6; docs/DataModelDesign.md, FD-16): values move by
+	// field name or old name, new fields take defaults, and a type change is refused.
+	void Migration()
+	{
+		Registry registry;
+		const auto first = registry.Create();
+		const auto second = registry.Create();
+		Health value;
+		value.Value = 5.0f;
+		RAVEN_CHECK(registry.Add(first, value));
+		value.Value = 7.0f;
+		RAVEN_CHECK(registry.Add(second, value));
+
+		std::array<std::byte, sizeof(Next::Health)> defaults;
+		RAVEN_CHECK(Raven::ECS::Detail::CaptureDefaults<Next::Health>(defaults.data()));
+		const auto next = Raven::ECS::MakeComponentSchema(Raven::ECS::ComponentTraits<Next::Health>::Info, defaults);
+		RAVEN_CHECK(next.OldNames.size() == 1 && next.FindField("Value") == &next.Fields[0]);
+
+		// A field that changed type is refused, and nothing changes.
+		auto retyped = next;
+		retyped.Fields[0].Kind = Raven::ECS::FieldKind::Int32;
+		RAVEN_CHECK(!registry.CheckMigration(std::span(&retyped, 1)).empty());
+		RAVEN_CHECK_THROWS(registry.Migrate(std::span(&retyped, 1)));
+		RAVEN_CHECK(registry.Read(first, value) && value.Value == 5.0f && registry.FindSchema(Health::TypeId));
+
+		RAVEN_CHECK(registry.CheckMigration(std::span(&next, 1)).empty());
+		const auto reports = registry.Migrate(std::span(&next, 1));
+		RAVEN_CHECK(reports.size() == 1 && reports[0].Elements == 2);
+		RAVEN_CHECK(reports.size() == 1 && reports[0].Added == std::vector<std::string>{ "Armor" } &&
+			reports[0].Renamed.size() == 1 && reports[0].Removed.empty());
+		RAVEN_CHECK(!registry.FindSchema(Health::TypeId) && registry.FindSchema(Next::Health::TypeId));
+		Next::Health migrated;
+		RAVEN_CHECK(registry.Read(first, migrated) && migrated.Points == 5.0f && migrated.Armor == 5.0f);
+		RAVEN_CHECK(registry.Read(second, migrated) && migrated.Points == 7.0f);
+		RAVEN_CHECK(!registry.Has<Health>(first));
+		// The migrated layout is now the registered one.
+		RAVEN_CHECK(registry.CheckMigration(std::span(&next, 1)).empty() && registry.Migrate(std::span(&next, 1)).empty());
 	}
 
 	bool Contains(const std::vector<Entity>& entities, Entity entity)
@@ -368,5 +477,7 @@ int main()
 		ManyEntitiesKeepTheirValues();
 		Views();
 		LifecycleJournal();
+		FieldTables();
+		Migration();
 	});
 }

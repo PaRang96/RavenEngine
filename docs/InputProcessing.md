@@ -11,7 +11,7 @@ Windows implementation baseline: 2026-10-11. Public `Window` and `ApplicationCli
 | `Private/Platform/Windows/Win32Input.hpp/.cpp` | Translation of Win32 key messages into shared physical `Key` values |
 | `Private/Platform/Windows/Win32EventPump.hpp/.cpp` | The calling UI thread's message queue and `WM_QUIT` requests |
 | `Private/Platform/Windows/Win32Window.hpp/.cpp` | `HWND`, window lifetime, native event interpretation, and mouse capture; records events in its input buffer and publishes snapshots |
-| `Private/Core/Application.cpp` | Passes published input to `ApplicationClient::OnFrame()` after the window's `PollEvents()` |
+| `Private/Core/Application.cpp` | Passes published input to the engine game session and the game systems after the window's `PollEvents()` (before M6A, to `ApplicationClient::OnFrame()`) |
 
 Use and destroy each window and input buffer on the event thread that created the window. The message pump does not own their lifetimes. `WM_QUIT` requests thread termination, so every Windows window on that thread observes it through `ShouldClose()`.
 

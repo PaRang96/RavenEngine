@@ -45,6 +45,13 @@ namespace Raven::ECS
 		}
 	};
 
+	// Marks the camera the engine draws the scene from (docs/DataModelDesign.md, FD-12). Moving it
+	// to another entity switches the view; without one, the scene's first camera is used.
+	struct ActiveCameraComponent : Component
+	{
+		RAVEN_COMPONENT(Raven::ECS::ActiveCameraComponent);
+	};
+
 	inline CameraView GetCameraView(
 		const TransformComponent& transform,
 		const CameraComponent& camera,

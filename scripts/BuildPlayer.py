@@ -62,7 +62,7 @@ def exclusive(path):
 
 
 def read_inputs(path):
-    platform = tool = None
+    platform = tool = game = None
     copies = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.split("\t")
@@ -72,6 +72,8 @@ def read_inputs(path):
             platform = name(parts[1])
         elif len(parts) == 2 and parts[0] == "tool" and tool is None:
             tool = Path(parts[1])
+        elif len(parts) == 2 and parts[0] == "game" and game is None:
+            game = name(parts[1])
         elif len(parts) == 3 and parts[0] == "copy":
             source, destination = map(Path, parts[1:])
             if destination.anchor or ".." in destination.parts or not destination.parts or destination in copies:
@@ -79,9 +81,9 @@ def read_inputs(path):
             copies[destination] = source
         else:
             raise ValueError(f"Malformed player inputs: {line}")
-    if not platform or not tool or not tool.is_absolute() or not copies:
+    if not platform or not tool or not tool.is_absolute() or not game or not copies:
         raise ValueError(f"Incomplete player inputs: {path}")
-    return platform, tool, copies
+    return platform, tool, game, copies
 
 
 def publish(staging, destination):
@@ -115,10 +117,10 @@ def build_player(repo, preset, profile_name):
     with exclusive(out / f".player-{preset}.lock"):
         subprocess.run(["cmake", "--preset", preset], cwd=repo, check=True)
         build = out / "build" / preset
-        platform, tool, copies = read_inputs(build / "RavenEngine" / "PlayerInputs.txt")
+        read_inputs(build / "RavenEngine" / "PlayerInputs.txt")
         subprocess.run(["cmake", "--build", str(build), "--target", "RavenPlayerInputs"], cwd=repo, check=True)
         # The build may have regenerated the target graph.
-        platform, tool, copies = read_inputs(build / "RavenEngine" / "PlayerInputs.txt")
+        platform, tool, game, copies = read_inputs(build / "RavenEngine" / "PlayerInputs.txt")
         players = direct_child(out, out / "player")
         players.mkdir(exist_ok=True)
         parent = direct_child(players, players / platform)
@@ -126,7 +128,9 @@ def build_player(repo, preset, profile_name):
         destination = direct_child(parent, parent / profile_name)
         staging = direct_child(parent, Path(tempfile.mkdtemp(prefix=".stage-", dir=parent)))
         try:
-            subprocess.run([str(tool), str(repo / "Content"), "stage-player", str(staging / "Content"), *selection],
+            # A player packages the default game root's content (docs/DataModelDesign.md, FD-17).
+            subprocess.run([str(tool), str(repo / "Games" / game / "Content"), "stage-player", str(staging / "Content"),
+                            *selection],
                            cwd=repo, check=True)
             for relative, source in copies.items():
                 target = staging / relative

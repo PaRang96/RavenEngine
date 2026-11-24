@@ -1,12 +1,12 @@
 #include "PlayerContent.hpp"
-#include "Scene/SceneBinary.hpp"
 
 #include "Assets/AssetPath.hpp"
 #include "Raven/Core/Files.hpp"
-#include "Raven/Scene/SceneDocument.hpp"
-#include "Samples/SampleAssets.hpp"
+#include "Raven/ECS/Component.hpp"
+#include "Raven/Scene/SceneFile.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <iomanip>
 #include <set>
 #include <sstream>
@@ -64,9 +64,12 @@ namespace Raven
 				throw std::invalid_argument("Incorrect player asset kind for " + id.ToString());
 			requiredAssets.insert(id);
 		};
-		require(SampleAssets::GetUVGrid().Id, AssetKind::Texture);
-		require(SampleAssets::GetUVGridAlternate().Id, AssetKind::Texture);
 		requiredAssets.insert(extras.begin(), extras.end());
+		// A scene's dependencies are its AssetRef fields, tagged with their asset type (FD-08).
+		const std::pair<std::uint64_t, AssetKind> kinds[]{
+			{ ECS::Detail::HashText(AssetTypeTraits<TextureAsset>::Name), AssetKind::Texture },
+			{ ECS::Detail::HashText(AssetTypeTraits<MeshAsset>::Name), AssetKind::Mesh },
+			{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio } };
 
 		std::vector<SelectedScene> selected;
 		std::set<AssetId> selectedIds;
@@ -77,26 +80,35 @@ namespace Raven
 			const auto found = std::ranges::find(project.Scenes, id, &SceneDescription::Id);
 			if (found == project.Scenes.end())
 				throw std::invalid_argument("Unknown player scene: " + id.ToString());
-			if (found->Type != SceneType::Perspective)
-				throw std::invalid_argument("Player packaging currently supports Perspective scenes: " + id.ToString());
-			auto bytes = Files::ReadBinary(ResolveAssetPath(source, found->SourcePath), SceneBinary::Limit);
-			const auto scene = SceneDocument::Decode(bytes);
-			for (const auto& mesh : scene.Meshes)
-				require(mesh.Asset.Id, AssetKind::Mesh);
-			for (const auto& [name, material] : scene.Materials)
-				if (material.BaseColorTexture.IsValid())
-					require(material.BaseColorTexture.Id, AssetKind::Texture);
-			if (scene.WinSound.IsValid())
-				require(scene.WinSound.Id, AssetKind::Audio);
+			auto bytes = Files::ReadBinary(ResolveAssetPath(source, found->SourcePath), std::size_t{ 1 } << 30);
+			const auto scene = SceneFile::Decode(bytes);
+			for (const auto& component : scene.Components)
+				for (std::size_t field = 0; field < component.Fields.size(); ++field)
+				{
+					const auto& description = component.Fields[field];
+					const auto kind = std::find_if(std::begin(kinds), std::end(kinds),
+						[&](const auto& entry) { return entry.first == description.Tag; });
+					if (description.Kind != ECS::FieldKind::AssetRef || kind == std::end(kinds))
+						continue;
+					const auto count = std::size_t{ description.Extent[0] } * description.Extent[1] * component.Entities.size();
+					const auto* values = component.Values.data() + component.FieldOffset(field);
+					for (std::size_t item = 0; item < count; ++item)
+					{
+						AssetId asset;
+						std::memcpy(&asset, values + item * sizeof(AssetId), sizeof(AssetId));
+						if (asset.IsValid())
+							require(asset, kind->second);
+					}
+				}
 			selected.push_back({ &*found, std::move(bytes) });
 		}
 
 		std::ostringstream manifest;
-		manifest << "raven-project 1\n";
+		manifest << "raven-project 2\n";
 		for (const auto& id : requiredAssets)
 			WriteAssetRecord(manifest, project.Catalog, project.Catalog.Get(id));
 		for (const auto& scene : selected)
-			manifest << "scene " << scene.Description->Id.ToString() << " perspective "
+			manifest << "scene " << scene.Description->Id.ToString() << ' '
 				<< std::quoted(ManifestPath(scene.Description->SourcePath)) << '\n';
 
 		if (!std::filesystem::create_directory(destination))

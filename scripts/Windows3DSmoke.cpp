@@ -1,7 +1,14 @@
-#include "Raven/Renderer/RenderWorld.hpp"
-#include "PerspectiveLevel.hpp"
-#include "Raven/Components/InteractionComponents.hpp"
+// The Windows 3D smoke test: the Samples game on the engine session, its scene and module reloads,
+// and the hierarchy edge cases (docs/DataModelDesign.md).
+
+#include "Core/GameSession.hpp"
+#include "SampleComponents.hpp"
+
+#include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
+#include "Raven/Platform/Input.hpp"
+#include "Raven/Renderer/RenderWorld.hpp"
+#include "Raven/Scene/SceneFile.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameInstance.hpp"
@@ -9,6 +16,7 @@
 #include "Raven/Core/Paths.hpp"
 #include "Raven/Platform/Window.hpp"
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
+#include "Raven/Scene/ScenePicking.hpp"
 #include "Raven/Scene/SceneSession.hpp"
 
 #include <array>
@@ -133,10 +141,6 @@ namespace
 		CheckWorld(Cached(child), childLocal.GetMatrix());
 		CheckWorld(Cached(sibling), scene.GetWorldTransform(sibling));
 		scene.SetParent(child, pivot);
-		scene.SelectCamera(child);
-		GameBindings bindings;
-		bindings.Camera = child;
-		scene.SetBindings(bindings);
 		Check(registry.Destroy(root), "Could not externally destroy the root");
 		const auto replacement = other.CreateEntity("replacement");
 		Check(!scene.GetAccess().IsAlive(root) && !scene.GetAccess().IsAlive(replacement),
@@ -150,76 +154,84 @@ namespace
 		CheckWorld(scene.GetWorldTransform(child), Cached(child));
 		Check(!registry.Has<ECS::WorldTransformComponent>(replacement), "A foreign entity received a world transform");
 		scene.DestroyEntity(root);
-		Check(scene.GetEntities().empty() && scene.GetSelectedCamera().IsNull() && scene.GetBindings().Camera.IsNull() &&
-			!registry.IsAlive(child) && !registry.IsAlive(pivot) && registry.IsAlive(replacement),
-			"Cascade failed to remove owned descendants and bindings");
+		Check(scene.GetEntities().empty() && !registry.IsAlive(child) && !registry.IsAlive(pivot) &&
+			registry.IsAlive(replacement), "Cascade failed to remove owned descendants");
 	}
 
-	void Render(Window& window, VulkanContext& renderer, PerspectiveLevel& level)
+	// The engine's Extract stage, then one presented frame through the session.
+	void Render(Window& window, VulkanContext& renderer, GameSession& session, RenderWorld& world)
 	{
-		level.UpdateWorldTransforms();
-		RenderWorld world;
-		world.Sync(level, [&](ECS::Entity, const ECS::MaterialComponent& material) -> const VulkanTexture*
+		auto& scene = session.GetScene();
+		scene.UpdateWorldTransforms();
+		world.Sync(scene, [&](ECS::Entity, const ECS::MaterialComponent& material) -> const VulkanTexture*
 		{
-			return material.BaseColorTexture.IsValid() ? &level.GetAsset(material.BaseColorTexture.Id).GetTexture() : nullptr;
-		});
+			return material.BaseColorTexture.IsValid() ? &scene.GetAsset(material.BaseColorTexture.Id).GetTexture() : nullptr;
+		}, [&](ECS::Entity, AssetRef<MeshAsset> mesh) { return scene.GetAsset(mesh.Id).GetMesh(); });
 		Check(world.GetObjectCount() > 0, "Expected live scene meshes");
-		WaitFor(window, [&]
+		const InputState idle;
+		WaitFor(window, [&] { return session.Render(renderer, world, idle); }, "No 3D frame presented");
+	}
+
+	ECS::Entity ActiveCamera(SceneAccess scene)
+	{
+		ECS::Entity camera;
+		scene.View<const ECS::ActiveCameraComponent>().Each([&camera](ECS::Entity entity, const ECS::ActiveCameraComponent&)
 		{
-			return renderer.DrawFrame([&](std::uint32_t width, std::uint32_t height)
-			{
-				return level.GetCameraView(level.GetSelectedCamera(),
-					static_cast<float>(width) / static_cast<float>(height));
-			}, &world, {}, {}, level.GetLighting()).has_value();
-		}, "No 3D frame presented");
+			camera = entity;
+			return false;
+		});
+		Check(!camera.IsNull(), "The scene has no active camera");
+		return camera;
 	}
 
 	void Run(const fs::path& scratch, const fs::path& editedModule)
 	{
 		const auto runtime = Paths::GetExecutableDirectory();
 		const auto content = scratch / "Content";
-		fs::copy(runtime / "Content", content, fs::copy_options::recursive);
-		const auto activeDll = scratch / "RavenGame.dll";
-		fs::copy_file(runtime / "RavenGame.dll", activeDll);
+		fs::copy(runtime / "Games" / "Samples" / "Content", content, fs::copy_options::recursive);
+		const auto activeDll = scratch / "Samples.dll";
+		fs::copy_file(runtime / "Samples.dll", activeDll);
 		const auto originalDll = Files::ReadBinary(activeDll);
 		const auto collectionFile = content / "Levels" / "Collection.ravenscene";
-		for (const auto* file : {"Perspective", "Gallery", "Assemblies", "Puzzle", "Collection"})
+		const auto collectionBytes = Files::ReadBinary(collectionFile);
+		// Encoding is deterministic: every tracked scene re-encodes to its own bytes.
+		for (const auto& entry : fs::directory_iterator(content / "Levels"))
 		{
-			const auto bytes = Files::ReadBinary(content / "Levels" / (std::string(file) + ".ravenscene"));
-			Check(SceneDocument::Decode(bytes).Encode() == bytes, "Authored scene failed binary round trip");
+			const auto bytes = Files::ReadBinary(entry.path(), std::size_t{ 1 } << 30);
+			Check(SceneFile::Decode(bytes).Encode() == bytes, "A scene failed its binary round trip");
 		}
 
 		const auto window = Window::Create({"RavenEngine 3D smoke", 720, 480});
 		VulkanContext renderer(*window);
 		GameInstance instance;
 		auto& registry = instance.GetRegistry();
-		SceneProject project(renderer, content, true);
-		CheckHierarchy(registry, project.GetAssets());
-		unsigned factoryCalls = 0;
-		SceneSession session(project, SceneType::Perspective,
-			[&](std::span<const std::byte> bytes, const fs::path&, const AssetCatalog& catalog)
-			{
-				++factoryCalls;
-				return std::make_unique<PerspectiveLevel>(registry, project, SceneDocument::Decode(bytes), catalog);
-			});
-		GameModule game(activeDll);
-		const auto level = [&]() -> PerspectiveLevel& { return static_cast<PerspectiveLevel&>(session.GetActive()); };
-		const auto scene = [&] { return level().GetAccess(); };
-		const auto tick = [&](std::span<const ECS::Entity> hits = {})
 		{
-			auto bindings = level().GetBindings();
-			bindings.Interactions = hits;
-			game.Update(instance, {}, FrameTime{0, .1}, bindings);
+			SceneProject project(renderer, content);
+			CheckHierarchy(registry, project.GetAssets());
+		}
+		RenderWorld world;
+		GameModule game(instance, activeDll);
+		ApplicationConfig config;
+		config.ContentRoot = content;
+		config.WatchContent = true;
+		GameSession session(renderer, instance, config);
+		const auto scene = [&] { return session.GetScene().GetAccess(); };
+		const InputState idle;
+		const auto tick = [&](std::span<const PickHit> picks = {})
+		{
+			SystemContext context{ scene(), idle, FrameTime{ 0, .1 }, picks, session.GetCommands(), session.GetServices() };
+			game.Update(context);
+			session.ApplyCommands();
 		};
-		const auto completed = [&]
+		const auto attempt = [&]
 		{
-			const auto attempts = scene().Query<ECS::AttemptComponent>();
-			Check(attempts.size() == 1, "Expected one scene-owned attempt");
-			return Read<ECS::AttemptComponent>(scene(), attempts.front()).Completed;
+			const auto* state = scene().Single<Samples::AttemptComponent>();
+			Check(state && scene().Count<Samples::AttemptComponent>() == 1, "Expected one scene-owned attempt");
+			return *state;
 		};
 		const auto approach = [&](std::string_view target)
 		{
-			const auto camera = level().GetSelectedCamera();
+			const auto camera = ActiveCamera(scene());
 			auto pose = Read<ECS::TransformComponent>(scene(), camera);
 			// The puzzle's authored camera is parented, while the collection camera is a root.
 			pose.Position = pose.Position + Position(scene().GetWorldTransform(scene().Find(target))) -
@@ -229,94 +241,97 @@ namespace
 		};
 		const auto select = [&](const char* file)
 		{
-			for (std::size_t i = 0; i < project.GetScenes().size(); ++i)
+			for (std::size_t i = 0; i < 16; ++i)
 			{
-				if (session.GetActiveDescription().SourcePath.filename() == file)
+				if (session.GetSession().GetActiveDescription().SourcePath.filename() == file)
 					return;
-				Check(session.Update(false, true), "Could not advance scene");
+				Check(session.Advance(false, true), "Could not advance scene");
 			}
 			throw std::runtime_error("Project does not register the smoke scene");
 		};
 		const auto collect = [&](std::string_view id)
 		{
 			const auto entity = scene().Find(id);
-			const auto origin = Position(scene().GetWorldTransform(level().GetSelectedCamera()));
+			const auto origin = Position(scene().GetWorldTransform(ActiveCamera(scene())));
 			const auto target = Position(scene().GetWorldTransform(entity));
-			const auto hit = level().Pick(renderer, {origin, Normalize(target - origin)}, 100.0f);
+			const auto hit = Pick(session.GetScene(), renderer, {origin, Normalize(target - origin)}, 100.0f);
 			Check(hit && hit->Entity == entity, "A pickup could not be reached by mesh picking");
-			tick(std::array{hit->Entity, hit->Entity});
-			Check(Read<ECS::PickupComponent>(scene(), entity).Collected, "Picked mesh did not collect");
+			tick(std::array{ *hit, *hit });
+			Check(Read<Samples::PickupComponent>(scene(), entity).Collected, "Picked mesh did not collect");
+		};
+		const auto pick = [&](std::string_view id)
+		{
+			return PickHit{ scene().Find(id), 1.0f };
 		};
 
 		select("Puzzle.ravenscene");
-		Render(*window, renderer, level());
+		Render(*window, renderer, session, world);
 		approach("goal");
-		Check(!completed(), "Puzzle completed with the gate closed");
-		tick(std::array{scene().Find("switch-a"), scene().Find("switch-b")});
+		Check(!attempt().Completed, "Puzzle completed with the gate closed");
+		tick(std::array{ pick("switch-a"), pick("switch-b") });
 		for (int frame = 0; frame < 30; ++frame)
 			tick();
-		Check(completed() && level().ConsumeCompletion() && !level().ConsumeCompletion(),
-			"Puzzle completion was not delivered exactly once");
-		Check(session.Update(true, false) && !completed(), "Puzzle did not restart");
+		Check(attempt().Completed && attempt().CompletionNotified, "Puzzle completion was not reported");
+		Check(session.Advance(true) && !attempt().Completed, "Puzzle did not restart");
 
 		select("Collection.ravenscene");
-		Render(*window, renderer, level());
-		const auto originalCamera = level().GetSelectedCamera();
+		Render(*window, renderer, session, world);
+		const auto originalCamera = ActiveCamera(scene());
 		const auto spawn = Read<ECS::TransformComponent>(scene(), originalCamera);
 		approach("exit");
-		Check(!completed(), "Collection completed without any pickups");
+		Check(!attempt().Completed, "Collection completed without any pickups");
 		Check(scene().Write(originalCamera, spawn), "Could not restore collection spawn");
 		const auto foreign = registry.Create();
-		Check(registry.Add(foreign, ECS::PickupComponent{}) && scene().Query<ECS::PickupComponent>().size() == 3 &&
+		Check(registry.Add(foreign, Samples::PickupComponent{}) && scene().Query<Samples::PickupComponent>().size() == 3 &&
 			!scene().IsAlive(foreign), "Scene query included a foreign entity");
 		collect("pickup-left");
 		const auto left = scene().Find("pickup-left");
-		const auto beforeInvalid = factoryCalls;
-		const std::array badBytes{std::byte{0}};
+		const std::array badBytes{ std::byte{ 0 } };
 		Files::WriteAtomic(collectionFile, badBytes);
-		WaitFor(*window, [&]
+		const auto settle = std::chrono::steady_clock::now() + 1500ms;
+		while (std::chrono::steady_clock::now() < settle)
 		{
-			Check(!session.Update(), "Malformed scene replaced the active world");
-			return factoryCalls != beforeInvalid;
-		}, "Malformed scene was not observed");
-		Check(Read<ECS::PickupComponent>(scene(), left).Collected, "Bad scene save erased progress");
+			window->PollEvents();
+			Check(!session.Advance(), "Malformed scene replaced the active world");
+			std::this_thread::sleep_for(10ms);
+		}
+		Check(Read<Samples::PickupComponent>(scene(), left).Collected, "Bad scene save erased progress");
 		collect("pickup-center");
 		approach("exit");
-		Check(!completed(), "Collection completed before its last pickup");
+		Check(!attempt().Completed, "Collection completed before its last pickup");
 		Check(scene().Write(originalCamera, spawn), "Could not return for the last pickup");
 		collect("pickup-right");
 		approach("exit");
-		Check(completed() && level().ConsumeCompletion() && !level().ConsumeCompletion(),
-			"Collection completion was not delivered exactly once");
+		Check(attempt().Completed && attempt().CompletionNotified, "Collection completion was not reported");
 
-		level().GetAuthoringDefinition().Save(collectionFile, project.GetCatalog(), content);
-		WaitFor(*window, [&] { return session.Update(); }, "Valid scene save did not recover");
-		Check(!registry.IsAlive(left) && !completed() && scene().Query<ECS::PickupComponent>().size() == 3,
+		Files::WriteAtomic(collectionFile, collectionBytes);
+		WaitFor(*window, [&] { return session.Advance(); }, "Valid scene save did not recover");
+		Check(!registry.IsAlive(left) && !attempt().Completed && scene().Query<Samples::PickupComponent>().size() == 3,
 			"Replaced collection did not get a fresh attempt");
 		collect("pickup-left");
 		const auto retainedPickup = scene().Find("pickup-left");
-		const auto retainedCamera = level().GetSelectedCamera();
+		const auto retainedCamera = ActiveCamera(scene());
 		Files::WriteAtomic(activeDll, Files::ReadBinary(editedModule));
 		Check(game.Reload(), "Compatible gameplay edit was rejected");
 		Check(scene().Find("pickup-left") == retainedPickup &&
-			Read<ECS::PickupComponent>(scene(), retainedPickup).Collected &&
-			level().GetSelectedCamera() == retainedCamera, "DLL reload lost identity or pickup progress");
+			Read<Samples::PickupComponent>(scene(), retainedPickup).Collected &&
+			ActiveCamera(scene()) == retainedCamera, "DLL reload lost identity or pickup progress");
 
 		const auto generation = game.GetGeneration();
 		Files::WriteAtomic(activeDll, badBytes);
 		Check(!game.Reload() && game.GetGeneration() == generation, "Invalid game DLL replaced active code");
 		collect("pickup-center");
 		approach("exit");
-		Check(completed() && !Read<ECS::PickupComponent>(scene(), scene().Find("pickup-right")).Collected,
+		Check(attempt().Completed && !Read<Samples::PickupComponent>(scene(), scene().Find("pickup-right")).Collected,
 			"Revised two-pickup rule was not active after rejecting the bad DLL");
 
 		Files::WriteAtomic(activeDll, originalDll);
 		Check(game.Reload(), "Could not restore the original game DLL");
-		Check(session.Update(true, false) && !completed() &&
-			!Read<ECS::PickupComponent>(scene(), scene().Find("pickup-left")).Collected,
+		Check(session.Advance(true) && !attempt().Completed &&
+			!Read<Samples::PickupComponent>(scene(), scene().Find("pickup-left")).Collected,
 			"Collection restart did not clear runtime pickup state");
 		Check(registry.Destroy(foreign), "Could not retire the unrelated entity");
-		Render(*window, renderer, level());
+		Render(*window, renderer, session, world);
 	}
 }
 

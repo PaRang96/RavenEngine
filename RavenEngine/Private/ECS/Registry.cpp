@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -65,6 +66,14 @@ namespace Raven::ECS
 			}
 
 			std::byte* Data() const noexcept { return m_Data; }
+
+			void Swap(ValueBuffer& other) noexcept
+			{
+				std::swap(m_Data, other.m_Data);
+				std::swap(m_Capacity, other.m_Capacity);
+				std::swap(m_Stride, other.m_Stride);
+				std::swap(m_Alignment, other.m_Alignment);
+			}
 			std::byte* At(std::size_t index) const noexcept { return m_Data + index * m_Stride; }
 
 			void Reserve(std::size_t count)
@@ -236,6 +245,8 @@ namespace Raven::ECS
 			}
 		};
 		std::unordered_map<std::uint64_t, ComponentPool> Components;
+		// Field tables by component ID, copied out of the declaring module (FD-08).
+		std::unordered_map<std::uint64_t, ComponentSchema> Schemas;
 
 		// LayoutHash includes the type name, so an ID collision between different names
 		// also fails here; AddComponent checks the name itself before creating a pool.
@@ -401,6 +412,254 @@ namespace Raven::ECS
 	bool Registry::IsIterating() const noexcept
 	{
 		return m_Impl->Iterating != 0;
+	}
+
+	ComponentSchema MakeComponentSchema(const ComponentInfo& info, std::span<const std::byte> defaults)
+	{
+		if (info.Name.empty() || info.Size == 0 || info.Alignment == 0 || defaults.size() != info.Size ||
+			(info.FieldCount != 0 && !info.Fields))
+			throw std::logic_error("Component registration needs a name, a size, defaults and its field table");
+		const std::span<const FieldInfo> fields(info.Fields, info.FieldCount);
+		std::size_t end = 0;
+		for (std::size_t index = 0; index < fields.size(); ++index)
+		{
+			const auto& field = fields[index];
+			const std::size_t count = std::size_t{ field.Extent[0] } * field.Extent[1];
+			if (field.Name.empty() || field.Size == 0 || count == 0 || field.Size % count != 0 ||
+				field.Offset < end || field.Offset + std::size_t{ field.Size } > info.Size)
+				throw std::logic_error("Component field table does not describe the type: " + std::string(info.Name));
+			for (std::size_t other = 0; other < index; ++other)
+				if (fields[other].Name == field.Name)
+					throw std::logic_error("Component field table repeats a name: " + std::string(info.Name));
+			end = field.Offset + std::size_t{ field.Size };
+		}
+		ComponentSchema schema{ info.Id, std::string(info.Name), info.Size, info.Alignment, info.LayoutHash, info.Flags,
+			{}, std::vector<std::byte>(defaults.begin(), defaults.end()) };
+		schema.Fields.reserve(fields.size());
+		for (const auto& field : fields)
+			schema.Fields.push_back({ std::string(field.Name), field.Offset, field.Size, field.Kind, field.Flags,
+				field.Extent, field.Tag, {} });
+		for (std::size_t index = 0; index < info.AliasCount; ++index)
+		{
+			const auto alias = info.Aliases[index];
+			const auto separator = alias.find('=');
+			if (separator == std::string_view::npos)
+			{
+				schema.OldNames.emplace_back(alias);
+				continue;
+			}
+			const auto old = alias.substr(0, separator);
+			const auto current = alias.substr(separator + 1);
+			const auto field = std::find_if(schema.Fields.begin(), schema.Fields.end(),
+				[&](const FieldSchema& candidate) { return candidate.Name == current; });
+			if (old.empty() || field == schema.Fields.end())
+				throw std::logic_error("Component alias '" + std::string(alias) + "' names no field of " +
+					std::string(info.Name));
+			field->OldNames.emplace_back(old);
+		}
+		return schema;
+	}
+
+	bool Registry::RegisterComponent(const ComponentInfo& info, std::span<const std::byte> defaults)
+	{
+		return RegisterSchema(MakeComponentSchema(info, defaults));
+	}
+
+	bool Registry::RegisterSchema(const ComponentSchema& schema)
+	{
+		auto& schemas = m_Impl->Schemas;
+		if (const auto existing = schemas.find(schema.Id); existing != schemas.end())
+			return IsSameLayout(existing->second, schema);
+		schemas.emplace(schema.Id, schema);
+		return true;
+	}
+
+	bool IsSameLayout(const ComponentSchema& left, const ComponentSchema& right) noexcept
+	{
+		return left.Id == right.Id && left.Name == right.Name && left.Size == right.Size &&
+			left.Alignment == right.Alignment && left.LayoutHash == right.LayoutHash;
+	}
+
+	const FieldSchema* ComponentSchema::FindField(std::string_view name) const noexcept
+	{
+		for (const auto& field : Fields)
+			if (field.Name == name)
+				return &field;
+		for (const auto& field : Fields)
+			if (std::find(field.OldNames.begin(), field.OldNames.end(), name) != field.OldNames.end())
+				return &field;
+		return nullptr;
+	}
+
+	bool IsSameFieldType(const FieldSchema& left, const FieldSchema& right) noexcept
+	{
+		return left.Kind == right.Kind && left.Flags == right.Flags && left.Extent == right.Extent &&
+			left.Tag == right.Tag && left.Size == right.Size;
+	}
+
+	namespace
+	{
+		// The registered schema a new one replaces: the same ID, or a registered type the new one
+		// names as an old name. Null when the new schema is new.
+		const ComponentSchema* FindPredecessor(const std::unordered_map<std::uint64_t, ComponentSchema>& schemas,
+			const ComponentSchema& next) noexcept
+		{
+			if (const auto found = schemas.find(next.Id); found != schemas.end())
+				return &found->second;
+			for (const auto& [id, schema] : schemas)
+				if (std::find(next.OldNames.begin(), next.OldNames.end(), schema.Name) != next.OldNames.end())
+					return &schema;
+			return nullptr;
+		}
+
+		// For each new field, the old field it takes its value from.
+		std::vector<const FieldSchema*> MapFields(const ComponentSchema& from, const ComponentSchema& to)
+		{
+			std::vector<const FieldSchema*> sources;
+			for (const auto& field : to.Fields)
+			{
+				const FieldSchema* source = nullptr;
+				for (const auto& old : from.Fields)
+					if (old.Name == field.Name ||
+						std::find(field.OldNames.begin(), field.OldNames.end(), old.Name) != field.OldNames.end())
+						source = &old;
+				sources.push_back(source);
+			}
+			return sources;
+		}
+	}
+
+	std::string Registry::CheckMigration(std::span<const ComponentSchema> schemas) const
+	{
+		const auto& registered = m_Impl->Schemas;
+		for (const auto& next : schemas)
+		{
+			const auto* current = FindPredecessor(registered, next);
+			if (!current || IsSameLayout(*current, next))
+				continue;
+			if (current->Id == next.Id && current->Name != next.Name)
+				return "Component " + next.Name + " has the ID of " + current->Name;
+			// A renamed type moves its old pool to the new ID, which must not hold values already.
+			if (current->Id != next.Id && m_Impl->Components.contains(next.Id))
+				return "Component " + next.Name + " already has values, so " + current->Name + " cannot be renamed to it";
+			const auto sources = MapFields(*current, next);
+			for (std::size_t index = 0; index < sources.size(); ++index)
+				if (sources[index] && !IsSameFieldType(*sources[index], next.Fields[index]))
+					return "Component field " + next.Name + "::" + next.Fields[index].Name +
+						" changed type; rename it to keep both, or rebuild and restart the host";
+		}
+		return {};
+	}
+
+	std::vector<ComponentMigration> Registry::Migrate(std::span<const ComponentSchema> schemas)
+	{
+		auto& impl = *m_Impl;
+		if (impl.Iterating != 0)
+			throw std::logic_error("Components cannot migrate while a view iterates");
+		if (const auto error = CheckMigration(schemas); !error.empty())
+			throw std::logic_error(error);
+
+		// Build every converted pool first, so a failed allocation changes nothing.
+		struct Plan
+		{
+			const ComponentSchema* Next;
+			std::uint64_t From;
+			ValueBuffer Values;
+			ComponentMigration Report;
+		};
+		std::deque<Plan> plans;
+		for (const auto& next : schemas)
+		{
+			const auto* current = FindPredecessor(impl.Schemas, next);
+			if (!current || IsSameLayout(*current, next))
+				continue;
+			auto& plan = plans.emplace_back();
+			plan.Next = &next;
+			plan.From = current->Id;
+			plan.Report.Name = next.Name;
+			const auto sources = MapFields(*current, next);
+			for (std::size_t index = 0; index < sources.size(); ++index)
+			{
+				if (!sources[index])
+					plan.Report.Added.push_back(next.Fields[index].Name);
+				else if (sources[index]->Name != next.Fields[index].Name)
+					plan.Report.Renamed.push_back(sources[index]->Name + " -> " + next.Fields[index].Name);
+			}
+			for (const auto& old : current->Fields)
+				if (std::find(sources.begin(), sources.end(), &old) == sources.end())
+					plan.Report.Removed.push_back(old.Name);
+			const auto pool = impl.Components.find(current->Id);
+			if (pool == impl.Components.end())
+				continue;
+			const auto count = pool->second.Entities.size();
+			plan.Report.Elements = count;
+			plan.Values.Configure(next.Size, next.Alignment);
+			plan.Values.Reserve(count);
+			for (std::size_t dense = 0; dense < count; ++dense)
+			{
+				auto* target = plan.Values.At(dense);
+				const auto* source = pool->second.Values.At(dense);
+				std::memcpy(target, next.Defaults.data(), next.Size);
+				for (std::size_t index = 0; index < sources.size(); ++index)
+					if (sources[index])
+						std::memcpy(target + next.Fields[index].Offset, source + sources[index]->Offset,
+							next.Fields[index].Size);
+			}
+		}
+		impl.Schemas.reserve(impl.Schemas.size() + plans.size());
+
+		// Commit: node moves and swaps only.
+		std::vector<ComponentMigration> reports;
+		for (auto& plan : plans)
+		{
+			const auto& next = *plan.Next;
+			if (auto node = impl.Components.extract(plan.From))
+			{
+				auto& pool = node.mapped();
+				pool.Values.Swap(plan.Values);
+				pool.Name = next.Name;
+				pool.Size = next.Size;
+				pool.LayoutHash = next.LayoutHash;
+				// Every converted element counts as changed for tick consumers.
+				std::fill(pool.Ticks.begin(), pool.Ticks.end(), impl.ChangeTick);
+				node.key() = next.Id;
+				impl.Components.insert(std::move(node));
+			}
+			if (auto journal = impl.Journals.extract(plan.From))
+			{
+				journal.mapped().Name = next.Name;
+				journal.mapped().Size = next.Size;
+				journal.mapped().LayoutHash = next.LayoutHash;
+				journal.key() = next.Id;
+				impl.Journals.insert(std::move(journal));
+				for (auto& [subscription, subscriber] : impl.Subscribers)
+					if (subscriber.ComponentId == plan.From)
+						subscriber.ComponentId = next.Id;
+			}
+			impl.Schemas.erase(plan.From);
+			impl.Schemas.insert_or_assign(next.Id, next);
+			reports.push_back(std::move(plan.Report));
+		}
+		return reports;
+	}
+
+	const ComponentSchema* Registry::FindSchema(std::uint64_t id) const noexcept
+	{
+		const auto found = m_Impl->Schemas.find(id);
+		return found == m_Impl->Schemas.end() ? nullptr : &found->second;
+	}
+
+	std::vector<const ComponentSchema*> Registry::GetSchemas() const
+	{
+		std::vector<const ComponentSchema*> schemas;
+		schemas.reserve(m_Impl->Schemas.size());
+		for (const auto& [id, schema] : m_Impl->Schemas)
+			schemas.push_back(&schema);
+		std::sort(schemas.begin(), schemas.end(), [](const ComponentSchema* left, const ComponentSchema* right)
+		{
+			return left->Name < right->Name;
+		});
+		return schemas;
 	}
 
 	bool Registry::HasComponent(Entity entity, const ComponentInfo& info) const noexcept

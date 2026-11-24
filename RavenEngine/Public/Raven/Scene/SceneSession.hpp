@@ -10,14 +10,14 @@
 
 namespace Raven
 {
-	// The factory belongs to the retained host client, never to a replaceable game DLL.
-	// It validates sample-specific authoring and returns a fully prepared candidate scene.
+	// The factory belongs to the engine, never to a replaceable game DLL. It returns a fully
+	// prepared candidate scene; F4 cycles through every scene of the project.
 	class SceneSession
 	{
 	public:
 		using Factory = std::function<std::unique_ptr<Scene>(std::span<const std::byte>,
 			const std::filesystem::path&, const AssetCatalog&)>;
-		RAVEN_API SceneSession(SceneProject& project, SceneType type, Factory factory,
+		RAVEN_API SceneSession(SceneProject& project, Factory factory,
 			std::optional<AssetId> initialScene = {});
 		RAVEN_API ~SceneSession();
 		RAVEN_API Scene& GetActive() const noexcept;

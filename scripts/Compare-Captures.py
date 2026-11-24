@@ -35,9 +35,9 @@ HEADER = re.compile(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s")
 
 def scene_ids():
     ids = {}
-    project = (ROOT / "Content/Project.ravenproject").read_text(encoding="utf-8")
+    project = (ROOT / "Games/Samples/Content/Project.ravenproject").read_text(encoding="utf-8")
     for line in project.splitlines():
-        match = re.match(r'scene\s+([0-9a-fA-F-]{36})\s+\w+\s+"Levels/(.+)\.ravenscene"', line.strip())
+        match = re.match(r'scene\s+([0-9a-fA-F-]{36})\s+"Levels/(.+)\.ravenscene"', line.strip())
         if match:
             ids[match.group(2)] = match.group(1)
     return ids

@@ -1,0 +1,60 @@
+#pragma once
+
+#include "SampleComponents.hpp"
+
+#include "Raven/Components/CameraComponent.hpp"
+#include "Raven/Components/LightingComponent.hpp"
+#include "Raven/Components/MaterialComponent.hpp"
+#include "Raven/Components/TransformComponent.hpp"
+#include "Raven/ECS/Registry.hpp"
+#include "Raven/Scene/Scene.hpp"
+#include "Raven/Scene/SceneFile.hpp"
+
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace Samples
+{
+	// Authors a 3D sample scene as components (docs/DataModelDesign.md, FD-10). Names are entity
+	// labels; references between entities become EntityRef values in Finish.
+	class SampleSceneBuilder
+	{
+	public:
+		SampleSceneBuilder();
+
+		void Group(const std::string& name, const Raven::ECS::TransformComponent& transform);
+		void Mesh(const std::string& name, Raven::AssetId mesh, const Raven::ECS::TransformComponent& transform,
+			Raven::Vec4 tint, const Raven::ECS::MaterialComponent& material);
+		void Parent(const std::string& child, const std::string& parent);
+		// The active camera, orbiting target in the orbit demo and returning to spawn on reset.
+		void Camera(const std::string& name, const Raven::ECS::TransformComponent& spawn,
+			const Raven::ECS::CameraComponent& lens, Raven::Vec3 orbitTarget);
+		void Lighting(const std::string& name, const Raven::ECS::LightingComponent& lighting);
+		void ControlledMesh(const std::string& name);
+		// Without authored goals, the beacon becomes a spinning goal of this radius.
+		void Beacon(const std::string& name, float radius);
+		void WinSound(Raven::AssetRef<Raven::AudioAsset> sound);
+		void Switch(const std::string& name);
+		void Rotator(const std::string& name, const std::string& switchName, Raven::Vec3 rotation, float duration);
+		void Door(const std::string& name, const std::vector<std::string>& rotators, Raven::Vec3 openOffset, float duration);
+		void Goal(const std::string& name, const std::string& door, float radius);
+		void Pickup(const std::string& name);
+
+		// Adds the derived gameplay state and the transparency demo sprites, and captures the scene.
+		Raven::SceneFile Finish();
+
+	private:
+		Raven::ECS::Entity Find(const std::string& name) const;
+		Raven::ECS::EntityRef Ref(const std::string& name) const;
+
+		Raven::ECS::Registry m_Registry;
+		Raven::Scene m_Scene;
+		std::vector<std::pair<std::string, std::string>> m_Parents;
+		std::string m_Beacon;
+		float m_BeaconRadius = 0.0f;
+		bool m_AuthoredMotion = false;
+		bool m_HasGoal = false;
+		Raven::AssetRef<Raven::AudioAsset> m_WinSound;
+	};
+}

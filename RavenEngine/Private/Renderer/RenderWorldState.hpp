@@ -63,8 +63,9 @@ namespace Raven
 		std::array<std::uint32_t, 3> Subscriptions{};
 		// The change tick this world has consumed.
 		std::uint32_t Since = 0;
-		// Advances on every rebuild; a renderer re-uploads everything when it changes.
-		std::uint64_t Generation = 1;
+		// Process-wide unique, renewed on every rebuild and clear; a renderer re-uploads
+		// everything when the world's address or generation changes.
+		std::uint64_t Generation = 0;
 
 		// Dense object slots; removal moves the last slot into the gap.
 		std::vector<GpuObjectData> Objects;

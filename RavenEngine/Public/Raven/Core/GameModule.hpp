@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Raven/Core/Api.hpp"
-#include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/Core/GameSystems.hpp"
 
 #include <cstdint>
@@ -32,7 +31,8 @@ namespace Raven
 	class GameModule
 	{
 	public:
-		RAVEN_API explicit GameModule(const std::filesystem::path& path, bool autoBuild = false);
+		// The module's components are registered in game's Registry, which must outlive the module.
+		RAVEN_API GameModule(GameInstance& game, const std::filesystem::path& path, bool autoBuild = false);
 		RAVEN_API ~GameModule();
 		GameModule(const GameModule&) = delete;
 		GameModule& operator=(const GameModule&) = delete;
@@ -42,12 +42,9 @@ namespace Raven
 		// A rejected candidate leaves the active module and game data intact.
 		RAVEN_API bool Reload();
 		RAVEN_API void Poll();
-		// Run the registered systems of one phase in order. FixedUpdate returns the
-		// result its systems reported; Update's result is empty unless a system fills it.
-		RAVEN_API GameUpdateResult FixedUpdate(GameInstance&, const InputState&, const FrameTime&,
-			GameBindings bindings = {});
-		RAVEN_API GameUpdateResult Update(GameInstance&, const InputState&, const FrameTime&,
-			GameBindings bindings = {});
+		// Run the registered systems of one phase in order with the given context.
+		RAVEN_API void FixedUpdate(SystemContext& context);
+		RAVEN_API void Update(SystemContext& context);
 		RAVEN_API std::vector<GameSystemStats> GetSystemStats() const;
 		RAVEN_API std::uint64_t GetGeneration() const noexcept;
 		RAVEN_API bool IsBuilding() const noexcept;

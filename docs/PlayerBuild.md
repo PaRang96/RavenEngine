@@ -10,9 +10,9 @@ The command builds and publishes `out/player/windows-x64/public-preview/`. Copy 
 
 ## Select levels and assets
 
-Build profiles live under `BuildProfiles/`. The `scenes` array contains an ordered list of UUIDs from the development `Content/Project.ravenproject`. Its first scene is the startup level. The packager reads each selected binary Perspective scene and includes its meshes, material textures, and completion audio. The sample's startup textures are included automatically. Put UUIDs for other textures, meshes, or audio that the game loads outside the scene document in the optional `assets` array.
+Build profiles live under `BuildProfiles/`. The `scenes` array contains an ordered list of UUIDs from the default game root's `Games/<Name>/Content/Project.ravenproject` (`RAVEN_DEFAULT_GAME`, Samples). Its first scene is the startup level. The packager reads each selected binary Perspective scene and includes its meshes, material textures, and completion audio. The sample's startup textures are included automatically. Put UUIDs for other textures, meshes, or audio that the game loads outside the scene document in the optional `assets` array.
 
-The package contains a generated `Content/Project.ravenproject` with the selected scenes and their required assets. Levels outside the profile remain available in development. Each package is assembled in an empty staging folder before it replaces the previous generated output. This removes stale files when a level is removed from the profile. A failed build or staging check leaves the previous player folder available.
+The package contains the game's module and a generated `Content/Project.ravenproject` (`raven-project 2`) with the selected scenes and every asset their `AssetRef` fields reference. Levels outside the profile remain available in development. Each package is assembled in an empty staging folder before it replaces the previous generated output. This removes stale files when a level is removed from the profile. A failed build or staging check leaves the previous player folder available.
 
 ## Select a platform
 

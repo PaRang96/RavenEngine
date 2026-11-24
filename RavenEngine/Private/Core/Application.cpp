@@ -3,18 +3,23 @@
 #include "Core/FrameClock.hpp"
 #include "Core/FrameTrace.hpp"
 #include "Core/FixedGameplayStep.hpp"
+#include "Core/GameSession.hpp"
 #include "Core/Paths.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/GameModule.hpp"
 #include "Raven/Core/Log.hpp"
+#include "Raven/Renderer/RenderWorld.hpp"
+#include "Raven/Scene/Scene.hpp"
 
 #include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -48,40 +53,88 @@ namespace Raven
 			std::int64_t Work;
 			bool Drawable;
 		};
+
+		// The recoverable boundary around each host update stage (docs/DataModelDesign.md, FD-06).
+		// A data or I/O failure is logged and the frame continues with the stage's last good
+		// state. Exhaustion, a broken invariant (std::logic_error) and non-standard exceptions
+		// still end the process, because continuing would hide corruption. A stage that keeps
+		// failing with the same message logs once, until it succeeds again.
+		class StageBoundary
+		{
+		public:
+			enum Stage : std::size_t { Prepare, Gameplay, PostUpdate, Extract, Count };
+
+			template<typename Function>
+			bool Run(Stage stage, Function&& function)
+			{
+				auto& state = m_States[stage];
+				try
+				{
+					function();
+				}
+				catch (const std::bad_alloc&)
+				{
+					throw;
+				}
+				catch (const std::logic_error&)
+				{
+					throw;
+				}
+				catch (const std::exception& error)
+				{
+					if (state.Message != error.what())
+					{
+						state.Message = error.what();
+						Log(LogLevel::Error, std::string(Names[stage]) + " failed; the frame continues with its last good state: " +
+							state.Message);
+					}
+					else
+						++state.Repeats;
+					return false;
+				}
+				if (!state.Message.empty())
+				{
+					Log(LogLevel::Info, std::string(Names[stage]) + " recovered after " +
+						std::to_string(state.Repeats + 1) + " failed frame(s)");
+					state = {};
+				}
+				return true;
+			}
+
+		private:
+			static constexpr const char* Names[Count]{ "Scene preparation", "Gameplay",
+				"World transform update", "Render world sync" };
+			struct State
+			{
+				std::string Message;
+				std::uint64_t Repeats = 0;
+			};
+			State m_States[Count];
+		};
 	}
 
 	FrameMetrics* GetFrameMetrics() noexcept { return CurrentMetrics; }
 
-	void Application::Run(const WindowDesc& description, const ApplicationClientFactory& factory)
+	void Application::Run(const WindowDesc& description, const ApplicationConfig& config)
 	{
-		Run(description, factory, ApplicationConfig{});
-	}
-
-	void Application::Run(const WindowDesc& description, const ApplicationClientFactory& factory,
-		const ApplicationConfig& config)
-	{
-		if ((!factory.Create && !factory.CreateGameClient) || !factory.Destroy)
-			throw std::invalid_argument("Application requires client create and destroy callbacks");
 		if (!(config.MaxFrameRate >= 0.0) || !std::isfinite(config.MaxFrameRate))
 			throw std::invalid_argument("MaxFrameRate must be zero or a positive finite rate");
 
-		ApplicationPathsScope paths(config.ContentRoot);
+		// Engine content (shaders) stays beside the executable; the game's content is the session's.
+		ApplicationPathsScope paths({});
 		auto window = Window::Create(description);
 		VulkanContext renderer(*window, config.Renderer);
 		GameInstance instance;
+		// Engine-owned mirror of the active scene's lit meshes; outlives the session and the module.
+		RenderWorld renderWorld;
+		StageBoundary boundary;
 		std::unique_ptr<GameModule> game;
 		if (!config.GameModulePath.empty())
-			game = std::make_unique<GameModule>(config.GameModulePath, config.AutoBuildGame);
-		// The retained host client dies before module, session, renderer and window.
-		auto* createdClient = factory.CreateGameClient
-			? factory.CreateGameClient(renderer, instance)
-			: factory.Create(renderer);
-		std::unique_ptr<ApplicationClient, decltype(factory.Destroy)> client(createdClient, factory.Destroy);
-		if (!client)
-			throw std::runtime_error("Application client factory returned null");
+			game = std::make_unique<GameModule>(instance, config.GameModulePath, config.AutoBuildGame);
+		// The session dies before the module, the render world, the renderer and the window.
+		GameSession session(renderer, instance, config);
 		FrameClock clock;
 		FixedGameplayStep gameplay;
-		const bool fixedGameplay = client->UsesFixedGameplayStep();
 		bool wasDrawable = false;
 		std::vector<FrameSample> samples;
 		if (!config.FrameTracePath.empty())
@@ -108,7 +161,8 @@ namespace Raven
 			if (drawable)
 			{
 				const FrameTime frameTime = clock.Tick();
-				const bool replaced = client->PrepareFrame(input, frameTime);
+				bool replaced = false;
+				boundary.Run(StageBoundary::Prepare, [&] { replaced = session.Prepare(input, frameTime); });
 				if (metrics)
 				{
 					metrics->GameGeneration = game ? game->GetGeneration() : 0;
@@ -116,9 +170,11 @@ namespace Raven
 					metrics->SceneReplaced = replaced;
 				}
 				FrameSection gameplayTime(metrics ? &metrics->Gameplay : nullptr);
-				if (fixedGameplay)
+				// Game phases run only while the session plays (docs/DataModelDesign.md, FD-12).
+				// Deferred structural changes apply after each fixed step and after Update (FD-14).
+				const bool played = boundary.Run(StageBoundary::Gameplay, [&]
 				{
-					if (replaced || !wasDrawable)
+					if (replaced || !wasDrawable || !session.IsPlaying())
 					{
 						gameplay.Reset();
 						if (replaced)
@@ -129,21 +185,62 @@ namespace Raven
 						gameplay.BeginFrame(input, frameTime.DeltaSeconds);
 						while (gameplay.HasStep())
 						{
-							GameUpdateResult result;
 							const FrameTime step = gameplay.GetStepTime();
 							if (game)
-								result = game->FixedUpdate(instance, gameplay.GetInput(), step, client->GetGameBindings());
-							client->OnGameplayStep(result);
+							{
+								auto context = session.MakeContext(gameplay.GetInput(), step);
+								game->FixedUpdate(context);
+							}
+							session.ApplyCommands();
 							gameplay.ConsumeStep();
 						}
 					}
-				}
-				// Variable-rate systems run once per drawable frame, after any fixed steps.
-				if (game)
-					game->Update(instance, input, frameTime, client->GetGameBindings());
-
+					if (game && session.IsPlaying())
+					{
+						auto context = session.MakeContext(input, frameTime);
+						game->Update(context);
+					}
+					session.ApplyCommands();
+				});
+				// A failed step is not retried: its remaining steps are dropped with it.
+				if (!played)
+					gameplay.Reset();
 				gameplayTime.End();
-				client->OnFrame(renderer, input, frameTime);
+				if (metrics)
+					metrics->BenchmarkPhase = session.GetTracePhase();
+
+				// Engine PostUpdate and Extract: cached world transforms, then the render world.
+				{
+					auto& scene = session.GetScene();
+					const auto& catalog = session.GetCatalog();
+					FrameSection gather(metrics ? &metrics->SceneGather : nullptr);
+					boundary.Run(StageBoundary::PostUpdate, [&]
+					{
+						FrameSection transforms(metrics ? &metrics->WorldTransforms : nullptr);
+						scene.UpdateWorldTransforms();
+					});
+					// Only new objects and changed materials resolve their texture (G1), and only new
+					// objects and changed mesh components their mesh. A bad game-written texture
+					// samples white (bindless element 0); a bad mesh draws nothing (FD-06).
+					boundary.Run(StageBoundary::Extract, [&]
+					{
+						renderWorld.Sync(scene, [&](ECS::Entity, const ECS::MaterialComponent& material)
+							-> const VulkanTexture*
+						{
+							if (!material.BaseColorTexture.IsValid())
+								return nullptr;
+							const auto* lease = scene.TryUseAsset(catalog, material.BaseColorTexture.Id, AssetKind::Texture);
+							return lease ? &lease->GetTexture() : nullptr;
+						}, [&](ECS::Entity, AssetRef<MeshAsset> mesh) -> MeshHandle
+						{
+							if (!mesh.IsValid())
+								return {};
+							const auto* lease = scene.TryUseAsset(catalog, mesh.Id, AssetKind::Mesh);
+							return lease ? lease->GetMesh() : MeshHandle{};
+						});
+					});
+				}
+				session.Render(renderer, renderWorld, input);
 			}
 			else
 			{

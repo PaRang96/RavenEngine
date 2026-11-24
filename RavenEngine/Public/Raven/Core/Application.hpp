@@ -1,23 +1,35 @@
 #pragma once
 
+#include "Raven/Assets/AssetId.hpp"
 #include "Raven/Core/Api.hpp"
-#include "Raven/Core/ApplicationClient.hpp"
 #include "Raven/Renderer/RendererConfig.hpp"
 
 #include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace Raven
 {
 	struct WindowDesc;
 
+	// One game root (docs/DataModelDesign.md, FD-17): its content, its module and the options it
+	// is started with. The engine owns the frame, the scene session and the render world.
 	struct ApplicationConfig
 	{
-		// Empty uses Content beside the executable. Relative roots use that same directory.
+		// The game's content folder, holding Project.ravenproject. Relative paths use the
+		// executable's directory.
 		std::filesystem::path ContentRoot;
-		// Empty disables development game-module loading. Paths must name trusted local code.
+		// Empty runs without game code. Paths must name trusted local code.
 		std::filesystem::path GameModulePath;
 		bool AutoBuildGame = false;
 		bool WatchGameModule = true;
+		// Development: reload the project, scenes, meshes and textures, and every engine shader.
+		bool WatchContent = false;
+		bool WatchShaders = false;
+		std::optional<AssetId> StartScene;
+		// `--name` options the engine does not use itself, for GameServices::HasOption.
+		std::vector<std::string> GameOptions;
 		// Optional buffered timing capture, written after the run.
 		std::filesystem::path FrameTracePath;
 		RendererConfig Renderer;
@@ -32,8 +44,6 @@ namespace Raven
 		Application() = default;
 		~Application() = default;
 
-		RAVEN_API void Run(const WindowDesc& description, const ApplicationClientFactory& factory);
-		RAVEN_API void Run(const WindowDesc& description, const ApplicationClientFactory& factory,
-			const ApplicationConfig& config);
+		RAVEN_API void Run(const WindowDesc& description, const ApplicationConfig& config);
 	};
 }

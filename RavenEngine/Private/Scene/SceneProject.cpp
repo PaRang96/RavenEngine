@@ -6,7 +6,6 @@
 #include "Core/PathText.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/Paths.hpp"
-#include "ContentSourceConfig.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -68,9 +67,17 @@ namespace Raven
 				if (!header)
 				{
 					int version = 0;
-					if (kind != "raven-project" || !(input >> version) || version != 1)
-						throw std::runtime_error("expected raven-project 1");
+					if (kind != "raven-project" || !(input >> version) || version != 2)
+						throw std::runtime_error("expected raven-project 2");
 					header = true;
+				}
+				else if (kind != "scene" && kind != "texture" && kind != "mesh" && kind != "audio")
+				{
+					// raven-project 2 is tolerant (docs/DataModelDesign.md, FD-10): records a later
+					// version adds are skipped by this reader.
+					Log(LogLevel::Warning, "Project line " + std::to_string(lineNumber) + ": unknown record '" + kind +
+						"' skipped");
+					continue;
 				}
 				else
 				{
@@ -80,10 +87,10 @@ namespace Raven
 					const auto id = AssetId::Parse(identity);
 					if (kind == "scene")
 					{
-						if (!(input >> setting >> std::quoted(source)) || (setting != "perspective" && setting != "orthographic"))
-							throw std::runtime_error("expected scene UUID, perspective/orthographic and path");
+						if (!(input >> std::quoted(source)))
+							throw std::runtime_error("expected scene UUID and path");
 						result.Catalog.Register({ id, AssetKind::Scene, PathFromUtf8(source) });
-						result.Scenes.push_back({ id, setting == "perspective" ? SceneType::Perspective : SceneType::Orthographic, PathFromUtf8(source) });
+						result.Scenes.push_back({ id, PathFromUtf8(source) });
 					}
 					else if (kind == "texture")
 					{
@@ -97,8 +104,6 @@ namespace Raven
 							throw std::runtime_error("expected source path");
 						result.Catalog.Register({ id, kind == "mesh" ? AssetKind::Mesh : AssetKind::Audio, PathFromUtf8(source) });
 					}
-					else
-						throw std::runtime_error("unsupported project record: " + kind);
 				}
 				std::string extra;
 				if (input >> extra)
@@ -118,8 +123,8 @@ namespace Raven
 				throw std::runtime_error("Missing project source: " + PathToUtf8(source));
 			auto extension = source.extension().string();
 			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-			const auto expected = record.Kind == AssetKind::Texture ? ".png" : record.Kind == AssetKind::Mesh ? ".fbx" : record.Kind == AssetKind::Audio ? ".wav" : ".ravenlevel";
-			if (extension != expected && !(record.Kind == AssetKind::Scene && extension == ".ravenscene"))
+			const auto expected = record.Kind == AssetKind::Texture ? ".png" : record.Kind == AssetKind::Mesh ? ".fbx" : record.Kind == AssetKind::Audio ? ".wav" : ".ravenscene";
+			if (extension != expected)
 				throw std::runtime_error("Incorrect source type for " + record.Id.ToString());
 		}
 		return result;
@@ -146,11 +151,6 @@ namespace Raven
 		AssetStore Assets;
 		std::unique_ptr<SettledFileWatch<SceneProjectDefinition>> Watch;
 	};
-
-	std::filesystem::path SceneProject::DefaultContentRoot(bool development)
-	{
-		return development ? std::filesystem::path(ContentSourceConfig::Root) : Paths::GetContentPath();
-	}
 
 	SceneProject::SceneProject(VulkanContext& renderer, std::filesystem::path root, bool watch, bool meshes, bool textures)
 		: m_Impl(std::make_unique<Impl>(renderer, std::move(root), watch, meshes, textures)) {}

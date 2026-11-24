@@ -14,12 +14,9 @@
 
 namespace Raven
 {
-	enum class SceneType { Perspective, Orthographic };
-
 	struct SceneDescription
 	{
 		AssetId Id;
-		SceneType Type;
 		std::filesystem::path SourcePath;
 	};
 
@@ -35,7 +32,6 @@ namespace Raven
 	public:
 		RAVEN_API static SceneProjectDefinition Decode(std::span<const std::byte> bytes,
 			const std::filesystem::path& path);
-		RAVEN_API static std::filesystem::path DefaultContentRoot(bool development);
 		RAVEN_API SceneProject(VulkanContext& renderer, std::filesystem::path contentRoot,
 			bool watchProject = false, bool watchMeshes = false, bool watchTextures = false);
 		RAVEN_API ~SceneProject();

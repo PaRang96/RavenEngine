@@ -70,7 +70,7 @@ The texture pipeline uses `Texture.vert.hlsl` and `Texture.frag.hlsl`, compiled 
 
 Opaque geometry uses depth test/write with blending disabled. Color draws precede opaque textured draws, followed by a separate transparent queue. Compatible textured draws use the instancing path below. Mipmaps and broader material updates remain later work.
 
-The same draw overloads, descriptors and pipelines support `OrthographicCamera`. Run the sample with `--orthographic` to verify depth-invariant sprite sizes, pan/zoom and overlapping transparency. See [CoordinateSystem.md](CoordinateSystem.md) for projection and resize behavior.
+The same draw overloads, descriptors and pipelines support `OrthographicCamera`. Run the 2D game with `--game Courtyard` to verify depth-invariant sprite sizes, pan/zoom and overlapping transparency. See [CoordinateSystem.md](CoordinateSystem.md) for projection and resize behavior.
 
 ## Transparency and visibility
 

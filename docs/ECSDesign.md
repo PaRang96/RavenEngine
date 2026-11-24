@@ -170,7 +170,7 @@ This uses the rule the host already follows. `GameModule` keeps the DLL's `Updat
 
 Alternative: keep one `Update` entry point per phase and have the DLL call its own systems in order. This needs no rule change, but the host loses per-system timing, ordering and any future parallel scheduling. Not recommended.
 
-The existing `GameBindings` (camera, player, mesh, interactions) reach systems through the `SystemContext`. Over time they become components or singletons (D9).
+The existing `GameBindings` (camera, player, mesh, interactions) reach systems through the `SystemContext`. Over time they become components or singletons (D9). *M6A (2026-11-24) replaced them: `SystemContext` now carries scene access, input, time, picks, Commands and engine services ([DataModelDesign.md](DataModelDesign.md#fd-12--what-a-game-system-receives)).*
 
 ### D7 — Hierarchy and cached world transforms
 
@@ -305,6 +305,19 @@ The median rose from 114.9 to 162.8 FPS (162.7–162.8), and CPU preparation sta
 - **Spawn and reparent** pay one full world-order rebuild (hash maps and a sorted copy of every entity) and a full recompute, so their cost follows the total entity count, not the 1k that changed. The assessment's extrapolation (about 11 ms at 100k) was low.
 - **Despawn** is quadratic: each `Scene::DestroyEntity` scans every parent link to find descendants and erases from the entity list and the name map, so 1k destroys at 100k entities make about 10^8 visits.
 - At 100k entities all three miss the 4 ms budget by 4× to 95×. This confirms the M6-3 priority (incremental spawn/destroy/reparent with child lists and depth buckets) before gameplay spawns at runtime. Nothing in the current samples spawns or despawns per frame.
+
+### Structural-change record after M6A (2026-11-24)
+
+M6-3 replaced the whole-scene rebuild with child lists and depth buckets ([DataModelDesign.md](DataModelDesign.md#fd-07--how-the-hierarchy-is-stored)). Same cases, same laptop, Release, at 100k entities:
+
+| Case | Pre-M6 | M6A |
+| --- | ---: | ---: |
+| Spawn 1k leaves + world update | 17.55 ms | 1.0–1.3 ms |
+| Despawn 1k leaves + world update | 378 ms | 0.57–0.68 ms |
+| Reparent 500 pivots (1k entities) + world update | 17.72 ms | 0.37–0.55 ms |
+| Migrate every Transform (one added field) | — | 1.0–1.6 ms |
+
+Each structural case includes one world update, whose floor at 100k entities is about 0.37 ms.
 
 ## M1 exit record (2026-11-21)
 

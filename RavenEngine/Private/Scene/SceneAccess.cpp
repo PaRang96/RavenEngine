@@ -1,4 +1,5 @@
 #include "Raven/Scene/Scene.hpp"
+#include "Raven/Components/TransformComponent.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -6,9 +7,29 @@
 
 namespace Raven
 {
+	namespace
+	{
+		// The generic forms of the compile-time HostOwned checks (docs/DataModelDesign.md, FD-07).
+		bool IsHostOwned(const ECS::ComponentInfo& info) noexcept
+		{
+			return info.Id == ECS::ComponentTraits<ECS::WorldTransformComponent>::Info.Id ||
+				info.Id == ECS::ComponentTraits<ECS::ParentComponent>::Info.Id;
+		}
+	}
+
 	ECS::Entity SceneAccess::Find(std::string_view id) const
 	{
 		return m_Scene ? m_Scene->FindEntity(std::string(id)) : ECS::Entity{};
+	}
+
+	ECS::Entity SceneAccess::Resolve(ECS::EntityRef id) const noexcept
+	{
+		return m_Scene ? m_Scene->Resolve(id) : ECS::Entity{};
+	}
+
+	ECS::EntityRef SceneAccess::GetRef(ECS::Entity entity) const noexcept
+	{
+		return m_Scene ? m_Scene->GetRef(entity) : ECS::EntityRef{};
 	}
 
 	bool SceneAccess::IsAlive(ECS::Entity entity) const noexcept
@@ -23,7 +44,7 @@ namespace Raven
 
 	bool SceneAccess::WriteComponent(ECS::Entity entity, const ECS::ComponentInfo& info, const void* value) const noexcept
 	{
-		return IsAlive(entity) && m_Scene->m_Registry.WriteComponent(entity, info, value);
+		return IsAlive(entity) && !IsHostOwned(info) && m_Scene->m_Registry.WriteComponent(entity, info, value);
 	}
 
 	std::vector<ECS::Entity> SceneAccess::Query(std::span<const ECS::ComponentInfo* const> components) const
@@ -41,7 +62,7 @@ namespace Raven
 			if (pools.back().Count == 0)
 				return result;
 		}
-		// Authored order: walk the scene's entities and test pool membership directly.
+		// Scene order: walk the scene's entities and test pool membership directly.
 		for (const auto entity : m_Scene->m_Entities)
 			if (m_Scene->m_Registry.IsAlive(entity) &&
 				std::all_of(pools.begin(), pools.end(), [entity](const ECS::Detail::PoolView& pool)
@@ -52,7 +73,7 @@ namespace Raven
 
 	void* SceneAccess::TryGetComponent(ECS::Entity entity, const ECS::ComponentInfo& info) const noexcept
 	{
-		if (!m_Scene || m_Scene->m_Registry.GetOwner(entity) != m_Scene->m_SceneId)
+		if (!m_Scene || m_Scene->m_Registry.GetOwner(entity) != m_Scene->m_SceneId || IsHostOwned(info))
 			return nullptr;
 		return m_Scene->m_Registry.TryGetComponent(entity, info);
 	}

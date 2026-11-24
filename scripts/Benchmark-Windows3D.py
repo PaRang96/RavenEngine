@@ -44,10 +44,14 @@ def runtime(root=ROOT, preset=RELEASE):
     return root / "out/build" / preset / "RavenEngine"
 
 
+# The Samples game root owns the benchmark scenes and their generator (docs/DataModelDesign.md, FD-17).
+CONTENT = "Games/Samples/Content"
+
+
 def generate():
     for count in SCENES:
-        subprocess.run([str(runtime() / "RavenSceneTool.exe"), str(ROOT / "Content"), "create-benchmark",
-                        str(ROOT / f"Content/Levels/Benchmark-{count}.ravenscene"), str(count)], check=True)
+        subprocess.run([str(runtime() / "SamplesTool.exe"), "create-benchmark",
+                        str(ROOT / CONTENT / f"Levels/Benchmark-{count}.ravenscene"), str(count)], check=True)
 
 
 def read_frames(path):
@@ -157,8 +161,8 @@ def profile(executable, directory, count, animated, watching, seconds, capture=F
 
 
 def measure(report, seconds, repeats):
-    content = ROOT / "Content"
-    staged = runtime() / "Content"
+    content = ROOT / CONTENT
+    staged = runtime() / CONTENT
     inputs = ["Project.ravenproject", "Meshes/Cube.fbx", "Meshes/Sphere.fbx",
               "Textures/UVGrid.png", "Textures/UVGridAlternate.png"]
     inputs.extend(f"Levels/Benchmark-{count}.ravenscene" for count in COMPARISON_COUNTS)
@@ -180,7 +184,7 @@ def measure(report, seconds, repeats):
 def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
     source = report / "source"
     source.mkdir()
-    for folder in ("RavenEngine", "ThirdParty", "cmake", "Content", "scripts", "docs", "BuildProfiles"):
+    for folder in ("RavenEngine", "Games", "ThirdParty", "cmake", "scripts", "docs", "BuildProfiles"):
         shutil.copytree(ROOT / folder, source / folder)
     for name in ("CMakeLists.txt", "CMakePresets.json"):
         shutil.copy2(ROOT / name, source / name)
@@ -193,18 +197,18 @@ def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
         if stress in STRESS:
             # The snapshot's own scene tool writes the scene; the rebuild stages it with the project.
             level = f"Levels/Benchmark-{stress}.ravenscene"
-            subprocess.run([str(runtime(source, preset) / "RavenSceneTool.exe"), str(source / "Content"),
-                            "create-benchmark", str(source / "Content" / level), str(stress)],
+            subprocess.run([str(runtime(source, preset) / "SamplesTool.exe"), "create-benchmark",
+                            str(source / CONTENT / level), str(stress)],
                            stdout=output, stderr=subprocess.STDOUT, check=True)
-            with (source / "Content/Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
-                project.write(f'scene {STRESS[stress]} perspective "{level}"\n')
+            with (source / CONTENT / "Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
+                project.write(f'scene {STRESS[stress]} "{level}"\n')
             subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
     return source
 
 
 def hot_reload(report, count):
     source = build_snapshot(report, stress=count)
-    path = source / "RavenEngine/Private/Game/InteractionGame.cpp"
+    path = source / "Games/Samples/Source/Interaction.cpp"
     original = path.read_bytes()
     rule = b"ContinuousRotationSpeed = 1.0f;"
     check(original.count(rule) == 1, "The benchmark's compatible speed edit moved")

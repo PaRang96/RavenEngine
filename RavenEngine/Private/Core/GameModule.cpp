@@ -1,10 +1,11 @@
 #include "Raven/Core/GameModule.hpp"
-#include "Raven/Core/ApplicationClient.hpp"
+#include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Platform/GameModulePlatform.hpp"
 #include "Platform/BuildProcess.hpp"
 #include "Core/ImporterVersions.hpp"
 #include "Core/ReloadService.hpp"
+#include "Core/PathText.hpp"
 #include "Core/ReloadTrace.hpp"
 #include "GameBuildConfig.hpp"
 
@@ -82,23 +83,26 @@ namespace Raven
 				path.filename() == "CMakeLists.txt";
 		}
 
-		// The same files SourceSignature hashes, as reload-service inputs.
-		std::vector<ReloadInput> SourceInputs()
+		// The folders CMake lists for this game (WatchedInputs.txt): the game root and the folders of
+		// the engine contract inputs (docs/DataModelDesign.md, FD-17).
+		std::vector<std::filesystem::path> WatchedFolders(const std::filesystem::path& buildDirectory)
 		{
-			const std::filesystem::path root(GameBuild::Root);
-			const auto named = [](std::initializer_list<const char*> names)
-			{
-				std::vector<std::string> list(names.begin(), names.end());
-				return [list](const std::filesystem::path& path)
-				{
-					return std::find(list.begin(), list.end(), path.filename().string()) != list.end();
-				};
-			};
+			std::ifstream list(buildDirectory / "WatchedInputs.txt");
+			std::vector<std::filesystem::path> folders;
+			for (std::string line; std::getline(list, line);)
+				if (!line.empty())
+					folders.push_back(PathFromUtf8(line));
+			if (folders.empty())
+				throw std::runtime_error("The game's watched inputs are missing; reconfigure the host");
+			return folders;
+		}
+
+		// The same files SourceSignature hashes, as reload-service inputs.
+		std::vector<ReloadInput> SourceInputs(const std::vector<std::filesystem::path>& folders)
+		{
 			std::vector<ReloadInput> inputs;
-			inputs.push_back({ root, nullptr, named({ "CMakeLists.txt", "CMakePresets.json" }) });
-			inputs.push_back({ root / "RavenEngine", nullptr, named({ "CMakeLists.txt" }) });
-			for (const auto* name : { "RavenEngine/Public", "RavenEngine/Private/Game", "cmake" })
-				inputs.push_back({ root / name, nullptr, IsSourceFile, true });
+			for (const auto& folder : folders)
+				inputs.push_back({ folder, nullptr, IsSourceFile, true });
 			return inputs;
 		}
 
@@ -116,20 +120,13 @@ namespace Raven
 		};
 
 		// Content changes drive builds; timestamps alone are not a compatibility check.
-		std::uint64_t SourceSignature()
+		std::uint64_t SourceSignature(const std::vector<std::filesystem::path>& folders)
 		{
-			const std::filesystem::path root(GameBuild::Root);
 			std::vector<std::filesystem::path> files;
-			for (const auto& directory : { root / "RavenEngine/Public", root / "RavenEngine/Private/Game", root / "cmake" })
-			{
-				for (const auto& entry : std::filesystem::recursive_directory_iterator(directory))
-				{
+			for (const auto& folder : folders)
+				for (const auto& entry : std::filesystem::recursive_directory_iterator(folder))
 					if (entry.is_regular_file() && IsSourceFile(entry.path()))
 						files.push_back(entry.path());
-				}
-			}
-			for (const auto* name : { "CMakeLists.txt", "CMakePresets.json", "RavenEngine/CMakeLists.txt" })
-				files.push_back(root / name);
 			std::sort(files.begin(), files.end());
 			std::uint64_t hash = HashOffset;
 			for (const auto& path : files)
@@ -226,7 +223,11 @@ namespace Raven
 			BuildTrace Trace{};
 		};
 
+		GameInstance* Game = nullptr;
 		std::filesystem::path Path;
+		// GameBuild::BuildRoot/<Name> for the module <Name>.dll, and the folders it watches.
+		std::filesystem::path BuildDirectory;
+		std::vector<std::filesystem::path> Watched;
 		std::unique_ptr<LoadedGame> Active;
 		// Keyed by system name, so timing accumulates across compatible reloads.
 		std::map<std::string, GameSystemStats, std::less<>> Stats;
@@ -276,13 +277,17 @@ namespace Raven
 
 		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0, const BuildTrace& trace = {});
 		void Watch(std::stop_token stop, FileStamp initial);
-		GameUpdateResult RunPhase(SystemPhase phase, GameInstance& game, const InputState& input,
-			const FrameTime& frame, GameBindings bindings);
+		void RunPhase(SystemPhase phase, SystemContext& context);
 	};
 
 	void SystemTable::Add(const SystemDesc& system)
 	{
 		m_Systems.push_back(system);
+	}
+
+	void SystemTable::AddComponent(const ECS::ComponentInfo& info, std::span<const std::byte> defaults)
+	{
+		m_Components.push_back(ECS::MakeComponentSchema(info, defaults));
 	}
 
 	namespace
@@ -308,13 +313,39 @@ namespace Raven
 			});
 			return systems;
 		}
+
+		// Every declared component must be new, unchanged, or migratable by field name
+		// (docs/HotReloadDesign.md, H6), so retained values stay valid.
+		void CheckComponents(const SystemTable& table, const ECS::Registry& registry)
+		{
+			std::set<std::uint64_t> ids;
+			for (const auto& schema : table.GetComponents())
+				if (!ids.insert(schema.Id).second)
+					throw std::runtime_error("Game DLL declared a component twice: " + schema.Name);
+			if (const auto error = registry.CheckMigration(table.GetComponents()); !error.empty())
+				throw std::runtime_error(error + "; existing game remains active");
+		}
+
+		std::string Describe(const ECS::ComponentMigration& migration)
+		{
+			std::string text = "Migrated " + migration.Name + " (" + std::to_string(migration.Elements) + " values)";
+			const auto list = [&text](const char* label, const std::vector<std::string>& names)
+			{
+				if (names.empty())
+					return;
+				text += std::string("; ") + label;
+				for (std::size_t index = 0; index < names.size(); ++index)
+					text += (index ? ", " : " ") + names[index];
+			};
+			list("added", migration.Added);
+			list("removed", migration.Removed);
+			list("renamed", migration.Renamed);
+			return text;
+		}
 	}
 
-	GameUpdateResult GameModule::Impl::RunPhase(SystemPhase phase, GameInstance& game, const InputState& input,
-		const FrameTime& frame, GameBindings bindings)
+	void GameModule::Impl::RunPhase(SystemPhase phase, SystemContext& context)
 	{
-		GameUpdateResult result;
-		SystemContext context{ game, input, frame, bindings, result };
 		for (auto& system : Active->Systems)
 		{
 			if (system.Phase != phase || system.Suspended)
@@ -350,7 +381,6 @@ namespace Raven
 					". Suspended until the next module reload.");
 			}
 		}
-		return result;
 	}
 
 	bool GameModule::Impl::Activate(std::optional<FileStamp> expected, std::uint64_t revision, const BuildTrace& trace)
@@ -404,8 +434,14 @@ namespace Raven
 			candidate->Systems = LoadSystems(table);
 			if (candidate->Systems.empty())
 				throw std::runtime_error("Game DLL registered no systems");
+			auto& registry = Game->GetRegistry();
+			CheckComponents(table, registry);
 			if (expected && SourceRevision.load() != revision)
 				return false;
+			for (const auto& migration : registry.Migrate(table.GetComponents()))
+				Log(LogLevel::Info, Describe(migration));
+			for (const auto& schema : table.GetComponents())
+				registry.RegisterSchema(schema);
 			if (Active)
 				LogSystemChanges(Active->Systems, candidate->Systems);
 			// A new generation starts every system again, including ones suspended before.
@@ -453,7 +489,7 @@ namespace Raven
 		using namespace std::chrono_literals;
 		using BuildProcess = std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)>;
 		BuildProcess build{ nullptr, &Platform::DestroyBuildProcess };
-		const auto directory = std::filesystem::path(GameBuild::BuildDirectory);
+		const auto directory = BuildDirectory;
 		auto publishedFile = initial;
 		std::uint64_t publishedRevision = 0;
 		std::optional<std::uint64_t> observedSource;
@@ -523,7 +559,7 @@ namespace Raven
 		std::unique_ptr<ReloadSubscription> sourceWatch;
 		ReloadOptions sourceOptions{ "game sources", ImporterVersion::GameSources };
 		if (AutoBuild)
-			sourceWatch = ReloadService::Subscribe(SourceInputs(), sources, sourceOptions);
+			sourceWatch = ReloadService::Subscribe(SourceInputs(Watched), sources, sourceOptions);
 		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ Path } }, output,
 			{ "game DLL", ImporterVersion::GameSources });
 		bool checkSources = AutoBuild;
@@ -548,7 +584,7 @@ namespace Raven
 					// Recheck the build's inputs directly; the service may not have settled an edit yet.
 					const bool superseded = buildQueued;
 					buildQueued = true;
-					const auto signature = SourceSignature();
+					const auto signature = SourceSignature(Watched);
 					observeSource(signature);
 					if (!superseded && signature == builtSource)
 					{
@@ -563,7 +599,7 @@ namespace Raven
 				if (checkSources)
 				{
 					checkSources = false;
-					observeSource(SourceSignature());
+					observeSource(SourceSignature(Watched));
 				}
 				// The service already waited for the sources to settle, so the build starts at once.
 				if (!build && buildQueued && observedSource)
@@ -602,16 +638,22 @@ namespace Raven
 		}
 	}
 
-	GameModule::GameModule(const std::filesystem::path& path, bool autoBuild)
+	GameModule::GameModule(GameInstance& game, const std::filesystem::path& path, bool autoBuild)
 		: m_Impl(std::make_unique<Impl>())
 	{
 		if (!GameBuild::Enabled)
 			throw std::runtime_error("Game modules are disabled or unsupported in this build");
+		m_Impl->Game = &game;
 		m_Impl->Path = std::filesystem::absolute(path);
 		m_Impl->AutoBuild = autoBuild;
-		if (autoBuild && !std::filesystem::equivalent(m_Impl->Path,
-			std::filesystem::path(GameBuild::BuildDirectory).parent_path() / GameBuild::ModuleFilename))
-			throw std::invalid_argument("Automatic builds require this build's configured RavenGame.dll output");
+		m_Impl->BuildDirectory = std::filesystem::path(GameBuild::BuildRoot) / m_Impl->Path.stem();
+		if (autoBuild)
+		{
+			if (!std::filesystem::is_regular_file(m_Impl->BuildDirectory / "BuildGame.cmake"))
+				throw std::invalid_argument("Automatic builds need a game root this build configured: " +
+					m_Impl->Path.stem().string());
+			m_Impl->Watched = WatchedFolders(m_Impl->BuildDirectory);
+		}
 		if (!Reload())
 			throw std::runtime_error(m_Impl->Error);
 	}
@@ -649,16 +691,14 @@ namespace Raven
 		}
 	}
 
-	GameUpdateResult GameModule::FixedUpdate(GameInstance& game, const InputState& input, const FrameTime& frame,
-		GameBindings bindings)
+	void GameModule::FixedUpdate(SystemContext& context)
 	{
-		return m_Impl->RunPhase(SystemPhase::FixedUpdate, game, input, frame, bindings);
+		m_Impl->RunPhase(SystemPhase::FixedUpdate, context);
 	}
 
-	GameUpdateResult GameModule::Update(GameInstance& game, const InputState& input, const FrameTime& frame,
-		GameBindings bindings)
+	void GameModule::Update(SystemContext& context)
 	{
-		return m_Impl->RunPhase(SystemPhase::Update, game, input, frame, bindings);
+		m_Impl->RunPhase(SystemPhase::Update, context);
 	}
 
 	std::vector<GameSystemStats> GameModule::GetSystemStats() const

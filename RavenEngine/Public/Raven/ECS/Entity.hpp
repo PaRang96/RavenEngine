@@ -37,4 +37,18 @@ namespace Raven::ECS
         std::uint32_t m_Index = 0;
         std::uint32_t m_Generation = 0;
     };
+
+	// Persistent reference to an entity of the same scene (docs/DataModelDesign.md, FD-09).
+	// Components and files store it; Scene::Resolve and SceneAccess::Resolve find the live
+	// entity. Zero is the null reference.
+	struct EntityRef
+	{
+		std::uint64_t Id = 0;
+
+		constexpr bool IsNull() const noexcept
+		{
+			return Id == 0;
+		}
+		constexpr bool operator==(const EntityRef& other) const noexcept = default;
+	};
 }

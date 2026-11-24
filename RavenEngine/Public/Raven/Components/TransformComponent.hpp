@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Raven/ECS/Component.hpp"
+#include "Raven/ECS/Entity.hpp"
 #include "Raven/Math/Transform.hpp"
 
 namespace Raven::ECS
@@ -30,4 +31,17 @@ namespace Raven::ECS
 
 		RAVEN_COMPONENT(Raven::ECS::WorldTransformComponent, World);
 	};
+
+	// The saved hierarchy (docs/DataModelDesign.md, FD-07): the parent of an entity that has one.
+	// Scene::SetParent writes it and keeps its runtime child index in step; roots have none.
+	struct ParentComponent : Component
+	{
+		EntityRef Parent;
+
+		RAVEN_COMPONENT(Raven::ECS::ParentComponent, Parent);
+	};
+
+	template<> inline constexpr bool HostOwned<WorldTransformComponent> = true;
+	template<> inline constexpr bool Transient<WorldTransformComponent> = true;
+	template<> inline constexpr bool HostOwned<ParentComponent> = true;
 }

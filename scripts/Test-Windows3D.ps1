@@ -34,30 +34,27 @@ $source = Join-Path $scratch 'source'
 $variant = Join-Path $scratch 'variant'
 $gameBuild = Join-Path $scratch 'game-build'
 $probe = Join-Path $scratch 'probe'
-New-Item -ItemType Directory -Path $source, $variant, $probe, "$source/RavenEngine/Private" -Force | Out-Null
+New-Item -ItemType Directory -Path $source, $variant, $probe -Force | Out-Null
 Write-Host "Smoke artifacts are under $scratch"
 
-# Keep the shared contract, but build a body-only game edit in a separate source tree.
-Copy-Item -LiteralPath "$repo/CMakeLists.txt", "$repo/CMakePresets.json", "$repo/cmake" -Destination $source -Recurse
-Copy-Item -LiteralPath "$repo/RavenEngine/CMakeLists.txt", "$repo/RavenEngine/Public" -Destination "$source/RavenEngine" -Recurse
-Copy-Item -LiteralPath "$repo/RavenEngine/Private/Game" -Destination "$source/RavenEngine/Private" -Recurse
+# The engine contract stays the repository's; a body-only edit of the Samples game builds from a
+# copy of its game root (docs/DataModelDesign.md, FD-17).
+Copy-Item -LiteralPath "$repo/Games/Samples" -Destination $source -Recurse
 
-$recipe = Get-Content -LiteralPath "$runtime/GameBuild/BuildGame.cmake" -Raw
+$recipe = Get-Content -LiteralPath "$runtime/GameBuild/Samples/BuildGame.cmake" -Raw
 $repoPath = $repo.Replace('\', '/')
 $runtimePath = $runtime.Replace('\', '/')
-$sourcePath = $source.Replace('\', '/')
+$gameSourcePath = (Join-Path $source 'Samples').Replace('\', '/')
 $variantPath = $variant.Replace('\', '/')
 $gameBuildPath = $gameBuild.Replace('\', '/')
-$recipe = $recipe.Replace("set(root [==[$repoPath]==])", "set(root [==[$sourcePath]==])")
-$recipe = $recipe.Replace("-DRAVEN_ROOT=$repoPath]==]", "-DRAVEN_ROOT=$sourcePath]==]")
+$recipe = $recipe.Replace("set(game_root [==[$repoPath/Games/Samples]==])", "set(game_root [==[$gameSourcePath]==])")
 $recipe = $recipe.Replace(
-    "set(build_directory [==[$runtimePath/GameBuild]==])",
+    "set(build_directory [==[$runtimePath/GameBuild/Samples]==])",
     "set(build_directory [==[$gameBuildPath]==])")
 $recipe = $recipe.Replace(
     "-DRAVEN_GAME_OUTPUT=$runtimePath]==]",
     "-DRAVEN_GAME_OUTPUT=$variantPath]==]")
-if (!$recipe.Contains("set(root [==[$sourcePath]==])") -or
-    !$recipe.Contains("-DRAVEN_ROOT=$sourcePath]==]") -or
+if (!$recipe.Contains("set(game_root [==[$gameSourcePath]==])") -or
     !$recipe.Contains("set(build_directory [==[$gameBuildPath]==])") -or
     !$recipe.Contains("-DRAVEN_GAME_OUTPUT=$variantPath]==]")) {
     throw 'Could not isolate the generated game build recipe.'
@@ -66,14 +63,14 @@ $recipeFile = Join-Path $scratch 'BuildGame.cmake'
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($recipeFile, $recipe, $utf8)
 
-$gameSource = Join-Path $source 'RavenEngine/Private/Game/InteractionGame.cpp'
+$gameSource = Join-Path $source 'Samples/Source/Interaction.cpp'
 $gameBody = [IO.File]::ReadAllText($gameSource)
 $originalRule = 'return collected == total;'
 $changedRule = 'return collected + 1 >= total;'
 if (!$gameBody.Contains($originalRule)) { throw 'The collection rule used by this smoke test moved.' }
 $editedBody = $gameBody.Replace($originalRule, $changedRule)
 [IO.File]::WriteAllText($gameSource, $editedBody, $utf8)
-$variantDll = Join-Path $variant 'RavenGame.dll'
+$variantDll = Join-Path $variant 'Samples.dll'
 Invoke-Native { & cmake -P $recipeFile *> (Join-Path $scratch 'edited-build.log') }
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $variantDll)) {
     throw "The edited game DLL did not build. See $scratch/edited-build.log."

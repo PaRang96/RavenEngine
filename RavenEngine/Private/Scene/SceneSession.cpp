@@ -1,5 +1,4 @@
 #include "Raven/Scene/SceneSession.hpp"
-#include "Scene/SceneBinary.hpp"
 
 #include "Assets/AssetPath.hpp"
 #include "Assets/SettledFileWatch.hpp"
@@ -18,7 +17,8 @@ namespace Raven
 	{
 		std::vector<std::byte> ReadScene(const std::filesystem::path& path)
 		{
-			return Files::ReadBinary(path, SceneBinary::Limit);
+			// Generous for 100k-entity scenes; a corrupt length still cannot allocate without bound.
+			return Files::ReadBinary(path, std::size_t{ 1 } << 30);
 		}
 		std::vector<std::byte> DecodeSnapshot(std::span<const std::byte> bytes, const std::filesystem::path&)
 		{
@@ -38,19 +38,19 @@ namespace Raven
 			std::vector<std::byte> Bytes;
 		};
 
-		Impl(SceneProject& project, SceneType type, Factory factory, std::optional<AssetId> initialScene)
-			: Project(project), Type(type), Build(std::move(factory))
+		Impl(SceneProject& project, Factory factory, std::optional<AssetId> initialScene)
+			: Project(project), Build(std::move(factory))
 		{
 			const auto scenes = Project.GetScenes();
 			const auto first = std::find_if(scenes.begin(), scenes.end(), [&](const auto& scene)
 			{
-				return scene.Type == type && (!initialScene || *initialScene == scene.Id);
+				return !initialScene || *initialScene == scene.Id;
 			});
 			if (first == scenes.end())
 			{
 				if (initialScene)
 					throw std::runtime_error("The project has no matching scene " + initialScene->ToString());
-				throw std::runtime_error("Project has no scenes for the selected sample");
+				throw std::runtime_error("The project lists no scenes");
 			}
 			Publish(Prepare(*first, Project.GetCatalog()));
 		}
@@ -89,10 +89,10 @@ namespace Raven
 			const auto start = std::chrono::steady_clock::now();
 			const auto scene = std::find_if(candidate.Scenes.begin(), candidate.Scenes.end(), [this](const auto& value)
 			{
-				return value.Id == Description.Id && value.Type == Type;
+				return value.Id == Description.Id;
 			});
 			if (scene == candidate.Scenes.end())
-				throw std::runtime_error("Cannot remove or change the type of the active scene; switch away first");
+				throw std::runtime_error("Cannot remove the active scene; switch away first");
 			SceneDescription nextDescription = *scene;
 			auto resources = Project.GetAssets().PrepareCatalog(candidate.Catalog);
 			std::optional<Candidate> world;
@@ -112,7 +112,6 @@ namespace Raven
 		}
 
 		SceneProject& Project;
-		const SceneType Type;
 		Factory Build;
 		std::unique_ptr<Scene> Active;
 		std::unique_ptr<Watcher> Watch;
@@ -124,8 +123,8 @@ namespace Raven
 		std::string ReportedError;
 	};
 
-	SceneSession::SceneSession(SceneProject& project, SceneType type, Factory factory, std::optional<AssetId> initialScene)
-		: m_Impl(std::make_unique<Impl>(project, type, std::move(factory), initialScene)) {}
+	SceneSession::SceneSession(SceneProject& project, Factory factory, std::optional<AssetId> initialScene)
+		: m_Impl(std::make_unique<Impl>(project, std::move(factory), initialScene)) {}
 	SceneSession::~SceneSession() = default;
 	Scene& SceneSession::GetActive() const noexcept { return *m_Impl->Active; }
 	const SceneDescription& SceneSession::GetActiveDescription() const noexcept { return m_Impl->Description; }
@@ -144,10 +143,8 @@ namespace Raven
 				m_Impl->PendingScene.reset();
 				if (next)
 				{
-					std::vector<SceneDescription> scenes;
-					for (const auto& scene : m_Impl->Project.GetScenes())
-						if (scene.Type == m_Impl->Type)
-							scenes.push_back(scene);
+					const auto all = m_Impl->Project.GetScenes();
+					const std::vector<SceneDescription> scenes(all.begin(), all.end());
 					const auto found = std::find_if(scenes.begin(), scenes.end(), [this](const auto& scene)
 					{
 						return scene.Id == m_Impl->Description.Id;

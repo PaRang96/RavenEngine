@@ -221,6 +221,7 @@ Unlit shading already exists: `MaterialComponent::Lit = false` makes `RavenApply
   - `PerspectiveLevel.cpp` uses the 3D interaction components, and `OrthographicLevel.cpp` uses `GameComponents.hpp`.
   - Changing such a layout under a running host is unsafe, whatever the migration does.
   - Only components the host never compiles could migrate, and the 3D sample has none.
+- **Implemented in M6A (2026-11-24, [DataModelDesign.md](DataModelDesign.md#m6a-exit-record-2026-11-24)):** `Registry::Migrate`, with renames through `RAVEN_COMPONENT_ALIASES`.
 - **After M6:** the host stops compiling game components. Pools whose layout hash changes are then migrated by field name: matching name and type copy, new fields take their default values, and removed fields are dropped. A type change rejects the module, and the host keeps the last-good module and world.
 
 ### H7 — Recovery and diagnostics

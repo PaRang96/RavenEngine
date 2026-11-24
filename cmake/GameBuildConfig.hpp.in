@@ -3,9 +3,11 @@
 namespace Raven::GameBuild
 {
 	inline constexpr bool Enabled = @RAVEN_GAME_ENABLED@;
-	inline constexpr wchar_t ModuleFilename[] = L"@RAVEN_GAME_MODULE_FILENAME@";
 	inline constexpr char Contract[] = "@RAVEN_GAME_CONTRACT@";
 	inline constexpr wchar_t Root[] = LR"raven(@PROJECT_SOURCE_DIR@)raven";
 	inline constexpr wchar_t Cmake[] = LR"raven(@CMAKE_COMMAND@)raven";
-	inline constexpr wchar_t BuildDirectory[] = LR"raven(@RAVEN_GAME_BUILD_DIRECTORY@)raven";
+	// Games/<Name> builds in BuildRoot/<Name> and produces <Name><ModuleSuffix> beside RavenCore.
+	inline constexpr wchar_t BuildRoot[] = LR"raven(@RAVEN_GAME_BUILD_ROOT@)raven";
+	inline constexpr wchar_t ModuleSuffix[] = L"@CMAKE_SHARED_LIBRARY_SUFFIX@";
+	inline constexpr char DefaultGame[] = "@RAVEN_DEFAULT_GAME@";
 }

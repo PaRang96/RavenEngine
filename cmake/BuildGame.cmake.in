@@ -1,6 +1,7 @@
 # This script configures/builds only the standalone child, never the live host.
 cmake_minimum_required(VERSION 3.24)
 set(root [==[@PROJECT_SOURCE_DIR@]==])
+set(game_root [==[@RAVEN_GAME_SOURCE_DIR@]==])
 set(build_directory [==[@RAVEN_GAME_BUILD_DIRECTORY@]==])
 set(environment_file [==[@RAVEN_GAME_ENVIRONMENT_FILE@]==])
 set(stamp "${build_directory}/BuildInputs.sha256")
@@ -42,11 +43,12 @@ raven_trace_phase(lock)
 include("${root}/cmake/GameContract.cmake")
 raven_game_contract_inputs("${root}" inputs)
 include("${root}/cmake/RavenGameSources.cmake")
+raven_game_sources("${game_root}" RAVEN_GAME_SOURCES RAVEN_GAME_HEADERS)
 if(NOT EXISTS "${environment_file}")
     message(FATAL_ERROR "Game build environment is missing; reconfigure the host.")
 endif()
-list(APPEND inputs ${RAVEN_GAME_SOURCES} "${environment_file}"
-    [==[@RAVEN_GAME_CORE_LIBRARY@]==])
+list(APPEND inputs ${RAVEN_GAME_SOURCES} ${RAVEN_GAME_HEADERS} "${game_root}/CMakeLists.txt"
+    "${environment_file}" [==[@RAVEN_GAME_CORE_LIBRARY@]==])
 
 # Hash contents so equal/coarse timestamps still detect edits.
 file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" recipe_digest)
@@ -141,7 +143,7 @@ endif()
 include("${environment_file}")
 if(configure_needed)
 execute_process(
-    COMMAND [==[@CMAKE_COMMAND@]==] -S "${root}/RavenEngine/Private/Game"
+    COMMAND [==[@CMAKE_COMMAND@]==] -S "${game_root}"
         -B "${build_directory}" -G Ninja
         [==[-DRAVEN_ROOT=@PROJECT_SOURCE_DIR@]==]
         [==[-DRAVEN_CORE_LIBRARY=@RAVEN_GAME_CORE_LIBRARY@]==]
@@ -162,7 +164,7 @@ if(NOT configured EQUAL 0)
 endif()
 endif()
 raven_trace_phase(configure)
-set(build_arguments --build "${build_directory}" --target RavenGame)
+set(build_arguments --build "${build_directory}" --target [==[@RAVEN_GAME_NAME@]==])
 if(repair_outputs)
     # Reconfigure first, then clean only this child project. Its imported host
     # library has no build/clean edge, so loaded host files remain untouched.

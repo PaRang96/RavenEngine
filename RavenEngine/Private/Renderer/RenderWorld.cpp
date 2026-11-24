@@ -7,6 +7,7 @@
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <span>
 
@@ -30,6 +31,14 @@ namespace Raven
 		{
 			return ECS::Detail::EntityAccess::Index(entity);
 		}
+
+		// Unique across every render world in the process, so a renderer that compares the world's
+		// address and generation never mistakes a new world at a reused address for one it uploaded.
+		std::uint64_t NextGeneration() noexcept
+		{
+			static std::atomic<std::uint64_t> next{ 0 };
+			return next.fetch_add(1, std::memory_order_relaxed) + 1;
+		}
 	}
 
 	// Reads registry and scene internals as Scene does; every borrowed pool view is used only
@@ -38,8 +47,8 @@ namespace Raven
 	{
 	public:
 		RenderWorldSync(RenderWorld::State& state, ECS::Registry& registry,
-			const RenderWorld::TextureResolver& resolveTexture)
-			: m_State(state), m_Registry(registry), m_Resolve(resolveTexture),
+			const RenderWorld::TextureResolver& resolveTexture, const RenderWorld::MeshResolver& resolveMesh)
+			: m_State(state), m_Registry(registry), m_Resolve(resolveTexture), m_ResolveMesh(resolveMesh),
 			  m_Meshes(registry.GetPool(ECS::ComponentTraits<ECS::StaticMeshComponent>::Info)),
 			  m_Worlds(registry.GetPool(ECS::ComponentTraits<ECS::WorldTransformComponent>::Info)),
 			  m_Materials(registry.GetPool(ECS::ComponentTraits<ECS::MaterialComponent>::Info)),
@@ -50,7 +59,7 @@ namespace Raven
 		void Rebuild()
 		{
 			auto& state = m_State;
-			++state.Generation;
+			state.Generation = NextGeneration();
 			state.Objects.clear();
 			state.Entities.clear();
 			std::fill(state.SlotOfIndex.begin(), state.SlotOfIndex.end(), RenderWorld::State::NoSlot);
@@ -85,7 +94,7 @@ namespace Raven
 			if (present && slot == RenderWorld::State::NoSlot)
 				Add(entity);
 			else if (present)
-				Write(slot, false, true);
+				Write(slot, false, true, true);
 			else if (slot != RenderWorld::State::NoSlot)
 				Remove(slot);
 		}
@@ -106,9 +115,9 @@ namespace Raven
 				const auto world = m_Worlds.Find(entity);
 				const auto material = m_Materials.Find(entity);
 				const bool materialChanged = material != Pool::NoIndex && m_Materials.Ticks[material] > since;
-				if (m_Meshes.Ticks[dense] > since || materialChanged ||
-					(world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
-					Write(slot, false, materialChanged);
+				const bool meshChanged = m_Meshes.Ticks[dense] > since;
+				if (meshChanged || materialChanged || (world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
+					Write(slot, false, materialChanged, meshChanged);
 			}
 		}
 
@@ -128,7 +137,7 @@ namespace Raven
 			if (index >= state.SlotOfIndex.size())
 				state.SlotOfIndex.resize(index + 1, RenderWorld::State::NoSlot);
 			state.SlotOfIndex[index] = slot;
-			Write(slot, true, true);
+			Write(slot, true, true, true);
 		}
 
 		void Remove(std::uint32_t slot)
@@ -183,7 +192,8 @@ namespace Raven
 			return static_cast<std::uint32_t>(state.Materials.size() - 1);
 		}
 
-		void Write(std::uint32_t slot, bool added, bool materialChanged)
+		// Only an added object or a changed mesh component resolves its mesh reference.
+		void Write(std::uint32_t slot, bool added, bool materialChanged, bool meshChanged)
 		{
 			auto& state = m_State;
 			const auto entity = state.Entities[slot];
@@ -192,7 +202,8 @@ namespace Raven
 			auto& object = state.Objects[slot];
 			// Resolve everything that can fail before the group counts change.
 			const auto material = added || materialChanged ? FindMaterial(entity) : object.Material;
-			const auto group = FindGroup(mesh.Mesh);
+			const auto group = added || meshChanged
+				? FindGroup(m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{}) : object.Group;
 			if (added)
 				++state.GroupCounts[group];
 			else if (group != object.Group)
@@ -222,6 +233,7 @@ namespace Raven
 		RenderWorld::State& m_State;
 		ECS::Registry& m_Registry;
 		const RenderWorld::TextureResolver& m_Resolve;
+		const RenderWorld::MeshResolver& m_ResolveMesh;
 		const Pool m_Meshes;
 		const Pool m_Worlds;
 		const Pool m_Materials;
@@ -231,6 +243,7 @@ namespace Raven
 	RenderWorld::RenderWorld()
 		: m_State(std::make_unique<State>())
 	{
+		m_State->Generation = NextGeneration();
 	}
 
 	RenderWorld::~RenderWorld()
@@ -244,9 +257,8 @@ namespace Raven
 		if (state.Registry)
 			for (const auto subscription : state.Subscriptions)
 				state.Registry->UnsubscribeLifecycle(subscription);
-		const auto generation = state.Generation + 1;
 		state = State{};
-		state.Generation = generation;
+		state.Generation = NextGeneration();
 	}
 
 	std::size_t RenderWorld::GetObjectCount() const noexcept
@@ -254,7 +266,22 @@ namespace Raven
 		return m_State->Objects.size();
 	}
 
-	void RenderWorld::Sync(Scene& scene, const TextureResolver& resolveTexture)
+	void RenderWorld::Sync(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh)
+	{
+		try
+		{
+			SyncUnchecked(scene, resolveTexture, resolveMesh);
+		}
+		catch (...)
+		{
+			// A partly applied sync leaves slots, groups or counts inconsistent. Forgetting the
+			// scene makes the next Sync rebuild from the components (docs/DataModelDesign.md, FD-06).
+			Clear();
+			throw;
+		}
+	}
+
+	void RenderWorld::SyncUnchecked(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh)
 	{
 		auto& state = *m_State;
 		auto& registry = scene.m_Registry;
@@ -281,7 +308,7 @@ namespace Raven
 		const auto since = state.Since;
 		state.Since = registry.AdvanceChangeTick();
 
-		RenderWorldSync sync(state, registry, resolveTexture);
+		RenderWorldSync sync(state, registry, resolveTexture, resolveMesh);
 		if (rebuild)
 		{
 			sync.Rebuild();

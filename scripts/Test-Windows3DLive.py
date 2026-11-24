@@ -214,11 +214,13 @@ def run_sample(executable, directory, args=(), capture=False):
 
 def live(executable, source, directory, capture=True):
     shader = source / "RavenEngine/Private/Renderer/Shaders/Color.frag.hlsl"
-    game = source / "RavenEngine/Private/Game/InteractionGame.cpp"
-    scene = source / "Content/Levels/Collection.ravenscene"
-    metadata = source / "Content/Project.ravenproject"
-    mesh = source / "Content/Meshes/Cube.fbx"
-    png = source / "Content/Textures/UVGridAlternate.png"
+    # The Samples game root (docs/DataModelDesign.md, FD-17).
+    game = source / "Games/Samples/Source/Interaction.cpp"
+    content = source / "Games/Samples/Content"
+    scene = content / "Levels/Collection.ravenscene"
+    metadata = content / "Project.ravenproject"
+    mesh = content / "Meshes/Cube.fbx"
+    png = content / "Textures/UVGridAlternate.png"
     # Lit shaders reload when the engine material header changes (docs/GpuDrivenDesign.md, G4).
     header = shader.parent / "Raven/Material.hlsli"
     # Every stage and include reloads since M5 (docs/HotReloadDesign.md, H2).
@@ -232,7 +234,7 @@ def live(executable, source, directory, capture=True):
     try:
         with run_sample(executable, directory, capture=capture) as app:
             screenshot = app.screenshot if capture else lambda *args: None
-            app.marker(b"Game source watching enabled")
+            app.marker(b"the module rebuilds on save")
             app.marker(b"Watching shaders in")
             app.marker(b"Watching project")
             app.resize(600, 400)
@@ -368,8 +370,8 @@ def live(executable, source, directory, capture=True):
             screenshot("scene-retained", warm_image, False)
 
             original_rule = b"return collected == total;"
-            edited_rule = b"""scene.View<const ECS::PickupComponent, ECS::StaticMeshComponent>().Each(
-                    [](ECS::Entity, const ECS::PickupComponent& state, ECS::StaticMeshComponent& mesh)
+            edited_rule = b"""scene.View<const PickupComponent, ECS::StaticMeshComponent>().Each(
+                    [](ECS::Entity, const PickupComponent& state, ECS::StaticMeshComponent& mesh)
                     {
                         if (state.Collected)
                             mesh.Tint = {.9f, .15f, .8f, 1};
@@ -506,7 +508,7 @@ def main():
     source = report / "source"
     source.mkdir(parents=True)
     print(f"Default-launch evidence is under {report}", flush=True)
-    for folder in ("RavenEngine", "ThirdParty", "cmake", "Content", "scripts"):
+    for folder in ("RavenEngine", "Games", "ThirdParty", "cmake", "scripts"):
         shutil.copytree(repo / folder, source / folder)
     for name in ("CMakeLists.txt", "CMakePresets.json"):
         shutil.copy2(repo / name, source / name)
@@ -532,9 +534,10 @@ def main():
             results["idle_samples"].append({"mode": label, **sample})
         relocated = report / "relocated"
         relocated.mkdir()
-        for name in ("RavenEngine.exe", "RavenCore.dll", "RavenGame.dll"):
+        for name in ("RavenEngine.exe", "RavenCore.dll", "Samples.dll"):
             shutil.copy2(runtime / name, relocated / name)
         shutil.copytree(runtime / "Content", relocated / "Content")
+        shutil.copytree(runtime / "Games", relocated / "Games")
         with run_sample(relocated / "RavenEngine.exe", report / "relocated-run", ("--no-watch",)) as app:
             app.marker(b"using staged content")
             for name in ("Gallery", "Assemblies", "Puzzle", "Collection"):

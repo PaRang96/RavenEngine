@@ -175,15 +175,17 @@ M6 runs in three stages with their own exits and reviews (planning decision 5). 
 
 ### M6A — Host and data model
 
-- [ ] M6-1: engine-owned frame pipeline. `OnFrame` splits into update and render with no shim, PostUpdate/Extract move into Application inside a recoverable error boundary (data errors recoverable, `bad_alloc`/`logic_error` fatal), the render-world `Sync` resets transactionally, and the GPU-scene generation counter becomes process-wide.
-- [ ] M6-2: a typed field table for components, with type tags in `LayoutHash`; the module table registers components. This is the base of serialization and migration.
-- [ ] M6-3: hierarchy as a host-written `ParentComponent` with child lists, depth buckets and incremental spawn/destroy/reparent.
-- [ ] M6-4: persistent entity IDs, `EntityRef`, and `AssetRef<MeshAsset>` resolved on change, so `MeshHandle` leaves components.
-- [ ] M6-5: the scene/asset seam; `Pick` becomes a free function.
-- [ ] M6-6: generalize component and asset serialization into one chunked scene format that keeps unknown sections, plus a tolerant `raven-project 2`, a converter and regenerated scenes, with round-trip tests in CI.
-- [ ] M6-7: the one module-contract break. Expose stable scene access, ECS views and runtime resource handles to game code: `SystemContext` becomes scene access, input, time and picks, with an engine play-state gate and a writable camera. Sample components leave RavenCore for the layout chosen in FD-17, and deferred structural changes (Commands, from M1) go through Scene. The 2D Courtyard part needs an owner-requested 2D run.
-- [ ] M6-8: migrate game components by field name across layout changes, using the field table, now that the host no longer compiles game components. *Moved from M1 via M5 (owner decision Q7, 2026-11-23); see [HotReloadDesign.md](docs/HotReloadDesign.md#h6--field-level-component-migration-q7).*
-- [ ] Narrow the module contract to the engine's public surface: generate the watched-input list from CMake, and stop hashing game headers. *Moved from the assessment's M6-10 into M6A, because this exit needs it (planning decision 5).*
+*Implemented on Windows 2026-11-24, pending the owner's review. Decisions and results: [DataModelDesign.md](docs/DataModelDesign.md#m6a-exit-record-2026-11-24).*
+
+- [x] M6-1: engine-owned frame pipeline. `OnFrame` splits into update and render with no shim, PostUpdate/Extract move into Application inside a recoverable error boundary (data errors recoverable, `bad_alloc`/`logic_error` fatal), the render-world `Sync` resets transactionally, and the GPU-scene generation counter becomes process-wide.
+- [x] M6-2: a typed field table for components, with type tags in `LayoutHash`; the module table registers components. This is the base of serialization and migration.
+- [x] M6-3: hierarchy as a host-written `ParentComponent` with child lists, depth buckets and incremental spawn/destroy/reparent.
+- [x] M6-4: persistent entity IDs, `EntityRef`, and `AssetRef<MeshAsset>` resolved on change, so `MeshHandle` leaves components.
+- [x] M6-5: the scene/asset seam; `Pick` becomes a free function.
+- [x] M6-6: generalize component and asset serialization into one chunked scene format that keeps unknown sections, plus a tolerant `raven-project 2`, a converter and regenerated scenes, with round-trip tests in CI.
+- [x] M6-7: the one module-contract break. Expose stable scene access, ECS views and runtime resource handles to game code: `SystemContext` becomes scene access, input, time and picks, with an engine play-state gate and a writable camera. Sample components leave RavenCore for the layout chosen in FD-17, and deferred structural changes (Commands, from M1) go through Scene. The 2D Courtyard part needs an owner-requested 2D run.
+- [x] M6-8: migrate game components by field name across layout changes, using the field table, now that the host no longer compiles game components. *Moved from M1 via M5 (owner decision Q7, 2026-11-23); see [HotReloadDesign.md](docs/HotReloadDesign.md#h6--field-level-component-migration-q7).*
+- [x] Narrow the module contract to the engine's public surface: generate the watched-input list from CMake, and stop hashing game headers. *Moved from the assessment's M6-10 into M6A, because this exit needs it (planning decision 5).*
 
 **Exit:** a game defines a component the host never compiles, authors it in a scene file, and edits one of its fields while running, with no restart. The save/load round trip runs in CI. Spawning and despawning 1k entities per frame among 100k stays within budget. This is the stable contract M4 ports against.
 

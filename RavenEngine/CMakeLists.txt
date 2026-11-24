@@ -26,11 +26,7 @@ set_target_properties(RavenFbx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(RavenFbx SYSTEM PUBLIC "${PROJECT_SOURCE_DIR}/ThirdParty/ufbx")
 target_link_libraries(RavenCore PRIVATE Vulkan::Vulkan RavenFbx)
 
-target_include_directories(RavenEngine PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/Private/Samples"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Private"
-    "${CMAKE_CURRENT_BINARY_DIR}/Generated"
-)
+target_include_directories(RavenEngine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 target_link_libraries(RavenEngine PRIVATE RavenCore)
 target_link_libraries(RavenSceneTool PRIVATE RavenCore)
 target_include_directories(RavenSceneTool PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private")
@@ -42,14 +38,15 @@ include("${PROJECT_SOURCE_DIR}/cmake/RavenGameModule.cmake")
 include("${PROJECT_SOURCE_DIR}/cmake/RavenPlayer.cmake")
 
 if(RAVEN_GAME_ENABLED)
-    add_executable(Raven3DSmoke EXCLUDE_FROM_ALL
-        "${PROJECT_SOURCE_DIR}/scripts/Windows3DSmoke.cpp"
-        "Private/Samples/PerspectiveLevel.cpp")
+    # The engine session is internal to RavenCore, so the smoke compiles its own copy.
+    add_executable(Raven3DSmoke EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/scripts/Windows3DSmoke.cpp"
+        "Private/Core/GameSession.cpp")
     target_include_directories(Raven3DSmoke PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/Private"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Private/Samples")
+        "${CMAKE_CURRENT_BINARY_DIR}/Generated"
+        "${PROJECT_SOURCE_DIR}/Games/Samples/Source")
     target_link_libraries(Raven3DSmoke PRIVATE RavenCore)
-    add_dependencies(Raven3DSmoke RavenGame)
+    add_dependencies(Raven3DSmoke SamplesGame)
 endif()
 
 raven_enable_precompiled_headers(RavenCore)

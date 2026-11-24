@@ -1,15 +1,16 @@
 include("${CMAKE_CURRENT_LIST_DIR}/RavenSourceDiscovery.cmake")
 
-# Conservative compatibility: shared declarations, game definitions and build rules.
-# Function bodies in game .cpp files are deliberately excluded.
+# The engine's public surface (docs/DataModelDesign.md, FD-17, contract (ii)): the public headers,
+# the CMake that compiles game modules, and the toolchain. Game code is not part of it: a game's
+# components are checked field by field when its module activates, so editing them reloads.
 function(raven_game_contract_inputs root output)
-    raven_collect_files(inputs
-        "${root}/RavenEngine/Public"
-        "${root}/RavenEngine/Private/Game"
-        "${root}/cmake")
-    list(FILTER inputs INCLUDE REGEX "\\.(hpp|cmake|in)$")
-    list(APPEND inputs "${root}/CMakeLists.txt" "${root}/RavenEngine/CMakeLists.txt"
-        "${root}/CMakePresets.json" "${root}/RavenEngine/Private/Game/CMakeLists.txt")
+    raven_collect_files(inputs "${root}/RavenEngine/Public")
+    list(FILTER inputs INCLUDE REGEX "\\.hpp$")
+    list(APPEND inputs
+        "${root}/cmake/GameContract.cmake"
+        "${root}/cmake/RavenBuildSettings.cmake"
+        "${root}/cmake/RavenGame.cmake"
+        "${root}/cmake/RavenGameSources.cmake")
     list(SORT inputs)
     list(REMOVE_DUPLICATES inputs)
     set(${output} "${inputs}" PARENT_SCOPE)

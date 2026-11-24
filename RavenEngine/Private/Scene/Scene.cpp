@@ -1,11 +1,18 @@
 #include "Raven/Scene/Scene.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
+#include "Raven/Components/LightingComponent.hpp"
+#include "Raven/Components/MaterialComponent.hpp"
+#include "Raven/Components/SpriteComponent.hpp"
+#include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Core/Log.hpp"
+#include "Platform/PlatformRandom.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <unordered_map>
 #include <utility>
 #include <stdexcept>
@@ -14,6 +21,28 @@ namespace Raven
 {
 	namespace
 	{
+		// Room for one more element, growing geometrically: reserving exactly size + 1 would
+		// reallocate on every push and make loading a scene quadratic.
+		template<typename Vector>
+		void ReserveOne(Vector& values)
+		{
+			if (values.size() == values.capacity())
+				values.reserve(values.empty() ? 16 : values.size() * 2);
+		}
+
+		// Engine field tables are known before any entity uses them, so a file can name them
+		// (docs/DataModelDesign.md, FD-08). Game components register through the module table.
+		void RegisterEngineComponents(ECS::Registry& registry)
+		{
+			const bool registered = registry.Register<ECS::TransformComponent>() &&
+				registry.Register<ECS::WorldTransformComponent>() && registry.Register<ECS::ParentComponent>() &&
+				registry.Register<ECS::CameraComponent>() && registry.Register<ECS::ActiveCameraComponent>() &&
+				registry.Register<ECS::LightingComponent>() && registry.Register<ECS::MaterialComponent>() &&
+				registry.Register<ECS::SpriteComponent>() && registry.Register<ECS::StaticMeshComponent>();
+			if (!registered)
+				throw std::logic_error("An engine component conflicts with a registered layout");
+		}
+
 		bool IsFiniteTransform(const Mat4& matrix)
 		{
 			for (const auto& column : matrix.Columns)
@@ -88,8 +117,19 @@ namespace Raven
 	}
 
 	Scene::Scene(ECS::Registry& registry, AssetStore& store)
-		: m_Registry(registry), m_Store(store), m_SceneId(registry.AllocateSceneId())
+		: Scene(registry)
 	{
+		m_Store = &store;
+	}
+
+	Scene::Scene(ECS::Registry& registry)
+		: m_Registry(registry), m_SceneId(registry.AllocateSceneId())
+	{
+		RegisterEngineComponents(registry);
+		// One OS draw seeds the scene's ID sequence, so two scenes or contributors never share one.
+		std::array<std::uint8_t, sizeof(m_IdState)> seed{};
+		Platform::FillRandomBytes(seed);
+		std::memcpy(&m_IdState, seed.data(), sizeof(m_IdState));
 	}
 
 	Scene::~Scene()
@@ -98,28 +138,91 @@ namespace Raven
 			m_Registry.Destroy(entity);
 	}
 
+	std::uint64_t Scene::NextId()
+	{
+		// SplitMix64 over a random start: distinct within the sequence, and never zero.
+		for (;;)
+		{
+			std::uint64_t value = (m_IdState += 0x9E3779B97F4A7C15ull);
+			value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+			value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+			value ^= value >> 31;
+			if (value != 0 && !m_Ids.contains(value))
+				return value;
+		}
+	}
+
 	ECS::Entity Scene::CreateEntity(const std::string& name)
 	{
 		if (!name.empty() && m_Names.contains(name))
 			throw std::invalid_argument("Duplicate scene entity name: " + name);
-		if (m_Entities.size() == m_Entities.capacity())
-			m_Entities.reserve(m_Entities.empty() ? 1 : m_Entities.size() * 2);
-		const auto entity = m_Registry.Create();
+		return Adopt(m_Registry.Create(), name, NextId());
+	}
+
+	ECS::Entity Scene::CreateEntity(const std::string& name, ECS::EntityRef id)
+	{
+		if (id.IsNull() || m_Ids.contains(id.Id))
+			throw std::invalid_argument("Scene entity ID is null or already in use");
+		if (!name.empty() && m_Names.contains(name))
+			throw std::invalid_argument("Duplicate scene entity name: " + name);
+		return Adopt(m_Registry.Create(), name, id.Id);
+	}
+
+	ECS::Entity Scene::Adopt(ECS::Entity entity, const std::string& name, std::uint64_t id)
+	{
+		const auto index = ECS::Detail::EntityAccess::Index(entity);
 		try
 		{
-			m_Parents.emplace(entity, ECS::Entity{});
-			m_Registry.SetOwner(entity, m_SceneId);
+			if (index >= m_Nodes.size())
+			{
+				m_Nodes.resize(index + 1);
+				m_World.resize(index + 1);
+			}
+			// The registry reused the slot of an entity destroyed outside this scene. Its
+			// children were already drawn as detached roots; now they become roots.
+			if (!m_Nodes[index].Entity.IsNull())
+			{
+				for (auto child = m_Nodes[index].FirstChild; child != NoNode;)
+				{
+					const auto next = m_Nodes[child].NextSibling;
+					m_Registry.Remove<ECS::ParentComponent>(m_Nodes[child].Entity);
+					Unlink(child);
+					SetSubtreeDepth(child, 0);
+					m_World[child].Flags |= WorldForced;
+					child = next;
+				}
+				Release(index);
+			}
+			if (m_Depths.empty())
+				m_Depths.emplace_back();
+			ReserveOne(m_Entities);
+			ReserveOne(m_Depths[0]);
+			m_Ids.emplace(id, index);
 			if (!name.empty())
+			{
 				m_Names.emplace(name, entity);
-			m_Entities.push_back(entity);
-			m_WorldOrderDirty = true;
+				m_Labels[index] = name;
+			}
 		}
 		catch (...)
 		{
-			m_Parents.erase(entity);
+			m_Ids.erase(id);
+			if (const auto found = m_Names.find(name); !name.empty() && found != m_Names.end() && found->second == entity)
+				m_Names.erase(found);
+			m_Labels.erase(index);
 			m_Registry.Destroy(entity);
 			throw;
 		}
+		m_Registry.SetOwner(entity, m_SceneId);
+		auto& node = m_Nodes[index];
+		node = Node{};
+		node.Entity = entity;
+		node.Id = id;
+		node.EntityPosition = static_cast<std::uint32_t>(m_Entities.size());
+		node.DepthPosition = static_cast<std::uint32_t>(m_Depths[0].size());
+		m_Entities.push_back(entity);
+		m_Depths[0].push_back(index);
+		m_World[index] = { entity, NoNode, WorldForced };
 		return entity;
 	}
 
@@ -131,13 +234,24 @@ namespace Raven
 
 	std::size_t Scene::EntityHash::operator()(ECS::Entity entity) const noexcept
 	{
-		// Live slots are unique within a scene's registry. Equality also checks generation and registry.
-		return entity.m_Index;
+		// Live slots are unique within a registry. Equality also checks generation and registry.
+		return ECS::Detail::EntityAccess::Index(entity);
+	}
+
+	const Scene::Node* Scene::FindNode(ECS::Entity entity) const noexcept
+	{
+		const auto index = ECS::Detail::EntityAccess::Index(entity);
+		return !entity.IsNull() && index < m_Nodes.size() && m_Nodes[index].Entity == entity ? &m_Nodes[index] : nullptr;
 	}
 
 	bool Scene::OwnsLiveEntity(ECS::Entity entity) const noexcept
 	{
-		return m_Registry.IsAlive(entity) && m_Parents.contains(entity);
+		return FindNode(entity) && m_Registry.IsAlive(entity);
+	}
+
+	bool Scene::Owns(ECS::Entity entity) const noexcept
+	{
+		return OwnsLiveEntity(entity);
 	}
 
 	void Scene::RequireOwned(ECS::Entity entity) const
@@ -149,79 +263,198 @@ namespace Raven
 	std::string Scene::GetAuthoredId(ECS::Entity entity) const
 	{
 		RequireOwned(entity);
-		for (const auto& [name, owned] : m_Names)
-			if (owned == entity)
-				return name;
-		return {};
+		const auto found = m_Labels.find(ECS::Detail::EntityAccess::Index(entity));
+		return found == m_Labels.end() ? std::string{} : found->second;
+	}
+
+	ECS::Entity Scene::Resolve(ECS::EntityRef id) const noexcept
+	{
+		const auto found = m_Ids.find(id.Id);
+		if (id.IsNull() || found == m_Ids.end())
+			return {};
+		const auto entity = m_Nodes[found->second].Entity;
+		return m_Registry.IsAlive(entity) ? entity : ECS::Entity{};
+	}
+
+	ECS::EntityRef Scene::NewRef()
+	{
+		return { NextId() };
+	}
+
+	ECS::EntityRef Scene::GetRef(ECS::Entity entity) const noexcept
+	{
+		const auto* node = FindNode(entity);
+		return node ? ECS::EntityRef{ node->Id } : ECS::EntityRef{};
 	}
 
 	ECS::Entity Scene::GetParent(ECS::Entity entity) const
 	{
-		const auto found = m_Parents.find(entity);
-		if (found == m_Parents.end() || !m_Registry.IsAlive(entity))
+		const auto* node = FindNode(entity);
+		if (!node || !m_Registry.IsAlive(entity))
 			throw std::invalid_argument("Hierarchy requires a live entity owned by this scene");
-		return found->second;
+		return node->Parent;
+	}
+
+	void Scene::Link(std::uint32_t child, std::uint32_t parent) noexcept
+	{
+		auto& node = m_Nodes[child];
+		auto& owner = m_Nodes[parent];
+		node.Parent = owner.Entity;
+		m_World[child].Parent = parent;
+		node.PreviousSibling = NoNode;
+		node.NextSibling = owner.FirstChild;
+		if (owner.FirstChild != NoNode)
+			m_Nodes[owner.FirstChild].PreviousSibling = child;
+		owner.FirstChild = child;
+	}
+
+	void Scene::Unlink(std::uint32_t child) noexcept
+	{
+		auto& node = m_Nodes[child];
+		if (!node.Parent.IsNull())
+		{
+			// A released parent has already reset its node, so there is no list to fix.
+			const auto parent = ECS::Detail::EntityAccess::Index(node.Parent);
+			if (parent < m_Nodes.size() && m_Nodes[parent].Entity == node.Parent)
+			{
+				if (node.PreviousSibling != NoNode)
+					m_Nodes[node.PreviousSibling].NextSibling = node.NextSibling;
+				else
+					m_Nodes[parent].FirstChild = node.NextSibling;
+				if (node.NextSibling != NoNode)
+					m_Nodes[node.NextSibling].PreviousSibling = node.PreviousSibling;
+			}
+		}
+		node.Parent = {};
+		m_World[child].Parent = NoNode;
+		node.PreviousSibling = NoNode;
+		node.NextSibling = NoNode;
+	}
+
+	void Scene::RemoveFromDepth(std::uint32_t index) noexcept
+	{
+		const auto& node = m_Nodes[index];
+		auto& bucket = m_Depths[node.Depth];
+		const auto last = bucket.back();
+		bucket[node.DepthPosition] = last;
+		m_Nodes[last].DepthPosition = node.DepthPosition;
+		bucket.pop_back();
+	}
+
+	void Scene::SetSubtreeDepth(std::uint32_t root, std::uint32_t depth)
+	{
+		if (m_Nodes[root].Depth == depth)
+			return;
+		// Children sit one level below their parent, so walk the subtree with explicit depths. The
+		// walk list is kept between calls; spawning leaves never allocates it again.
+		auto& pending = m_DepthWalk;
+		pending.clear();
+		pending.emplace_back(root, depth);
+		while (!pending.empty())
+		{
+			const auto [index, level] = pending.back();
+			pending.pop_back();
+			if (m_Depths.size() <= level)
+				m_Depths.resize(level + 1);
+			ReserveOne(m_Depths[level]);
+			RemoveFromDepth(index);
+			auto& node = m_Nodes[index];
+			node.Depth = level;
+			node.DepthPosition = static_cast<std::uint32_t>(m_Depths[level].size());
+			m_Depths[level].push_back(index);
+			for (auto child = node.FirstChild; child != NoNode; child = m_Nodes[child].NextSibling)
+				pending.emplace_back(child, level + 1);
+		}
+	}
+
+	void Scene::Release(std::uint32_t index) noexcept
+	{
+		auto& node = m_Nodes[index];
+		Unlink(index);
+		RemoveFromDepth(index);
+		const auto last = m_Entities.back();
+		m_Entities[node.EntityPosition] = last;
+		m_Nodes[ECS::Detail::EntityAccess::Index(last)].EntityPosition = node.EntityPosition;
+		m_Entities.pop_back();
+		m_Ids.erase(node.Id);
+		if (const auto label = m_Labels.find(index); label != m_Labels.end())
+		{
+			if (const auto name = m_Names.find(label->second); name != m_Names.end() && name->second == node.Entity)
+				m_Names.erase(name);
+			m_Labels.erase(label);
+		}
+		m_ReportedDetached.erase(node.Entity);
+		node = Node{};
+		m_World[index] = {};
 	}
 
 	void Scene::SetParent(ECS::Entity entity, ECS::Entity parent)
 	{
 		RequireOwned(entity);
+		if (m_Registry.IsIterating())
+			throw std::logic_error("Scene parenting is rejected while a view iterates");
+		const auto index = ECS::Detail::EntityAccess::Index(entity);
+		std::uint32_t depth = 0;
+		ECS::ParentComponent component;
 		if (!parent.IsNull())
 		{
+			RequireOwned(parent);
 			// Check the entire prospective ancestry before changing the relationship.
-			for (auto ancestor = parent; !ancestor.IsNull(); ancestor = GetParent(ancestor))
+			for (auto ancestor = parent; !ancestor.IsNull();
+				ancestor = m_Nodes[ECS::Detail::EntityAccess::Index(ancestor)].Parent)
 				if (ancestor == entity)
 					throw std::invalid_argument("Scene parenting would create a cycle");
+			const auto& owner = m_Nodes[ECS::Detail::EntityAccess::Index(parent)];
+			depth = owner.Depth + 1;
+			component.Parent = { owner.Id };
 		}
-		m_Parents.at(entity) = parent;
-		m_WorldOrderDirty = true;
+		if (m_Nodes[index].Parent == parent)
+			return;
+		if (parent.IsNull())
+			m_Registry.Remove<ECS::ParentComponent>(entity);
+		else if (!m_Registry.Write(entity, component) && !m_Registry.Add(entity, component))
+			throw std::logic_error("Scene could not record the parent of an entity");
+		Unlink(index);
+		if (!parent.IsNull())
+			Link(index, ECS::Detail::EntityAccess::Index(parent));
+		SetSubtreeDepth(index, depth);
+		m_World[index].Flags |= WorldForced;
 	}
 
 	void Scene::DestroyEntity(ECS::Entity entity)
 	{
-		if (!m_Parents.contains(entity))
+		if (!FindNode(entity))
 			throw std::invalid_argument("Cannot destroy an entity owned by another scene");
 		if (m_Registry.IsIterating())
 			throw std::logic_error("Scene entities cannot be destroyed while a view iterates");
-		std::vector<ECS::Entity> removed{ entity };
-		for (std::size_t index = 0; index < removed.size(); ++index)
-			for (const auto& [child, parent] : m_Parents)
-				if (parent == removed[index])
-					removed.push_back(child);
-		const auto contains = [&removed](ECS::Entity value)
+		auto& removed = m_RemoveWalk;
+		removed.assign(1, ECS::Detail::EntityAccess::Index(entity));
+		for (std::size_t position = 0; position < removed.size(); ++position)
+			for (auto child = m_Nodes[removed[position]].FirstChild; child != NoNode; child = m_Nodes[child].NextSibling)
+				removed.push_back(child);
+		// Parents release before their children, so each child finds its parent already gone.
+		for (const auto index : removed)
 		{
-			return std::find(removed.begin(), removed.end(), value) != removed.end();
-		};
-		for (const auto value : removed)
-		{
-			m_Registry.Destroy(value);
-			m_Parents.erase(value);
-			m_ReportedDetached.erase(value);
+			m_Registry.Destroy(m_Nodes[index].Entity);
+			Release(index);
 		}
-		std::erase_if(m_Entities, contains);
-		m_WorldOrderDirty = true;
-		std::erase_if(m_Names, [&contains](const auto& entry) { return contains(entry.second); });
-		if (contains(m_SelectedCamera)) m_SelectedCamera = {};
-		if (contains(m_Bindings.Camera)) m_Bindings.Camera = {};
-		if (contains(m_Bindings.Player)) m_Bindings.Player = {};
-		if (contains(m_Bindings.Mesh)) m_Bindings.Mesh = {};
 	}
 
 	void Scene::ReportDetachedRoot(ECS::Entity entity) const
 	{
 		if (!m_ReportedDetached.insert(entity).second)
 			return;
-		std::string name = "(unnamed)";
-		for (const auto& [authored, owned] : m_Names)
-			if (owned == entity)
-				name = authored;
+		const auto label = m_Labels.find(ECS::Detail::EntityAccess::Index(entity));
+		const std::string name = label == m_Labels.end() ? "(unnamed)" : label->second;
 		Log(LogLevel::Warning, "Scene entity " + name + " has an ancestor without a TransformComponent; "
 			"it is placed as a detached root");
 	}
 
 	Mat4 Scene::ComposeTransformUnchecked(ECS::Entity entity, bool rotationOnly) const
 	{
-		auto parent = GetParent(entity);
+		const auto* node = FindNode(entity);
+		if (!node || !m_Registry.IsAlive(entity))
+			throw std::invalid_argument("Hierarchy requires a live entity owned by this scene");
 		ECS::TransformComponent transform;
 		if (!m_Registry.Read(entity, transform))
 			throw std::invalid_argument("Scene entity has no TransformComponent");
@@ -231,17 +464,18 @@ namespace Raven
 			const auto local = rotationOnly ? RotationZ(transform.Rotation.Z) * RotationY(transform.Rotation.Y) *
 				RotationX(transform.Rotation.X) : transform.GetMatrix();
 			result = local * result;
+			const auto parent = node->Parent;
 			if (parent.IsNull())
 				break;
 			// A destroyed or transform-less ancestor ends the chain: the part below it is
 			// composed as a detached root, as UpdateWorldTransforms does.
-			const auto found = m_Parents.find(parent);
-			if (found == m_Parents.end() || !m_Registry.IsAlive(parent) || !m_Registry.Read(parent, transform))
+			const auto* owner = FindNode(parent);
+			if (!owner || !m_Registry.IsAlive(parent) || !m_Registry.Read(parent, transform))
 			{
 				ReportDetachedRoot(entity);
 				break;
 			}
-			parent = found->second;
+			node = owner;
 		}
 		return result;
 	}
@@ -259,57 +493,10 @@ namespace Raven
 		return ComposeTransform(entity, false);
 	}
 
-	void Scene::RebuildWorldOrder()
-	{
-		// Depth-sort so parents come first; stable sorting keeps authored order within a
-		// depth. Externally destroyed entities stay in the order, so their descendants are
-		// still recognized as having a missing ancestor.
-		std::unordered_map<ECS::Entity, std::uint32_t, EntityHash> depths;
-		std::vector<ECS::Entity> chain;
-		for (const auto entity : m_Entities)
-		{
-			chain.clear();
-			std::uint32_t base = 0;
-			for (auto current = entity; !current.IsNull();)
-			{
-				if (const auto known = depths.find(current); known != depths.end())
-				{
-					base = known->second + 1;
-					break;
-				}
-				chain.push_back(current);
-				const auto parent = m_Parents.find(current);
-				current = parent == m_Parents.end() ? ECS::Entity{} : parent->second;
-			}
-			for (std::size_t index = chain.size(); index-- > 0;)
-				depths.emplace(chain[index], base + static_cast<std::uint32_t>(chain.size() - 1 - index));
-		}
-		m_WorldOrder = m_Entities;
-		std::stable_sort(m_WorldOrder.begin(), m_WorldOrder.end(), [&depths](ECS::Entity left, ECS::Entity right)
-		{
-			return depths.at(left) < depths.at(right);
-		});
-		std::unordered_map<ECS::Entity, std::uint32_t, EntityHash> positions;
-		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
-			positions.emplace(m_WorldOrder[index], static_cast<std::uint32_t>(index));
-		m_WorldParents.assign(m_WorldOrder.size(), NoWorldParent);
-		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
-		{
-			const auto parent = m_Parents.find(m_WorldOrder[index]);
-			if (parent != m_Parents.end() && !parent->second.IsNull())
-				if (const auto position = positions.find(parent->second); position != positions.end())
-					m_WorldParents[index] = position->second;
-		}
-		m_WorldOrderDirty = false;
-		m_WorldFull = true;
-	}
-
 	void Scene::UpdateWorldTransforms()
 	{
 		if (m_Registry.IsIterating())
 			throw std::logic_error("World transforms cannot be updated while a view iterates");
-		if (m_WorldOrderDirty)
-			RebuildWorldOrder();
 		// Stays set until the pass completes, so a pass interrupted by an allocation failure is
 		// followed by a full recompute.
 		const bool full = std::exchange(m_WorldFull, true);
@@ -325,62 +512,69 @@ namespace Raven
 			const auto dense = worlds.Find(entity);
 			return dense != NoIndex && worlds.Entities[dense] == entity ? dense : NoIndex;
 		};
-		m_WorldChanged.assign(m_WorldOrder.size(), 0);
-		for (std::size_t index = 0; index < m_WorldOrder.size(); ++index)
-		{
-			const auto entity = m_WorldOrder[index];
-			auto local = transforms.Find(entity);
-			if (local != NoIndex && !(transforms.Entities[local] == entity))
-				local = NoIndex;
-			const auto world = findWorld(entity);
-			if (local == NoIndex)
+		// Depth buckets put every parent before its children.
+		for (const auto& bucket : m_Depths)
+			for (const auto index : bucket)
 			{
-				// No local transform (or a stale slot): drop a world the entity no longer drives,
-				// and mark it changed so every descendant re-roots in this pass.
-				if (world != NoIndex)
+				auto& slot = m_World[index];
+				const auto entity = slot.Entity;
+				const bool forced = (slot.Flags & WorldForced) != 0;
+				const bool present = (slot.Flags & WorldPresent) != 0;
+				slot.Flags = 0;
+				auto local = transforms.Find(entity);
+				if (local != NoIndex && !(transforms.Entities[local] == entity))
+					local = NoIndex;
+				const auto world = findWorld(entity);
+				if (local == NoIndex)
 				{
-					m_Registry.Remove<ECS::WorldTransformComponent>(entity);
-					worlds = m_Registry.GetPool(worldInfo);
-					m_WorldChanged[index] = 1;
+					// No local transform, or an entity destroyed outside the scene: drop a world the
+					// entity no longer drives. Losing a world marks it changed, so every descendant
+					// re-roots in this pass.
+					if (world != NoIndex)
+					{
+						m_Registry.Remove<ECS::WorldTransformComponent>(entity);
+						worlds = m_Registry.GetPool(worldInfo);
+					}
+					if (present)
+						slot.Flags = WorldChanged;
+					continue;
 				}
-				continue;
-			}
-			const auto parent = m_WorldParents[index];
-			const bool parentChanged = parent != NoWorldParent && m_WorldChanged[parent];
-			if (!full && world != NoIndex && !parentChanged && transforms.Ticks[local] <= since)
-				continue;
+				const auto parent = slot.Parent;
+				const bool parentChanged = parent != NoNode && (m_World[parent].Flags & WorldChanged) != 0;
+				slot.Flags = WorldPresent;
+				if (!full && !forced && world != NoIndex && !parentChanged && transforms.Ticks[local] <= since)
+					continue;
 
-			Mat4 parentWorld = Mat4::Identity();
-			if (parent != NoWorldParent)
-			{
-				// A parent without a world (destroyed or transform-less) leaves this entity as
-				// a detached root.
-				const auto parentDense = findWorld(m_WorldOrder[parent]);
-				if (parentDense == NoIndex)
-					ReportDetachedRoot(entity);
+				// A parent without a world (destroyed or transform-less) leaves this entity as a
+				// detached root.
+				Mat4 parentWorld = Mat4::Identity();
+				if (parent != NoNode)
+				{
+					if (const auto parentDense = findWorld(m_World[parent].Entity); parentDense == NoIndex)
+						ReportDetachedRoot(entity);
+					else
+						parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+				}
+				auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
+				// A parent's intermediate scale can overflow or collapse before the child's scale
+				// is applied; recompose in the direct order. Unrepresentable values are kept as-is
+				// so descendants can still recompose; consumers skip non-finite worlds.
+				if (!IsFiniteTransform(value) || HasCollapsedAxis(value))
+					value = ComposeTransformUnchecked(entity, false);
+				if (world == NoIndex)
+				{
+					ECS::WorldTransformComponent component;
+					component.World = value;
+					m_Registry.Add(entity, component);
+					worlds = m_Registry.GetPool(worldInfo);
+				}
 				else
-					parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+				{
+					worlds.At<ECS::WorldTransformComponent>(world).World = value;
+					worlds.Ticks[world] = stamp;
+				}
+				slot.Flags = WorldPresent | WorldChanged;
 			}
-			auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
-			// A parent's intermediate scale can overflow or collapse before the child's scale
-			// is applied; recompose in the direct order. Unrepresentable values are kept as-is
-			// so descendants can still recompose; consumers skip non-finite worlds.
-			if (!IsFiniteTransform(value) || HasCollapsedAxis(value))
-				value = ComposeTransformUnchecked(entity, false);
-			if (world == NoIndex)
-			{
-				ECS::WorldTransformComponent component;
-				component.World = value;
-				m_Registry.Add(entity, component);
-				worlds = m_Registry.GetPool(worldInfo);
-			}
-			else
-			{
-				worlds.At<ECS::WorldTransformComponent>(world).World = value;
-				worlds.Ticks[world] = stamp;
-			}
-			m_WorldChanged[index] = 1;
-		}
 		m_WorldFull = false;
 	}
 
@@ -411,7 +605,9 @@ namespace Raven
 				throw std::invalid_argument("Incorrect scene asset type");
 			return found->second;
 		}
-		return m_Assets.emplace(id, m_Store.Acquire(catalog, id, kind)).first->second;
+		if (!m_Store)
+			throw std::invalid_argument("This scene has no asset store");
+		return m_Assets.emplace(id, m_Store->Acquire(catalog, id, kind)).first->second;
 	}
 
 	const AssetLease* Scene::TryUseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind)
@@ -425,7 +621,7 @@ namespace Raven
 			error = "incorrect asset type";
 		}
 		else
-			error = m_Store.FindReferenceError(catalog, id, kind);
+			error = m_Store ? m_Store->FindReferenceError(catalog, id, kind) : "no asset store";
 		if (!error)
 			return &UseAsset(catalog, id, kind);
 		if (m_ReportedAssets.insert(id).second)
@@ -435,20 +631,9 @@ namespace Raven
 
 	const AssetLease& Scene::GetAsset(AssetId id) const { return m_Assets.at(id); }
 
-	void Scene::SelectCamera(ECS::Entity camera)
+	const AssetLease* Scene::FindAsset(AssetId id) const noexcept
 	{
-		if (!m_Parents.contains(camera))
-			throw std::invalid_argument("Camera selection must refer to an owned scene entity");
-		m_SelectedCamera = camera;
-	}
-
-	void Scene::SetBindings(GameBindings bindings)
-	{
-		for (const auto entity : { bindings.Camera, bindings.Player, bindings.Mesh })
-			if (!entity.IsNull() && !OwnsLiveEntity(entity))
-				throw std::invalid_argument("Gameplay binding must refer to an owned scene entity");
-		bindings.World = GetAccess();
-		bindings.Interactions = {};
-		m_Bindings = bindings;
+		const auto found = m_Assets.find(id);
+		return found == m_Assets.end() ? nullptr : &found->second;
 	}
 }

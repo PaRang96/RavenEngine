@@ -1,74 +1,86 @@
 # Scene and asset development workflow
 
-The Windows samples use reusable host-owned scene services and a versioned project catalog. Add supported assets and scenes through files, then save to observe them in a development session. Game rules remain in the sample/game code. The 3D codec supports hierarchical authoring and explicit save/load. Prefabs, general component reflection and additional import formats remain later work.
+Each game root (`Games/<Name>`, see [EngineModules.md](EngineModules.md#game-roots-m6a)) has its own content folder with a project catalog and scene files. Add supported assets and scenes through files, then save to observe them in a development session. Game rules live in the game's module. Since M6A (2026-11-24, [DataModelDesign.md](DataModelDesign.md)), scenes use one generic, self-describing format for every component. Prefabs (FD-15) are later work.
 
 ## Project data
 
-[Content/Project.ravenproject](../Content/Project.ravenproject) is UTF-8 text with a `raven-project 1` header. Blank lines and `#` comments outside quoted paths are allowed. Paths are Content-relative; use forward slashes and quotes around paths containing spaces. Existing asset UUIDs remain stable when their paths change.
+`Games/<Name>/Content/Project.ravenproject` is UTF-8 text with a `raven-project 2` header. Blank lines and `#` comments outside quoted paths are allowed. Paths are Content-relative; use forward slashes and quotes around paths containing spaces. Existing asset UUIDs remain stable when their paths change.
 
 ```text
-raven-project 1
+raven-project 2
 texture 7a590cee-ec82-4a27-927f-860e64619c19 "Textures/UVGrid.png" srgb
 mesh 6938c6b9-72ca-4bc1-b0bf-9dc31e158087 "Meshes/Cube.fbx"
-audio ef451c5a-02db-4d81-89a1-ec2ea98ed719 "Audio/CourtyardWin.wav"
-scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180 perspective "Levels/Perspective.ravenscene"
+audio ef451c5a-02db-4d81-89a1-ec2ea98ed719 "Audio/Win.wav"
+scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180 "Levels/Perspective.ravenscene"
 ```
 
-Records use UUIDv4 identities in one namespace. `texture` requires a PNG and `srgb` or `linear`; `mesh` requires a single-object static FBX; `audio` requires the existing 16-bit PCM WAV format. `perspective` scenes use binary `.ravenscene` files; `orthographic` scenes retain `.ravenlevel` text files. The scene-record order determines F4 order within that family. The sample has no C++ asset-registration list or fixed level-path array.
+**Records.**
+- Records use UUIDv4 identities in one namespace.
+- `texture` requires a PNG and `srgb` or `linear`. `mesh` requires a single-object static FBX. `audio` requires 16-bit PCM WAV.
+- Scenes are `.ravenscene` files in the generic format. The scene-record order is the F4 order.
+- A record kind this reader does not know is skipped with a warning, so later versions can add records (FD-10).
 
-The catalog rejects duplicate/nil identities, unsupported versions/records/settings, incorrect source extensions, rooted paths, parent escapes, paths escaping through physical links, and missing source files. Scene codecs validate component values, named bindings and typed asset references when loading a scene. Inactive scene files are not instantiated during catalog loading. Materials and lighting keep their existing level records; this format does not introduce material-asset serialization or arbitrary component factories.
+**Rejected.** The catalog rejects:
+- duplicate or nil identities and unsupported settings;
+- incorrect source extensions;
+- rooted paths, parent escapes and paths that escape through physical links;
+- missing source files.
 
-Both codecs accept `win-sound UUID`; Orthographic also accepts `loss-sound UUID`. The existing sample cue IDs remain defaults for older level files. An explicit nil UUID is invalid. Resource acquisition checks the actual catalog type, including audio references.
+Inactive scene files are not instantiated during catalog loading.
 
-## Hierarchical 3D authoring
+## Scene files
 
-The current 3D runtime uses [versioned binary scenes and a save/export tool](InteractionGame.md#live-binary-authoring). F4 order is Perspective, Gallery, Assemblies, Puzzle, Collection. The earlier flat and hierarchical text files were migrated with authored identities intact. RavenSceneTool handles legacy text conversion. The DLL owns gameplay rules and animation in free-fly, and standalone orbit keeps its visual demonstration controls.
+A `.ravenscene` file ([SceneFile](../RavenEngine/Public/Raven/Scene/SceneFile.hpp)) stores:
+- the entities, with their random 64-bit IDs and optional labels;
+- one section per component type, with the type name, layout hash, field list (name, kind, extents, asset-type tag, size) and the values packed field by field.
 
-Authored entity IDs remain immutable scene-scoped names, independent of runtime handles. Full local/world composition, reparent/detach and cascade destruction retain the contracts below. See [the binary schema and persistence policy](InteractionGame.md#binary-format-and-persistence) for bounds, authored component fields and runtime exclusions.
+**Loading.**
+- A file written with another component layout loads by field name and type. New fields take their defaults; renamed fields and types are found through `RAVEN_COMPONENT_ALIASES`.
+- Sections and fields the running code does not know are logged and skipped. Tools keep them when they rewrite a file.
+- Encoding is deterministic, so saving an unchanged scene gives identical bytes.
+- Parents are stored as `ParentComponent` and applied through `Scene::SetParent`. References between entities are `EntityRef` values. `WorldTransformComponent` is derived and never stored.
+- Loading leases every `AssetRef` in the file, so a scene that names a missing file is rejected before it replaces the active one.
+
+**Tools.** `RavenSceneTool <Content-root> <command> ...` works on any game's scenes:
+
+| Command | Effect |
+| --- | --- |
+| `validate <scene>` | Decodes and counts entities, component types and unknown sections |
+| `dump <scene> [<text>]` | Lossless text form (`raven-scene-text 1`), to a file or the console |
+| `apply <text> <scene>` | Writes the text form back as a binary scene |
+| `position\|rotation\|scale <scene> <label> <X> <Y> <Z>` | Edits the labeled entity's `TransformComponent` |
+| `stage-player <destination> --scene <UUID>... [--asset <UUID>...]` | Copies the selected scenes and every asset they reference (from their `AssetRef` fields) for a player |
+
+The Samples game's tool-made scenes are regenerated with `SamplesTool create-puzzle|create-collection <output>` and `SamplesTool create-benchmark <output> <mesh-count>`.
 
 ### Runtime hierarchy contract
 
-[Scene](../RavenEngine/Public/Raven/Scene/Scene.hpp) retains parent relationships in host-owned metadata. Components remain copied ECS values; no module-owned objects, pointers or callbacks enter retained state. `SetParent(child, parent)` validates live ownership and ancestry before changing anything. Null parent detaches. Reparent/detach preserves local TRS, so world pose can change; there is no lossy world-TRS decomposition. Same names in another Scene do not grant ownership. `DestroyEntity` cascades through the owned subtree and clears removed camera/selection/gameplay bindings. Direct Registry destruction of a parent leaves an invalid ancestry: world evaluation rejects it until the child is detached/reparented or its owned subtree is destroyed. Scene destruction remains generation-safe.
+[Scene](../RavenEngine/Public/Raven/Scene/Scene.hpp) keeps the hierarchy as a host-written `ParentComponent` plus a runtime index: a child list and a depth per entity, with entities bucketed by depth. Spawn, destroy and reparent cost the entities they touch.
 
-World transforms are computed from current Registry local values as `parentWorld * T * Rz * Ry * Rx * S`. Nested rotation/nonuniform scale can create shear; complete matrices go directly to the renderer. Mesh rendering, inverse-transpose normals, transformed AABBs and frustum culling all use that same model matrix. Runtime parent edits affect descendants on the next gathered frame without F3 or cached-transform invalidation. DLL writes remain local, and the host never writes its bound arm's rotation in free-fly.
+- `SetParent(child, parent)` validates live ownership and ancestry before changing anything. A null parent detaches.
+- Reparent and detach preserve local TRS, so the world pose can change.
+- `DestroyEntity` cascades through the owned subtree.
+- If a parent is destroyed directly in the Registry, its children become detached roots and are logged once. If the registry reuses that slot, they become roots.
 
-Camera world position uses the complete affine ancestor chain. Camera axes use only ancestor/local rotations, ignoring scale and reflection, producing a rigid right-handed view for rendering and picking. Inherited scale/reflection can move the camera's local offset but never mirrors/skews its lens. Free-fly displacement and orbit controls remain local to the camera parent; inherited scale changes world travel distance. Use a rigid camera rig for ordinary controls. Picking consumes the exact presented view/projection/viewport.
-
-### Explicit save API
-
-`PerspectiveLevel::GetAuthoringDefinition()` exposes a const authored snapshot. Copy it, edit authored values, then call the sample codec's explicit writer:
-
-```cpp
-auto edited = level.GetAuthoringDefinition();
-edited.Groups[1].Transform.Position.X -= 0.5f;
-PerspectiveLevel::Save(edited, absoluteLevelPath, project);
-```
-
-`SceneDocument::Encode()` validates the schema and emits canonical binary version 1 for base scenes or version 2 for scenes with pickups. `Save` also checks asset types and source existence against the current project, then calls `Files::WriteAtomic`. Current tool commands and binary details are in [InteractionGame.md](InteractionGame.md). A same-directory exclusively created temporary file is flushed and closed before replacement through the native backend. Windows uses same-volume MoveFileExW replacement with bounded sharing retries. Failed writes or replacements remove the temporary file and preserve the destination. See [Microsoft's replacement options](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
-
-The saved snapshot includes IDs, parent bindings, group/mesh/camera local transforms, mesh UUIDs/tints, named material definitions/assignments and texture UUIDs, global lighting, camera projection/clipping, orbit target, controlled/beacon bindings/radius and audio UUID. It excludes runtime entity/mesh/texture handles, derived matrices, live DLL rotation, moved camera pose/zoom, host animation, F6 swaps, beacon outcome/tint, pointers, callbacks and GPU/DLL state. Explicitly changing the copied authored definition is how a caller persists an intended edit. General component serialization and an editor UI are deferred.
-
-Save does not publish a scene or write on every frame/reload. With `--watch-game`, the existing settled watcher prepares and publishes the saved bytes once, restarting the authored attempt automatically. The accepted watcher is seeded from those bytes; publication does not resave, preventing reload loops. Invalid/superseded candidates leave the current scene active and corrected saves recover. Compatible DLL/asset replacement keeps the same hierarchy, local values, entity handles, camera selection and mesh handles.
+World transforms are computed as `parentWorld * T * Rz * Ry * Rx * S`. Camera world position uses the complete affine ancestor chain. Camera axes use only rotations, so the view stays rigid. The engine draws the camera tagged `ActiveCameraComponent`.
 
 ## Source roots and staging
 
-With `--watch-game`, both sample families watch the project catalog and active scene automatically. Development data comes directly from the source `Content` directory configured by CMake. The host logs `Scene content root`, `Watching project`, `Watching scene`, and each acquired asset's absolute watch path. These paths are independent of the process working directory.
+**Development.** The default development launch reads the game's source content folder directly, and watches the project, the active scene and every acquired PNG and FBX. The host logs `Scene content root`, `Watching project`, `Watching scene`, and each acquired asset's absolute path.
 
-`--watch-mesh` enables workers for acquired FBX resources. `--watch-game` or `--watch-wall` enables workers for acquired PNG resources. A mesh/wall development option also selects source Content. `--watch-shader` retains its configured HLSL source watcher. Unreferenced asset records do not start workers. Scene/catalog watching follows `--watch-game`; F3 remains available for an explicit restart.
-
-Without the asset/scene development options, the samples read executable-relative staged Content. `cmake/RavenContent.cmake` discovers Content files automatically and stages them with validated shaders and dependency licenses. A newly created source asset can be used immediately in development; the next host build stages it for ordinary execution. Do not full-build a host while it is running.
+**Staged runs.** With `--no-watch`, the host reads the staged copy beside the executable (`Games/<Name>/Content`). `cmake/RavenContent.cmake` discovers every game's content automatically and stages it with the engine shaders and licenses. A newly created source asset can be used immediately in development; the next host build stages it. Do not full-build a host while it is running.
 
 ## Scene and resource ownership
 
-[SceneProject](../RavenEngine/Public/Raven/Scene/SceneProject.hpp) owns the committed catalog, scene list and an [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its constructor accepts an explicit Content root for another game/project. The sample adapter selects the configured source root or staged root.
+[SceneProject](../RavenEngine/Public/Raven/Scene/SceneProject.hpp) owns the committed catalog, scene list and an [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its constructor accepts the game's Content root; the engine game session selects the source or staged root.
 
-[SceneSession](../RavenEngine/Public/Raven/Scene/SceneSession.hpp) owns an active scene and the host's codec factory. The existing sample codecs produce [Scene](../RavenEngine/Public/Raven/Scene/Scene.hpp) instances. Scene owns its entity handles and names, selected camera, explicit gameplay bindings, and asset leases. Entity destruction and constructor rollback affect only those owned handles, including when Registry slots have been reused. A destroyed camera selection remains a stale value that camera preparation can reject; F2 can switch to the other authored camera.
+[SceneSession](../RavenEngine/Public/Raven/Scene/SceneSession.hpp) owns an active scene and the engine's factory, which decodes, instantiates and leases a scene file. [Scene](../RavenEngine/Public/Raven/Scene/Scene.hpp) owns its entity handles, persistent IDs, labels and asset leases. Entity destruction affects only owned handles, including when Registry slots have been reused.
 
-AssetStore keeps weak cache entries. Scenes and other explicit application owners hold `AssetLease` values. Acquiring the same UUID in the same store shares its resource. A candidate scene acquires its dependencies while the outgoing scene still holds its leases, preserving shared runtime identities during switching. Releasing the last lease stops the source worker and releases the managed resource. Expired cache entries are pruned. The 3D diagnostic quads have explicit application leases for their two grid textures; those resources remain owned while the quads exist.
+AssetStore keeps weak cache entries. Scenes and other explicit application owners hold `AssetLease` values. Acquiring the same UUID in the same store shares its resource. A candidate scene acquires its dependencies while the outgoing scene still holds its leases, preserving shared runtime identities during switching. Releasing the last lease stops the source worker and releases the managed resource. Expired cache entries are pruned. The transparency demo quads are sprite entities, so their textures are scene leases like any other.
 
 Project/session operations, resource access and final lease release run on the main/rendering thread. Worker decoders retain only owned CPU snapshots, not leases or Registry references.
 
-GameInstance and Registry outlive the active scene. The renderer outlives the project and every asset lease. Scene factories belong to the retained host client; game-DLL callbacks and objects never enter retained scene/ECS state. Game code continues to borrow Registry and explicit GameBindings during its synchronous update. AssetLease and other ownership objects are not ComponentValue fields. Audio playback retains shared PCM data until its backend voice is stopped or destroyed.
+GameInstance and Registry outlive the active scene. The renderer outlives the project and every asset lease. Scene factories belong to the engine; game-DLL callbacks and objects never enter retained scene/ECS state. Game code borrows `SceneAccess`, picks and commands through its `SystemContext` during its synchronous update. AssetLease and other ownership objects are not ComponentValue fields. Audio playback retains shared PCM data until its backend voice is stopped or destroyed.
 
 ```mermaid
 flowchart LR
@@ -98,52 +110,43 @@ Project and scene source bytes settle on workers. PNG/FBX workers also decode im
 | Edit | Successful result | Failed result |
 | --- | --- | --- |
 | Active level save or F3 | New authored attempt, owned entities/bindings replaced, outcome reset and old cue stopped | Current attempt stays active |
-| F4 | Next valid scene in the current family's catalog order | Current scene stays active |
+| F4 | Next valid scene in the project's catalog order | Current scene stays active |
 | Asset path/color-space metadata | Prepared contents and workers replace existing contents; UUID, runtime handle, entity pose and selection stay | Previous catalog/resources stay active |
 | Catalog scene-path change for the active ID | Prepare the new scene and dependencies, then publish together | Previous catalog and scene stay active |
 | PNG/FBX save | Existing runtime resource receives new contents; gameplay state stays | Last good resource stays active |
 | Compatible game DLL | Update code changes; scene, entities, selection, values and attempt outcome stay | Active DLL stays on build/contract failure |
 
-Removing or changing the type of the active scene is rejected until the user switches away. Removing or changing the kind of a leased asset is rejected while an owner still needs it. Correcting a failed dependency retries without requiring another metadata/level save. Dependency-blocked scene/project candidates retry at 200 ms; project parse/source failures retry after settling with duplicate diagnostics suppressed. Newly saved snapshots supersede pending work. WAV clips load through scene ownership; live WAV source watching is not part of this version.
+Removing the active scene is rejected until the user switches away. Removing or changing the kind of a leased asset is rejected while an owner still needs it. Correcting a failed dependency retries without requiring another metadata/level save. Dependency-blocked scene/project candidates retry at 200 ms; project parse/source failures retry after settling with duplicate diagnostics suppressed. Newly saved snapshots supersede pending work. WAV clips load through scene ownership; live WAV source watching is not part of this version.
 
 ## Complete launch commands
 
-Build through CMake Tools or a Visual Studio developer environment before launching.
+Build through CMake Tools or a Visual Studio developer environment before launching. The default launch develops the Samples game: it reads source content, watches it, and rebuilds the module on save.
 
 ```powershell
-# Debug 3D
-Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
+# Samples (3D), Debug or Release
+& 'D:\RavenEngine\outuildd-debug\RavenEngine\RavenEngine.exe'
+& 'D:\RavenEngine\outuildd-release\RavenEngine\RavenEngine.exe' --orbit
 
-# Release 3D
-Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-release\RavenEngine\RavenEngine.exe' --watch-game --free-fly --watch-mesh
-
-# Debug 2D
-Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-debug\RavenEngine\RavenEngine.exe' --orthographic --watch-game --watch-wall --watch-shader
-
-# Release 2D
-Set-Location -LiteralPath 'D:\RavenEngine'
-& 'D:\RavenEngine\out\build\x64-release\RavenEngine\RavenEngine.exe' --orthographic --watch-game --watch-wall --watch-shader
+# Courtyard (2D)
+& 'D:\RavenEngine\outuildd-debug\RavenEngine\RavenEngine.exe' --game Courtyard
 ```
 
 Game-only builds while running:
 
 ```powershell
-cmake -P 'D:\RavenEngine\out\build\x64-debug\RavenEngine\GameBuild\BuildGame.cmake'
-cmake -P 'D:\RavenEngine\out\build\x64-release\RavenEngine\GameBuild\BuildGame.cmake'
+cmake -P 'D:\RavenEngine\outuildd-debug\RavenEngine\GameBuild\Samples\BuildGame.cmake'
+cmake -P 'D:\RavenEngine\outuildd-debug\RavenEngine\GameBuild\Courtyard\BuildGame.cmake'
 ```
 
 ## Repeatable authoring check
 
 1. Start either development command and note its absolute watch paths.
-2. Copy a supported mesh and PNG into new source paths under Content. Choose new UUIDv4 IDs and add their metadata records.
-3. Copy a level in the matching family, reference the new IDs in its mesh/material or sprite records, and append a scene record with a new UUID. Save the catalog. The active scene keeps its state.
+2. Copy a supported mesh and PNG into new source paths under the game's Content. Choose new UUIDv4 IDs and add their metadata records.
+3. Copy a scene, `dump` it, reference the new IDs in its `StaticMeshComponent`, `MaterialComponent` or `SpriteComponent` rows, `apply` it under a new name, and append a scene record with a new UUID. Save the catalog. The active scene keeps its state.
 4. Press F4 to reach the new scene. Change and save its values; the authored attempt restarts automatically. F3 is optional.
 5. Save malformed scene/metadata/asset data. The last good world remains visible. Correct the data and verify automatic recovery. Test creating a previously missing referenced file without resaving the catalog.
 6. Switch repeatedly between scenes with shared and exclusive assets. Check renderer/store diagnostics and watch logs: shared resources persist, exclusive handles expire, and counts stay bounded after frame completion.
-7. Edit a game function body, verify replacement and preserved scene state, then check failed-build and incompatible-DLL recovery. Shared-definition changes still require a host rebuild/restart.
+7. Edit a game function body or a game component, verify replacement and preserved scene state (components migrate by field name), then check failed-build recovery. Engine public header changes still require a host rebuild/restart.
 
 Restore validation data before staging or packaging. Native macOS/Linux execution and tracked regression integration remain open; CTest is deferred. Local executable probes and capture-based evidence are under ignored `out/validation/scene-workflow/`.
 

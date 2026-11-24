@@ -68,9 +68,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/$<CONFIG>/ShaderWatc
     INPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/ShaderWatchConfig.hpp.in")
 add_custom_target(RavenShaders DEPENDS ${RAVEN_SHADER_OUTPUTS})
 
-configure_file("${PROJECT_SOURCE_DIR}/cmake/ContentSourceConfig.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/Generated/ContentSourceConfig.hpp" @ONLY)
-
 set(RAVEN_CONTENT_SOURCES)
 set(RAVEN_CONTENT_DESTINATIONS)
 # Relative project files keep their path by default; aliases are explicit.
@@ -101,9 +98,10 @@ raven_stage_file("ThirdParty/ufbx/LICENSE" "Licenses/ufbx-LICENSE.txt")
 set(RAVEN_PLAYER_SUPPORT_SOURCES "${RAVEN_CONTENT_SOURCES}")
 set(RAVEN_PLAYER_SUPPORT_DESTINATIONS "${RAVEN_CONTENT_DESTINATIONS}")
 
-# Content and metadata enroll automatically; development reads their source root directly.
+# Each game root's content enrolls automatically and keeps its Games/<Name>/Content path, which
+# --no-watch runs read; development reads the source folders directly.
 file(GLOB_RECURSE raven_runtime_content CONFIGURE_DEPENDS LIST_DIRECTORIES false
-    "${PROJECT_SOURCE_DIR}/Content/*")
+    "${PROJECT_SOURCE_DIR}/Games/*/Content/*")
 foreach(content IN LISTS raven_runtime_content)
     file(RELATIVE_PATH relative "${PROJECT_SOURCE_DIR}" "${content}")
     raven_stage_file("${relative}")
