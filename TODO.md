@@ -32,7 +32,10 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] `Tests/Benchmarks/EcsBenchmark.cpp` measures Registry iteration, the rotator query, world transforms and random reads at 10k/50k/100k entities. The Release baseline on the minimum-spec laptop and the resulting M1 budgets are in [ECSDesign.md](docs/ECSDesign.md#performance-budgets) (2026-11-21).
 
 ### Build hygiene
-- [ ] Set `/W4` (MSVC) and `-Wall -Wextra` (Clang/GCC) on engine targets, and fix actionable warnings. Keep third-party code excluded.
+- [ ] Set `/W4` (MSVC) and `-Wall -Wextra` (Clang/GCC) on every target through one shared CMake function, with warnings as errors only in CI. Remove the game DLL's local `/WX` so it follows the same rule. Keep third-party code excluded (planning decision 3). A /W4 probe on 2026-11-24 found five warnings to resolve:
+  - Fix the two shadowed names: `FragmentShaderInterface.cpp:152` (C4457) and `VulkanInstance.cpp:121` (C4456).
+  - Define `_CRT_SECURE_NO_WARNINGS` for the two `getenv` calls (C4996, `ReloadTrace.hpp:20`, `RavenEngine.cpp:149`).
+  - Disable C4324, the intended `alignas` padding in `VulkanDrawQueue.hpp:19`.
 
 ## M1 — Data-oriented ECS (done 2026-11-21)
 
@@ -47,7 +50,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Add change ticks, a cached world-transform component and the hierarchy update, and port draw gathering. Applied 2026-11-21. Picking stays live. 50k entities with 20% changed take 0.52–0.57 ms; the 4,000-mesh M1 stages take 0.37 ms p95 (target ≤ 1.96 ms).
 - [x] M1 exit check (step 7): every budget passed together, including a 50k-match view at 0.18–0.20 ms. Compatible and rejected reloads keep state in the smoke test and in a live Release session, and Vulkan validation is clean at 4,000 meshes. See [the exit record](docs/ECSDesign.md#m1-exit-record-2026-11-21).
 
-## M2 — Vulkan 1.2 renderer foundation (next)
+## M2 — Vulkan 1.2 renderer foundation (done 2026-11-23)
 
 - [x] Write the design note: [RendererDesign.md](docs/RendererDesign.md) (2026-11-21).
 - [x] Owner review (2026-11-21): image tolerance, 32-bit indices, device-local geometry and the budgets are approved as proposed.
@@ -74,9 +77,10 @@ See [PlatformHandoff.md](docs/PlatformHandoff.md) for the interfaces and verific
 - [ ] macOS/Linux `Platform::FillRandomBytes`.
 - [ ] macOS/Linux game-module backend, replacing `UnsupportedGameModule.cpp`.
 - [ ] macOS/Linux native directory watch, or a confirmed `PollDirectoryWatch` fallback.
-- [ ] macOS/Linux audio backend, replacing `UnsupportedAudio.cpp`.
+- [ ] macOS/Linux native verification of audio through the shared device layer that M6C adds, replacing `UnsupportedAudio.cpp`. No native audio backend is written (planning decision 6, provisional).
 - [ ] MoltenVK portability enumeration and subset handling (coordinate with M2).
-- [ ] Native Debug/Release runs of the current 3D samples and reload paths.
+- [ ] A Linux CI job with the build and CPU tests; macOS follows (planning decision 4). It needs the Linux `FillRandomBytes` and non-MSVC branches in the game CMake.
+- [ ] Native Debug/Release runs of the current 3D samples and reload paths. The parity pass is evaluated after M6A, which breaks the module contract and replaces the scene format.
 
 Windows-side M4 items:
 
@@ -86,7 +90,7 @@ Windows-side M4 items:
 - [x] Prefer a discrete GPU, then an integrated one, in device selection (owner decision, 2026-11-23). See [PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements).
 - [ ] Owner decision: a development option that forces separate graphics and present families on the NVIDIA GPU, to exercise that path.
 
-## M5 — Hot reload completeness (current)
+## M5 — Hot reload completeness (done 2026-11-23)
 
 - [x] Write the design note: [HotReloadDesign.md](docs/HotReloadDesign.md) (2026-11-23).
 - [x] Owner review: Q1 A, Q2 A, Q3 A, Q4 A+, Q5 A, Q6 A (provisional), Q7 A (2026-11-23).
@@ -101,9 +105,24 @@ Windows-side M4 items:
 - [ ] Investigate the single 437 ms frame seen during a Release game build with validation layers if it recurs (D2). It did not recur in two later passes.
 - [x] Owner review of the whole M5 implementation (2026-11-23); gaps found in review were fixed: importer versions, complete records and summaries, the records file, the measured thread count, the PowerShell 5.1 smoke script and stale docs.
 
-## Later milestones
+## Pre-M6 hardening (current)
 
-M6 (gameplay services) and M7 (quality and release) are tracked in [ROADMAP.md](ROADMAP.md#milestones). Move their tasks here when work starts.
+Planning decision 1 (2026-11-24); see [ROADMAP.md](ROADMAP.md#pre-m6-hardening). Each item is a small engine snippet that needs the owner's go-ahead. Evidence and the assessment's step lists are in [ArchitectureAssessment.md](docs/ArchitectureAssessment.md).
 
-- [ ] Owner review of [ArchitectureAssessment.md](docs/ArchitectureAssessment.md) (2026-11-23): decide which fixes, open questions (section 8) and roadmap adjustments (section 7) to adopt before M6 starts.
-- [ ] Owner review of [FutureDecisions.md](docs/FutureDecisions.md) (2026-11-23): decide the M6 shape (FD-01) and the "decide now" items in its section 3, then carry the data-model decisions (FD-06 to FD-17) into the M6 design note.
+- [ ] ARCH-RT-01: a non-throwing normal matrix, so a zero-scale lit object is hidden instead of exiting (`Transform.hpp:164-180`, called from `RenderWorld.cpp:209-210`). Owner picks a public or private helper. Update `MeshMaterials.md`. The transactional `Sync` reset waits for M6-1.
+- [ ] ARCH-RT-02: one non-throwing asset lookup for data errors; a bad texture ID draws white, and a bad sprite is skipped.
+- [ ] ARCH-RT-03: a missing ancestor makes the entity a detached root in both world-transform paths, and the changed flag propagates. Port `MoveSprites` to `SceneAccess`.
+- [ ] ARCH-RT-04: wrap the game's system registration while the DLL is loaded, and add `catch(...)` next to the `std::exception` catch in `GameModule.cpp`.
+- [ ] ARCH-PERF-01: present-mode (FIFO, Mailbox, Immediate) and `MaxFrameRate` launch options, FIFO with no extra cap by default, the 30 FPS minimized throttle kept (planning decision 2). Delete the source patch from `scripts/Windows3DHighRefresh.py`, re-run the M3 exit numbers on the stock host, and measure the sleep-cap precision.
+- [ ] The M0 warning level (above, under Build hygiene).
+- [ ] ARCH-BLD-02: debug info in the Debug game DLL, and a debugger check across a reload.
+- [ ] ARCH-ECS-01 step 0: a structural-change case (spawn, despawn, reparent) in `EcsBenchmark`, recorded on the minimum-spec laptop, so M6-3 rests on a measurement.
+- [ ] Add the missing `#include <utility>` for `std::exchange` in `VulkanMesh.cpp:131`. MSVC accepts it through another header; g++ 13 and clang 18 reject it (Linux syntax check, 2026-11-24).
+
+## M6 — design note (next)
+
+- [x] Owner review of [ArchitectureAssessment.md](docs/ArchitectureAssessment.md) and [FutureDecisions.md](docs/FutureDecisions.md) (2026-11-24): the "decide now" items are recorded as [planning decisions 1–6](ROADMAP.md#planning-decisions-2026-11-24). The other assessment questions go to the M6 note or to the stage that needs them.
+- [ ] Write the M6 design note: FD-06 to FD-17 (the assessment's D-A to D-I), starting with the game project layout and contract (FD-17), and the stage exit checklists.
+- [ ] Owner review of the note before any M6A code.
+
+M7 (quality and release) is tracked in [ROADMAP.md](ROADMAP.md#m7--quality-and-release). Move its tasks here when work starts.
