@@ -6,7 +6,7 @@ Working agreement: the assistant suggests small, reviewable engine snippets and 
 
 Priority: 3D first. 2D runtime testing needs an explicit owner request. macOS and Linux contributors work on M4 in parallel.
 
-## M0 — Safety net and baseline (one item left)
+## M0 — Safety net and baseline (done 2026-11-24)
 
 ### Repository state
 - [x] Commit the outstanding working tree in four commits on master: vendored ufbx with its license, the feature work (built in isolation), CTest/CI with the guard tests, and the roadmap/design docs (2026-11-21).

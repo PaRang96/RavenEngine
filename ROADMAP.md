@@ -62,7 +62,7 @@ Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (presentation a
   - A throwing game system is suspended until the next reload.
   - Changing shared component definitions still requires a host rebuild and restart. See [HotReloadDesign.md](docs/HotReloadDesign.md) and [DevelopmentReload.md](docs/DevelopmentReload.md).
 - **Samples:** Perspective, Gallery, Assemblies, Puzzle and Collection (3D), Courtyard (2D), benchmark scenes with 100–100,000 meshes, and a Windows player build ([PlayerBuild.md](docs/PlayerBuild.md)).
-- **Quality:** CTest with `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled), a Windows CI build and CPU tests, and tracked smoke, live-reload and benchmark scripts. No warning/sanitizer policy yet.
+- **Quality:** CTest with `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled), a Windows CI build and CPU tests, and tracked smoke, live-reload and benchmark scripts. Warnings at `/W4` (or `-Wall -Wextra`) on every target, as errors in CI; no sanitizer configuration yet.
 
 ## Milestones
 
@@ -70,7 +70,7 @@ The milestones are ordered by dependency. M1 and M2 can proceed in parallel afte
 
 Order from here: the pre-M6 hardening list (with the last M0 item), the M6 design note, then M6A → M6B, with M6C alongside.
 
-### M0 — Safety net and baseline · *one item left*
+### M0 — Safety net and baseline · *done 2026-11-24*
 
 Make the existing behavior repeatable before the ECS and renderer change underneath it.
 
@@ -78,9 +78,9 @@ Make the existing behavior repeatable before the ECS and renderer change underne
 - [x] Add CTest with a minimal set of tests that guard the M1 rewrite: `RegistryTests` (CPU) and `HierarchyTests` (GPU-labeled). Other areas get tests only when a milestone changes them.
 - [x] Add a Windows CI workflow: configure plus Debug/Release builds plus CPU tests.
 - [x] Make the 3D benchmark and smoke scripts a tracked, documented baseline, with results recorded on the minimum-spec machine ([ECSDesign.md](docs/ECSDesign.md#performance-budgets)).
-- [ ] Set a compiler warning level for every target and fix actionable warnings (planning decision 3). *A /W4 probe build on 2026-11-24 found five warnings: two `getenv` deprecations, one alignment padding and two shadowed names.*
+- [x] Set a compiler warning level for every target and fix actionable warnings (planning decision 3). *`/W4` or `-Wall -Wextra` on every target; CI builds with warnings as errors and passed on `ae4423a`.* *A /W4 probe build on 2026-11-24 found five warnings: two `getenv` deprecations, one alignment padding and two shadowed names.*
 
-**Exit:** `ctest --test-dir out/build/x64-debug` passes locally and in CI. The 4,000-mesh benchmark baseline is recorded in the repository; the 500/2,000-mesh runs were dropped under the minimal-test policy. Only the warning level remains.
+**Exit:** `ctest --test-dir out/build/x64-debug` passes locally and in CI. The 4,000-mesh benchmark baseline is recorded in the repository; the 500/2,000-mesh runs were dropped under the minimal-test policy. The warning level landed on 2026-11-24.
 
 ### M1 — Data-oriented ECS · *done 2026-11-21*
 
