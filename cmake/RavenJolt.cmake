@@ -54,6 +54,8 @@ function(raven_add_jolt)
 
     set_target_properties(Jolt PROPERTIES
         MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}"
+        # Program-database debug information: Edit and Continue (/ZI) conflicts with the optimized Debug flags.
+        MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>"
         POSITION_INDEPENDENT_CODE ON
         FOLDER ThirdParty)
     # Jolt's headers are third-party code to RavenCore: no project warnings from them.

@@ -3,7 +3,11 @@ include_guard(GLOBAL)
 
 # Third-party code builds without Raven's warning level.
 function(raven_third_party target)
-    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER ThirdParty)
+    # Plain program-database debug information: Edit and Continue (/ZI, the engine's Debug default under
+    # policy CMP0141) does not apply to libraries that are never edited, and conflicts with the optimized
+    # Debug flags of RAVEN_TEXT_OPTIMIZE_DEBUG.
+    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER ThirdParty
+        MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
     # Sources are UTF-8; MSVC would otherwise read them in the system code page (Korean on the laptop).
     if(MSVC)
         target_compile_options(${target} PRIVATE /w /utf-8)
