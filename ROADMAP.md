@@ -38,15 +38,15 @@ The owner reviewed the "decide now" items of [FutureDecisions.md](docs/FutureDec
 | 3 | Warning policy (FD-05) | `/W4` (MSVC) and `-Wall -Wextra` (GCC/Clang) on every engine, sample, tool, test and game target; warnings are errors only in CI. The game DLL follows the same rule, so its local `/WX` is removed. Third-party code is excluded. | M0 |
 | 4 | Linux CI (FD-04) | No Linux job before M4. M4 delivers Linux, including its CI build and CPU tests. | M4 |
 | 5 | Shape of M6 (FD-01) | Three stages, M6A, M6B and M6C, each with its own exit and review. Three corrections to the proposal: the contract narrowing moves into M6A; the game project layout (FD-17) is decided in the M6 note and lands at M6-7; the sample game starts after M6-7. | [M6A–M6C](#m6a--host-and-data-model) |
-| 6 | Audio (FD-30) | Provisional, open to revision: an engine-owned mixer in shared code (voices with IDs, stop-oldest), over one vendored device layer for all three platforms (for example miniaudio). Its license, size and Linux backends are checked before vendoring. M4 then verifies audio natively instead of writing backends. | M6C, M4 |
+| 6 | Audio (FD-30) | Provisional, open to revision: an engine-owned mixer in shared code (voices with IDs, stop-oldest), over one vendored device layer for all three platforms (for example miniaudio). Its license, size and Linux backends are checked before vendoring. M4 then verifies audio natively instead of writing backends. Device layer decided 2026-11-25: miniaudio 0.11.26 behind the private `AudioDevice` interface ([UIAudioLibraries.md](docs/UIAudioLibraries.md#hiding-the-device-layer-owner-question-2026-11-25)). | M6C, M4 |
 
 ## Where the engine stands (2026-11-23)
 
 Verified on Windows only, on the minimum-spec RTX 3070 Ti Laptop (presentation and device checks also used its Intel iGPU):
 
-- **Platform:** Win32 window, input with focus state, key repeat and stable HID key IDs, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch, XAudio2 one-shots. Device selection prefers a discrete GPU.
+- **Platform:** Win32 window, input with focus state, key repeat and stable HID key IDs, DPI awareness, frame clock and pacing, files/paths, atomic files, directory watch. Audio plays through the engine mixer over the private `AudioDevice` interface, with miniaudio as the backend (M6C C8, 2026-11-25). Device selection prefers a discrete GPU.
   - macOS (Cocoa) and Linux (XCB) windows and input are merged.
-  - They have no random-byte hook, game-module loader, native watcher or audio backend yet, and no current native verification (M4).
+  - They have no random-byte hook, game-module loader or native watcher yet, and no current native verification (M4). Audio builds the shared miniaudio backend there, unverified.
 - **Vulkan (M2, M3 done):** Vulkan 1.2 with dynamic rendering, synchronization2 and timeline retirement, plus persistent per-frame rings and a frame uniform.
   - Lit meshes come from a host-owned render world, are culled on the GPU into fixed-count indirect draws, and use bindless textures behind `Raven/Material.hlsli`.
   - 50k lit meshes with 20% animated ran at 126.5 FPS ([GpuDrivenDesign.md](docs/GpuDrivenDesign.md)).
@@ -139,7 +139,7 @@ Run the same engine on Linux and macOS. Platform contributors own native impleme
 - [ ] macOS/Linux: random-byte hook for `AssetId::Generate`.
 - [ ] macOS/Linux: native game-module load/unload/replace (`dlopen`), with build-toolchain capture for game-only builds.
 - [ ] macOS/Linux: native directory watching (FSEvents/inotify), or a confirmed polling fallback.
-- [ ] macOS/Linux: native verification of audio through the shared device layer that M6C adds (planning decision 6). No native audio backend is written.
+- [ ] macOS/Linux: native verification of audio through the shared miniaudio device layer, added in M6C on 2026-11-25 (planning decision 6). No native audio backend is written.
 - [ ] Shader toolchain (DXC/spirv-val) on all hosts, plus the MoltenVK portability subset.
 - [ ] CI builds and CPU tests on Windows, Linux and macOS. *The Linux job lands with M4, not before (planning decision 4). A read-only g++ 13/clang 18 syntax check of the shared sources on 2026-11-24 passed 65 of 67 files; see the [pre-M6 list](#pre-m6-hardening) for the one real defect.*
 - [ ] Finish Win32 key translation, repeat/text input and focus state, and verify mixed-DPI movement. Bring the other backends to the same input contract. *Windows focus state, key repeat and stable key IDs landed on 2026-11-23 ([InputProcessing.md](docs/InputProcessing.md#focus-key-repeat-and-stable-key-ids-2026-11-23)). Text input waits for a caller. Mixed DPI and real-keyboard checks remain.*
@@ -202,16 +202,22 @@ Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, te
 
 ### M6C — Game services and the sample game
 
-Decide FD-29 and FD-31 to FD-34 (input bindings, text, collision scope, save data, smaller services) before it starts. The services run alongside M6A and M6B once the M6 note is approved; the sample game starts after M6-7, so it is written against the final `SystemContext`.
+Design: [GameServicesDesign.md](docs/GameServicesDesign.md), decided 2026-11-24 (FD-29, FD-31 to FD-34, FD-46 to FD-48). FD-47 (movement and control) is provisional until its measurements; FD-31 (text and UI) is approved for the early deliverable only, with the full stack planned in [UIDesign.md](docs/UIDesign.md). Direction: keep the ability to build an RTS, a real-time action game and other genres, without building RTS-specific systems now.
 
-- [ ] Key bindings and key listening on top of the shared input contract: an action map storing stable `Key`/`MouseButton` values, capture of the next pressed input, and layout-aware key names. *Owner requirement, 2026-11-23; see [InputProcessing.md](docs/InputProcessing.md#planned-key-bindings-and-key-listening).*
-- [ ] Audio voices: the engine mixer over one shared device layer, replacing the single-voice `AudioPlayer` and the native XAudio2 backend (planning decision 6, provisional).
-- [ ] A per-user data path for saves and settings.
+- [ ] C1: input mapping contexts that consume input, one ordered event list, the developer context, the action map, key listening and layout-aware key names (FD-29).
+- [ ] C2: per-user data path, field-table records in text and binary forms, crash-safe writes and the host-owned profile store (FD-33).
+- [ ] C3: step-rate setting, control phase, input stream, simulation RNG, deterministic spawn IDs and render interpolation (FD-34, FD-47, FD-48).
+- [ ] C4: Jolt Physics as a host-owned physics world with components as the source of truth, plus the physics iteration set (FD-32).
+- [ ] C5: picking on Jolt for game and editor (FD-34).
+- [ ] C6: `MoverComponent` and the character backend (FD-47).
+- [ ] C7: the shared GPU 2D path, MSDF fonts and the thin UI cut (FD-31). *Built 2026-11-25 on the shared job system ([JobSystemDesign.md](docs/JobSystemDesign.md)): FreeType, HarfBuzz, msdfgen, msdf-atlas-gen, Yoga and ICU vendored unmodified; runtime MTSDF text for every script the engine fonts cover; the immediate UI over Yoga; the F6 preview mode ([record](docs/GameServicesDesign.md#c7--the-2d-and-ui-early-deliverable-2026-11-25)).*
+- [ ] C8: audio voices: the engine mixer over one shared device layer, replacing the single-voice `AudioPlayer` and the native XAudio2 backend (planning decision 6, provisional). *Device layer done 2026-11-25: miniaudio 0.11.26 behind `AudioDevice` (decision A1), the mixer core and the device lifecycle; XAudio2 removed ([record](docs/GameServicesDesign.md#c8-first-part--the-audio-device-layer-2026-11-25)). Mixer done 2026-11-25: voices, concurrency, virtual voices, spatial panning, buses and ducking, WAV/FLAC/MP3/Ogg (A2 owner, A3–A6 delegated; [record](docs/GameServicesDesign.md#c8-second-part--the-engine-mixer-2026-11-25)). Sound-event assets done 2026-11-25 ([record](docs/GameServicesDesign.md#c8-third-part--sound-event-assets-2026-11-25)); streaming follows.*
+- [ ] C9: the arena sample game (`Games/Arena`, FD-46) and the developer quick-save. *Both parts built 2026-11-25, the second with the HUD, menus, key bindings and sounds ([record](docs/GameServicesDesign.md#c9-second-part--hud-menus-key-bindings-and-sounds-2026-11-25)).*
+- [ ] C10: the determinism check and the exit check with every measurement.
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
-- [ ] After M6-7: the small 3D sample game.
 - [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.
 
-**Exit:** the M6 exit above.
+**Exit:** the M6 exit above, checked through the [M6C exit checklist](docs/GameServicesDesign.md#m6c-exit-checklist).
 
 ### M7 — Quality and release
 
@@ -226,6 +232,6 @@ Decide FD-29 and FD-31 to FD-34 (input bindings, text, collision scope, save dat
 
 A full visual editor, arbitrary C++ state migration beyond field-level component migration, generalized plugin loading, particle/VFX systems, a render graph, and simultaneous multi-view rendering (unless M3 needs one).
 
-## Deferred collision and physics
+## Collision and physics
 
-General-purpose 2D collision, 3D collision and physics simulation are deferred with no scheduled milestone. Courtyard's swept XZ checks and trigger overlaps cover its current gameplay. Revisit the scope when a concrete mechanic needs more.
+3D collision and physics come from Jolt Physics in M6C ([FD-32](docs/GameServicesDesign.md#fd-32--collision-and-physics)). General-purpose 2D collision stays deferred: Courtyard's swept XZ checks and trigger overlaps cover its current gameplay. Crowd movement and navigation for many units are a later milestone ([FD-47](docs/GameServicesDesign.md#fd-47--movement-and-control)).

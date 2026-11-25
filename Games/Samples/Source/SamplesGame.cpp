@@ -6,6 +6,7 @@
 #include "GameContract.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
+#include "Raven/Components/PhysicsComponents.hpp"
 #include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
@@ -172,6 +173,27 @@ namespace
 		scene.Write(mesh, transform);
 	}
 
+	// Fixed step: movers steer toward the next point of their circle (FD-47). The engine moves them,
+	// so they slide along walls, climb the ramp and push crates.
+	void PatrolSystem(SystemContext& context)
+	{
+		const float delta = Delta(context);
+		if (delta <= 0.0f)
+			return;
+		context.World.View<PatrolComponent, ECS::MoverComponent, const ECS::TransformComponent>().Each(
+			[delta](ECS::Entity, PatrolComponent& patrol, ECS::MoverComponent& mover, const ECS::TransformComponent& transform)
+			{
+				patrol.Angle = std::remainder(patrol.Angle + patrol.Speed / std::max(patrol.Radius, 0.1f) * delta,
+					2.0f * std::numbers::pi_v<float>);
+				const Vec3 target{ patrol.Center.X + patrol.Radius * std::cos(patrol.Angle),
+					patrol.Center.Y + patrol.Radius * std::sin(patrol.Angle), 0.0f };
+				const Vec3 toward{ target.X - transform.Position.X, target.Y - transform.Position.Y, 0.0f };
+				const float distance = std::sqrt(Dot(toward, toward));
+				const float speed = std::abs(patrol.Speed) * std::min(1.5f, distance + 0.5f);
+				mover.DesiredVelocity = distance > 1e-4f ? toward * (speed / distance) : Vec3{};
+			});
+	}
+
 	void InteractionSystem(SystemContext& context)
 	{
 		if (FreeFlight(context))
@@ -251,6 +273,8 @@ extern "C" RAVEN_GAME_API void RavenRegisterSystems(Raven::SystemTable& systems)
 	systems.Component<BeaconComponent>();
 	systems.Component<DemoComponent>();
 	systems.Component<OrderToggleComponent>();
+	systems.Component<PatrolComponent>();
+	systems.Add({ "Patrol", SystemPhase::FixedUpdate, 0, &PatrolSystem });
 	systems.Add({ "FreeFly", SystemPhase::Update, 0, &FreeFlySystem });
 	systems.Add({ "OrbitCamera", SystemPhase::Update, 0, &OrbitCameraSystem });
 	systems.Add({ "MeshRotation", SystemPhase::Update, 10, &MeshRotationSystem });

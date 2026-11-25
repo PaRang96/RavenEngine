@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
+#include "Raven/Renderer/DebugLines.hpp"
+#include "Raven/Renderer/Overlay.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
@@ -53,6 +55,21 @@ namespace Raven
 		std::vector<TexturedInstanceData> TexturedInstances;
 		std::vector<TexturedBatch> OpaqueBatches;
 		std::vector<TexturedBatch> TransparentBatches;
+		// Developer lines, borrowed for the frame (FD-32 collider view).
+		std::span<const DebugLineVertex> DebugLines;
+		// Screen-space 2D quads drawn last (docs/UIDesign.md, section 4), borrowed for the frame.
+		std::span<const OverlayQuad> Overlay;
+		// Texture regions written before drawing, such as new glyphs; pixels borrowed for the frame.
+		struct TextureUpload
+		{
+			VkImage Image = VK_NULL_HANDLE;
+			std::uint32_t X = 0;
+			std::uint32_t Y = 0;
+			std::uint32_t Width = 0;
+			std::uint32_t Height = 0;
+			std::span<const std::byte> Pixels;
+		};
+		std::vector<TextureUpload> Uploads;
 	};
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,

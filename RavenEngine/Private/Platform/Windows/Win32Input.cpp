@@ -1,5 +1,11 @@
 #include "Platform/Windows/Win32Input.hpp"
 
+#include "Platform/PlatformKeyNames.hpp"
+
+#include <array>
+#include <iterator>
+#include <string>
+
 namespace Raven
 {
 	namespace
@@ -184,6 +190,42 @@ namespace Raven
 		case 0x58: return Key::F12;
 		case 0x59: return Key::NumpadEqual;
 		default: return Key::Unknown;
+		}
+	}
+
+	namespace Platform
+	{
+		std::string GetNativeKeyName(Key key)
+		{
+			// The scan code of each key, found by running every scan code through the translation
+			// above, so both directions share one table.
+			static const auto scanCodes = []
+			{
+				std::array<LPARAM, InputState::KeyCount> codes{};
+				for (UINT extended = 0; extended < 2; ++extended)
+					for (UINT scanCode = 1; scanCode < 0x80; ++scanCode)
+					{
+						const auto flags = static_cast<WORD>(scanCode | (extended ? KF_EXTENDED : 0));
+						const Key translated = TranslateWin32Key(0, MAKELPARAM(0, flags));
+						const auto index = static_cast<std::size_t>(translated);
+						if (translated != Key::Unknown && index < codes.size() && codes[index] == 0)
+							codes[index] = static_cast<LPARAM>(scanCode << 16) | (extended ? (1 << 24) : 0);
+					}
+				return codes;
+			}();
+
+			const auto index = static_cast<std::size_t>(key);
+			if (index == 0 || index >= scanCodes.size() || scanCodes[index] == 0)
+				return {};
+			wchar_t name[64]{};
+			const int length = GetKeyNameTextW(static_cast<LONG>(scanCodes[index]), name, static_cast<int>(std::size(name)));
+			if (length <= 0)
+				return {};
+			const int bytes = WideCharToMultiByte(CP_UTF8, 0, name, length, nullptr, 0, nullptr, nullptr);
+			std::string text(static_cast<std::size_t>(bytes > 0 ? bytes : 0), '\0');
+			if (bytes > 0)
+				WideCharToMultiByte(CP_UTF8, 0, name, length, text.data(), bytes, nullptr, nullptr);
+			return text;
 		}
 	}
 }

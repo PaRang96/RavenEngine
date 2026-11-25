@@ -38,6 +38,16 @@ namespace Raven
 		double DeltaSeconds = 0;
 		double BenchmarkPhase = std::numeric_limits<double>::quiet_NaN();
 		bool SceneReplaced = false;
+		// Physics steps of the frame (docs/GameServicesDesign.md, FD-32): sync, simulation and
+		// write-back, then the world's state after the latest step.
+		std::int64_t Physics = 0;
+		std::uint32_t PhysicsBodies = 0;
+		std::uint32_t PhysicsActive = 0;
+		std::uint32_t PhysicsContacts = 0;
+		// UI layout and draw-list build after Update: every context's EndFrame, text included, and the
+		// glyph uploads gathered for the frame (docs/UIDesign.md, section 7; measurement 7).
+		std::int64_t Ui = 0;
+		std::uint32_t UiQuads = 0;
 	};
 
 	RAVEN_API FrameMetrics* GetFrameMetrics() noexcept;

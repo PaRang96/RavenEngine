@@ -40,6 +40,7 @@ namespace Raven
 		case AssetKind::Shader:
 		case AssetKind::Scene:
 		case AssetKind::Audio:
+		case AssetKind::Sound:
 			break;
 		default:
 			throw std::invalid_argument("Invalid asset kind: " + identity);

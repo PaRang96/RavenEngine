@@ -25,6 +25,10 @@ namespace Raven
 		// Between gameplay updates. True means a new scene replaced the authored attempt.
 		RAVEN_API bool Update(bool restart = false, bool next = false);
 		RAVEN_API void Restart();
+		// Replaces the active world with one built from scene bytes, for example a developer
+		// quick-save (docs/GameServicesDesign.md, FD-33). The active scene's description, file and
+		// watch stay; throws, leaving the active world in place, when the factory rejects the bytes.
+		RAVEN_API void RestoreSnapshot(std::span<const std::byte> bytes);
 
 		SceneSession(const SceneSession&) = delete;
 		SceneSession& operator=(const SceneSession&) = delete;

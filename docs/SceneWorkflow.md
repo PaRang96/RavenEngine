@@ -18,6 +18,8 @@ scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180 "Levels/Perspective.ravenscene"
 - Records use UUIDv4 identities in one namespace.
 - `texture` requires a PNG and `srgb` or `linear`. `mesh` requires a single-object static FBX. `audio` requires 16-bit PCM WAV.
 - Scenes are `.ravenscene` files in the generic format. The scene-record order is the F4 order.
+- `fixed-step <Hz>` (optional, 10–480, default 60) sets the simulation rate ([FD-34](GameServicesDesign.md#fd-34--smaller-services)). The rate is fixed for a session: an edit during a run logs a warning and applies at the next start. Readers that predate it skip it.
+- `physics-limits <bodies> <body pairs> <contact constraints>` (optional, each 16–4194304, default 65536, 65536 and 10240) sets the physics world's fixed capacities ([Physics.md](Physics.md#project-limits)). Like the step rate, it is fixed for a session.
 - A record kind this reader does not know is skipped with a warning, so later versions can add records (FD-10).
 
 **Rejected.** The catalog rejects:
@@ -51,7 +53,7 @@ A `.ravenscene` file ([SceneFile](../RavenEngine/Public/Raven/Scene/SceneFile.hp
 | `position\|rotation\|scale <scene> <label> <X> <Y> <Z>` | Edits the labeled entity's `TransformComponent` |
 | `stage-player <destination> --scene <UUID>... [--asset <UUID>...]` | Copies the selected scenes and every asset they reference (from their `AssetRef` fields) for a player |
 
-The Samples game's tool-made scenes are regenerated with `SamplesTool create-puzzle|create-collection <output>` and `SamplesTool create-benchmark <output> <mesh-count>`.
+The Samples game's tool-made scenes are regenerated with `SamplesTool create-puzzle|create-collection|create-physics <output>` and `SamplesTool create-benchmark <output> <mesh-count>`.
 
 ### Runtime hierarchy contract
 

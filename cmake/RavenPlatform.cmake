@@ -2,7 +2,7 @@
 if(WIN32)
     set(raven_native_directory "Windows")
     target_compile_definitions(RavenCore PRIVATE UNICODE _UNICODE)
-    target_link_libraries(RavenCore PRIVATE user32 bcrypt ole32 xaudio2)
+    target_link_libraries(RavenCore PRIVATE user32 bcrypt ole32 shell32)
     if(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
         set(raven_player_platform "windows-x64")
         set(raven_player_readme "${PROJECT_SOURCE_DIR}/docs/WindowsPlayerReadme.txt")
@@ -47,7 +47,7 @@ if(NOT WIN32)
     target_sources(RavenCore PRIVATE
         "Private/Platform/PollDirectoryWatch.cpp"
         "Private/Platform/PosixAtomicFile.cpp"
-        "Private/Platform/UnsupportedAudio.cpp"
         "Private/Platform/UnsupportedGameModule.cpp"
+        "Private/Platform/UnsupportedKeyNames.cpp"
     )
 endif()

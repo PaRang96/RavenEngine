@@ -23,6 +23,7 @@ namespace Samples
 		m_Registry.Register<BeaconComponent>();
 		m_Registry.Register<DemoComponent>();
 		m_Registry.Register<OrderToggleComponent>();
+		m_Registry.Register<PatrolComponent>();
 	}
 
 	ECS::Entity SampleSceneBuilder::Find(const std::string& name) const
@@ -148,6 +149,23 @@ namespace Samples
 	void SampleSceneBuilder::Pickup(const std::string& name)
 	{
 		m_Registry.Add(Find(name), PickupComponent{});
+	}
+
+	void SampleSceneBuilder::Physics(const std::string& name, const ECS::ColliderComponent& collider,
+		std::optional<ECS::RigidBodyComponent> body)
+	{
+		const auto entity = Find(name);
+		m_Registry.Add(entity, collider);
+		if (body)
+			m_Registry.Add(entity, *body);
+	}
+
+	void SampleSceneBuilder::Patrol(const std::string& name, const ECS::MoverComponent& mover,
+		const PatrolComponent& patrol)
+	{
+		const auto entity = Find(name);
+		m_Registry.Add(entity, mover);
+		m_Registry.Add(entity, patrol);
 	}
 
 	SceneFile SampleSceneBuilder::Finish()

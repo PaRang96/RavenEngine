@@ -5,6 +5,7 @@
 #include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/LightingComponent.hpp"
 #include "Raven/Components/MaterialComponent.hpp"
+#include "Raven/Components/PhysicsComponents.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
@@ -40,6 +41,11 @@ namespace Samples
 		void Door(const std::string& name, const std::vector<std::string>& rotators, Raven::Vec3 openOffset, float duration);
 		void Goal(const std::string& name, const std::string& door, float radius);
 		void Pickup(const std::string& name);
+		// A collider, and a rigid body unless static, on an existing entity (docs/GameServicesDesign.md, FD-32).
+		void Physics(const std::string& name, const Raven::ECS::ColliderComponent& collider,
+			std::optional<Raven::ECS::RigidBodyComponent> body = {});
+		// A mover walking a circle (FD-47) on an existing entity.
+		void Patrol(const std::string& name, const Raven::ECS::MoverComponent& mover, const PatrolComponent& patrol);
 
 		// Adds the derived gameplay state and the transparency demo sprites, and captures the scene.
 		Raven::SceneFile Finish();

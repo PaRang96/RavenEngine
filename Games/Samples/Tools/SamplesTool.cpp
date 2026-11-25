@@ -2,6 +2,7 @@
 //   SamplesTool create-puzzle <output.ravenscene>
 //   SamplesTool create-collection <output.ravenscene>
 //   SamplesTool create-benchmark <output.ravenscene> <mesh-count>
+//   SamplesTool create-physics <output.ravenscene>
 
 #include "SampleSceneBuilder.hpp"
 
@@ -14,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace
 {
@@ -147,6 +149,82 @@ namespace
 		return scene.Finish();
 	}
 
+	// Physics bodies on the sample meshes (docs/GameServicesDesign.md, FD-32): a crate pyramid, a ramp
+	// and bouncing spheres on a static floor. The cube mesh is 1 m per side and the sphere 1 m across,
+	// so the default collider sizes match them at any scale.
+	SceneFile CreatePhysics()
+	{
+		SampleSceneBuilder scene;
+		const auto paint = Material(true);
+		const auto grid = Material(true, AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19"));
+		ECS::ColliderComponent box;
+		ECS::ColliderComponent ball;
+		ball.Shape = ECS::ColliderShape::Sphere;
+		ECS::RigidBodyComponent crate;
+		crate.Mass = 8.0f;
+		crate.Friction = 0.6f;
+		ECS::RigidBodyComponent bouncy;
+		bouncy.Mass = 2.0f;
+		bouncy.Restitution = 0.55f;
+		bouncy.Friction = 0.3f;
+
+		scene.Mesh("floor", Cube, Pose({ 0, 10, -.25f }, { 16, 16, .5f }), { .55f, .6f, .68f, 1 }, grid);
+		scene.Physics("floor", box);
+		// Low walls keep rolling spheres on the floor.
+		const std::pair<const char*, ECS::TransformComponent> walls[]{
+			{ "wall-near", Pose({ 0, 2.15f, .3f }, { 16, .3f, .6f }) },
+			{ "wall-far", Pose({ 0, 17.85f, .3f }, { 16, .3f, .6f }) },
+			{ "wall-left", Pose({ -7.85f, 10, .3f }, { .3f, 15.4f, .6f }) },
+			{ "wall-right", Pose({ 7.85f, 10, .3f }, { .3f, 15.4f, .6f }) } };
+		for (const auto& [name, pose] : walls)
+		{
+			scene.Mesh(name, Cube, pose, { .4f, .45f, .55f, 1 }, paint);
+			scene.Physics(name, box);
+		}
+		scene.Mesh("ramp", Cube,Pose({ 4.5f, 12, 1.2f }, { 5, 3, .3f }, { 0, -.45f, 0 }), { .45f, .5f, .6f, 1 }, paint);
+		scene.Physics("ramp", box);
+		constexpr float size = .8f;
+		for (int row = 0; row < 5; ++row)
+			for (int column = 0; column < 5 - row; ++column)
+			{
+				const auto name = "crate-" + std::to_string(row) + "-" + std::to_string(column);
+				const float x = -3.0f + (static_cast<float>(column) - .5f * static_cast<float>(4 - row)) * (size + .02f);
+				scene.Mesh(name, Cube, Pose({ x, 10, size * (static_cast<float>(row) + .5f) + .01f }, { size, size, size }),
+					(row + column) % 2 ? Vec4{ .9f, .55f, .18f, 1 } : Vec4{ .8f, .4f, .12f, 1 }, paint);
+				scene.Physics(name, box, crate);
+			}
+		for (int index = 0; index < 6; ++index)
+		{
+			const auto name = "ball-" + std::to_string(index);
+			const float x = 3.0f + static_cast<float>(index % 3) * 1.1f;
+			const float y = 11.0f + static_cast<float>(index / 3) * 1.2f;
+			scene.Mesh(name, Sphere, Pose({ x, y, 5.0f + static_cast<float>(index) * .9f }, { .7f, .7f, .7f }),
+				{ .22f, .67f, .9f, 1 }, paint);
+			scene.Physics(name, ball, bouncy);
+		}
+		// Movers (FD-47): capsules walking circles, over the ramp's foot and through the crates.
+		ECS::MoverComponent walker;
+		walker.Radius = .35f;
+		walker.HalfHeight = .45f;
+		const std::tuple<const char*, Vec3, float, float> walkers[]{
+			{ "walker-0", { 0, 6, 0 }, 3.0f, 2.5f },
+			{ "walker-1", { 3, 12, 0 }, 2.5f, -2.0f },
+			{ "walker-2", { -4, 12, 0 }, 2.0f, 3.0f } };
+		for (const auto& [name, center, radius, speed] : walkers)
+		{
+			scene.Mesh(name, Sphere, Pose({ center.X + radius, center.Y, 1.0f }, { .7f, .7f, 1.6f }), { .3f, .85f, .4f, 1 },
+				paint);
+			Samples::PatrolComponent patrol;
+			patrol.Center = center;
+			patrol.Radius = radius;
+			patrol.Speed = speed;
+			scene.Patrol(name, walker, patrol);
+		}
+		scene.Camera("main", Pose({ 0, -4, 5 }, { 1, 1, 1 }, { -.42f, 0, 0 }), {}, { 0, 10, 1 });
+		scene.Lighting("sun", {});
+		return scene.Finish();
+	}
+
 	SceneFile CreateCollection()
 	{
 		SampleSceneBuilder scene;
@@ -181,6 +259,8 @@ int main(int argc, char** argv)
 			CreatePuzzle().Save(argv[2]);
 		else if (command == "create-collection" && argc == 3)
 			CreateCollection().Save(argv[2]);
+		else if (command == "create-physics" && argc == 3)
+			CreatePhysics().Save(argv[2]);
 		else if (command == "create-benchmark" && argc == 4)
 		{
 			std::uint32_t count = 0;
@@ -191,7 +271,7 @@ int main(int argc, char** argv)
 			CreateBenchmark(count).Save(argv[2]);
 		}
 		else
-			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection <output> | "
+			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics <output> | "
 				"create-benchmark <output> <mesh-count>");
 		std::cout << "Saved scene " << argv[2] << '\n';
 		return 0;

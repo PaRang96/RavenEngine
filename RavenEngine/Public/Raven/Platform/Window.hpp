@@ -62,6 +62,8 @@ namespace Raven
 			GetRequiredVulkanInstanceExtensions() const = 0;
 		// Read on the window thread after this window's PollEvents().
 		virtual const InputState& GetInputState() const = 0;
+		// The display's scale for UI: 1 at 96 DPI on Windows. Backends that cannot tell return 1.
+		virtual float GetContentScale() const { return 1.0f; }
 
 		virtual VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const = 0;
 

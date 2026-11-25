@@ -17,6 +17,7 @@ namespace Raven
 	class VulkanTexture;
 	class AudioPlayer;
 	struct ManagedAsset;
+	struct SoundEvent;
 
 	// Host-owned lease. It must die before the renderer; it is never retained in ECS data.
 	class AssetLease
@@ -28,6 +29,8 @@ namespace Raven
 		RAVEN_API MeshHandle GetMesh() const;
 		RAVEN_API TextureHandle GetTextureHandle() const;
 		RAVEN_API const VulkanTexture& GetTexture() const;
+		// A sound-event asset's parsed contents; null for other kinds.
+		RAVEN_API const SoundEvent* GetSoundEvent() const noexcept;
 
 	private:
 		friend class AssetStore;

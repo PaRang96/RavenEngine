@@ -452,6 +452,8 @@ Keep open now: when `VulkanGpuScene` is next touched, separate per-world state f
 
 ## 7. M6C — game-facing services
 
+> **Decided 2026-11-24** in [GameServicesDesign.md](GameServicesDesign.md), which also adds FD-46 (sample game), FD-47 (movement and control) and FD-48 (determinism). The decisions differ from these proposals in places: FD-32 chose Jolt Physics (option c), FD-31 chose an engine-owned UI stack without Dear ImGui, and FD-34 moved interpolation into M6C and picking onto Jolt. The entries below are kept as the original proposals.
+
 ### FD-29 — Input bindings (owner priority)
 
 **Checked:** developer hotkeys (F1–F7, F5 reload) are read directly from `InputState` and cannot be consumed, so a game binding on F5 would also reload. Keys and mouse buttons are in two separate lists. There is no gamepad and no text input in the contract.

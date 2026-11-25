@@ -41,6 +41,11 @@ namespace Raven
 		RAVEN_API ECS::EntityRef GetRef(ECS::Entity entity) const noexcept;
 		// A fresh ID no entity of this scene uses; CreateEntity(name, id) claims it later.
 		RAVEN_API ECS::EntityRef NewRef();
+		// Restarts the ID sequence from a seed, so entities created at runtime get the same IDs in
+		// every run with that seed (docs/GameServicesDesign.md, FD-48). IDs already in use are skipped.
+		RAVEN_API void SeedIds(std::uint64_t seed) noexcept;
+		// The sequence's current state; SeedIds(state) continues it, for world snapshots.
+		RAVEN_API std::uint64_t GetIdState() const noexcept;
 		RAVEN_API ECS::Entity GetParent(ECS::Entity entity) const;
 		// Reparent/detach preserves local TRS. A null parent detaches to the scene root. Writes
 		// ParentComponent (FD-07), so it is rejected while a view iterates. Costs the moved subtree.

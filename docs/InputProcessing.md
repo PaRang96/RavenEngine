@@ -22,7 +22,7 @@ Use and destroy each window and input buffer on the event thread that created th
 3. Only the calling window publishes its pending state through `InputBuffer::Publish()`, then resets pending transient values. Held state and the cursor reference position are retained.
 4. `GetInputState()` returns a const reference to the last published snapshot. Other windows' polling and native callbacks cannot change it before this window's next `PollEvents()`.
 
-For example, if polling window A processes a key event for window B, B retains it in its pending buffer. B's next poll publishes Pressed/Released and KeyEvents. A subsequent B poll clears transient values if no new events arrived. Reading `GetInputState()` repeatedly does not consume events.
+For example, if polling window A processes a key event for window B, B retains it in its pending buffer. B's next poll publishes Pressed/Released and Events. A subsequent B poll clears transient values if no new events arrived. Reading `GetInputState()` repeatedly does not consume events.
 
 The snapshot boundary is window polling. Delivery across fixed simulation ticks and rendering ticks, or consumption by separate input contexts, belongs to another layer.
 
@@ -44,7 +44,7 @@ The M4 Windows input step adds three things to the shared contract in `Input.hpp
   - Windows refreshes it in each `PollEvents()` from the foreground window. Thread-local focus is not used: a window created behind another application is focused within its thread but receives no keys.
   - Losing focus still releases held keys and buttons through `HandleFocusLost()`.
   - Backends that do not report focus leave it `true`, so an unported backend never looks unfocused.
-- **Key repeat:** native auto-repeat becomes a `KeyTransition::Repeated` entry in `KeyEvents`, with the current modifiers.
+- **Key repeat:** native auto-repeat becomes an `InputTransition::Repeated` entry in `Events` (named `KeyTransition` and `KeyEvents` until M6C step C1), with the current modifiers.
   - `Pressed` still fires once per hold, so gameplay checks are unchanged.
   - `WasKeyRepeated(key)` is the helper for menus and text navigation.
   - Windows identifies repeats by `KF_REPEAT` (bit 30) on `WM_KEYDOWN`/`WM_SYSKEYDOWN`.
@@ -54,17 +54,48 @@ The M4 Windows input step adds three things to the shared contract in `Input.hpp
 
 Text input (typed characters) is not part of this step. It is added when a text field or console needs it, as a separate per-snapshot list kept apart from physical keys.
 
-### Planned: key bindings and key listening
+### Input mapping contexts, bindings and key listening (M6C step C1, 2026-11-25)
 
-The owner requires key bindings and key listening later (2026-11-23). Both build on this contract without changing it:
+Decided in [GameServicesDesign.md](GameServicesDesign.md#fd-29--input-mapping-contexts-and-bindings) (FD-29). It changes the `InputState` layout and `SystemContext`, so the host and every game module rebuild once.
 
-- **Bindings:** an action map stores `Key` or `MouseButton` values, plus modifiers. It reads `IsKeyDown`, `WasKeyPressed` and `KeyEvents` from the snapshot each frame or fixed step.
-- **Key listening** (for example, press a key to bind it): the first `Pressed` entry in `KeyEvents` (skipping `Repeated`), or the first `MouseButtonPresses` entry, in arrival order.
-- **Still needed:**
-  - Layout-aware display names for a `Key` (for example, the Q position shows "A" on AZERTY), through a platform hook such as `GetKeyNameTextW`.
-  - A decision on whether mouse buttons join one ordered event list with keys.
+**One ordered event list.** `InputState::Events` replaces `KeyEvents` and `MouseButtonPresses`. Each `InputEvent` carries an `InputCode` (device plus a stable `Key` or `MouseButton` value), the transition, the modifiers held after it, and for mouse buttons the pointer position and source framebuffer size. Mouse releases are recorded too, with the last cursor position. Key listening can therefore tell which input came first within one snapshot, and gamepad buttons can join later as another `InputDevice` without another layout change.
 
-  Both are decided when the binding layer is designed.
+**Mapping contexts** (`Raven/Input/InputMap.hpp`, host side in `Private/Input/InputRouter`):
+
+1. **Declaring.** A game declares contexts and actions in `RavenRegisterSystems`:
+   - `SystemTable::InputContext({ name, priority, blocking, active })`;
+   - `SystemTable::Action({ context, name, Button|Axis, bindings })`.
+
+   The host copies them. A duplicate, an invalid binding, an undeclared context or a reserved `Engine.` name rejects the module.
+2. **Routing order.** Each frame the router walks every published snapshot through, in order:
+   - the engine's **developer context** (development hosts only);
+   - **key listening**;
+   - the game's active contexts, from the highest priority down.
+3. **Consumption.**
+   - The first context with a matching binding takes the input.
+   - Within that context, the binding requiring the most held modifiers wins, so `Shift+F8` and `F8` can both be bound.
+   - A **blocking** context, such as a pause menu, also takes every input it does not bind.
+4. **Owned for the whole hold.** An input belongs to its context from press to release. Held state, axes (the sum of held bindings' `Scale`, clamped to [-1, 1]) and `Released` all come from that owner.
+5. **What the game sees.**
+   - `SystemContext::Actions` (`InputActions`) holds the combined `ActionSample`s of the active game contexts for the frame or fixed step.
+   - `SystemContext::Input` is the raw snapshot with every consumed input removed, so a game that still reads physical keys can no longer react to F5.
+   - Fixed steps accumulate pressed and released transitions for keys, mouse buttons and actions until a step consumes them. Pointer motion and scroll stay per frame.
+6. **Host state.** Context activation (`SetContextActive`, effective from the next frame), rebinding (`Rebind`, `ResetBindings`, `GetBindings`) and key listening (`BeginListening`, `TakeListened`) all live in the host. They survive module reloads: contexts and actions keep their state and rebindings by name. Saving bindings to the user-data folder comes with step C2.
+7. **Key listening** captures the next key or mouse-button press with its modifiers. A modifier key counts only when it is released without another press. The developer context stays above listening.
+8. **Developer context.** F3 (restart scene), F4 (next scene), F5 (reload game), F7 (render view) and F8 (play/pause) are actions of the `Engine.Developer` context instead of direct key reads. C4 added the physics iteration keys ([Physics.md](Physics.md#developer-keys)): Shift+F8 (restart play), F9 (one fixed step while paused) and F10 (collider view). C9 added the developer quick-save: Ctrl+F5 saves and Ctrl+F9 loads ([UserData.md](UserData.md#developer-quick-save)). The context is absent in player builds (`ApplicationConfig::DeveloperInput`).
+
+**Display names.** `GetDisplayName(chord)` names modifiers first ("Shift+F8"). Keys come from the platform hook `Platform::GetNativeKeyName`, with a shared English fallback. On Windows, the hook runs every scan code through the existing translation table and asks `GetKeyNameTextW` for the active layout's label, so the Q position reads "A" on AZERTY. macOS and Linux return the fallback until their M4 backends add native names.
+
+**Guard:** `Tests/InputMappingTests.cpp` (CPU) covers:
+- registration checks;
+- developer-first consumption;
+- the raw view filter;
+- axes;
+- blocking contexts;
+- modifier specificity;
+- key listening, including modifiers released alone;
+- rebindings across a module reload;
+- the mixed event order.
 
 ### Validation (2026-11-23)
 

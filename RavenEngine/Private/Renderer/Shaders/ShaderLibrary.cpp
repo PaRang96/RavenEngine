@@ -45,6 +45,10 @@ namespace Raven
 			{ "Texture.frag.hlsl", L"ps_6_0", L"PSMain" },
 			{ "Scatter.comp.hlsl", L"cs_6_0", L"CSMain" },
 			{ "Cull.comp.hlsl", L"cs_6_0", L"CSMain" },
+			{ "DebugLine.vert.hlsl", L"vs_6_0", L"VSMain" },
+			{ "DebugLine.frag.hlsl", L"ps_6_0", L"PSMain" },
+			{ "Overlay.vert.hlsl", L"vs_6_0", L"VSMain" },
+			{ "Overlay.frag.hlsl", L"ps_6_0", L"PSMain" },
 		} };
 
 		const ProgramDesc& Describe(ShaderProgram program)

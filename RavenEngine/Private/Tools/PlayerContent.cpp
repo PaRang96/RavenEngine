@@ -1,3 +1,4 @@
+#include "Audio/SoundEvent.hpp"
 #include "PlayerContent.hpp"
 
 #include "Assets/AssetPath.hpp"
@@ -45,6 +46,9 @@ namespace Raven
 			case AssetKind::Audio:
 				manifest << "audio " << asset.Id.ToString() << ' ' << path << '\n';
 				break;
+			case AssetKind::Sound:
+				manifest << "sound " << asset.Id.ToString() << ' ' << path << '\n';
+				break;
 			default:
 				throw std::invalid_argument("This kind cannot be included as a player asset: " + asset.Id.ToString());
 			}
@@ -69,7 +73,8 @@ namespace Raven
 		const std::pair<std::uint64_t, AssetKind> kinds[]{
 			{ ECS::Detail::HashText(AssetTypeTraits<TextureAsset>::Name), AssetKind::Texture },
 			{ ECS::Detail::HashText(AssetTypeTraits<MeshAsset>::Name), AssetKind::Mesh },
-			{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio } };
+			{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio },
+			{ ECS::Detail::HashText(AssetTypeTraits<SoundAsset>::Name), AssetKind::Sound } };
 
 		std::vector<SelectedScene> selected;
 		std::set<AssetId> selectedIds;
@@ -101,6 +106,17 @@ namespace Raven
 					}
 				}
 			selected.push_back({ &*found, std::move(bytes) });
+		}
+
+		// A sound event plays its clips, so the player needs them too.
+		for (const auto& id : std::set<AssetId>(requiredAssets))
+		{
+			const auto& record = project.Catalog.Get(id);
+			if (record.Kind != AssetKind::Sound)
+				continue;
+			const auto path = ResolveAssetPath(source, record.SourcePath);
+			for (const auto& clip : ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path).Clips)
+				require(clip, AssetKind::Audio);
 		}
 
 		std::ostringstream manifest;

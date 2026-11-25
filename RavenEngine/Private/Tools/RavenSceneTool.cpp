@@ -37,9 +37,23 @@ namespace
 		return value;
 	}
 
+	// A scene file, or a binary user-data file (docs/UserData.md): its 24-byte header (magic,
+	// version, reserved, payload checksum) wraps the same codec.
 	SceneFile ReadScene(const std::filesystem::path& path)
 	{
-		return SceneFile::Decode(Files::ReadBinary(path, SceneLimit));
+		const auto bytes = Files::ReadBinary(path, SceneLimit);
+		constexpr std::string_view userData = "RVNUDATA";
+		constexpr std::size_t header = 24;
+		if (bytes.size() >= header && std::memcmp(bytes.data(), userData.data(), userData.size()) == 0)
+		{
+			const auto payload = std::span(bytes).subspan(header);
+			std::uint64_t checksum = 0;
+			std::memcpy(&checksum, bytes.data() + 16, sizeof(checksum));
+			if (checksum != ECS::Detail::HashText(std::string_view(reinterpret_cast<const char*>(payload.data()), payload.size())))
+				throw std::runtime_error("User data checksum mismatch: the file is damaged");
+			return SceneFile::Decode(payload);
+		}
+		return SceneFile::Decode(bytes);
 	}
 
 	// Sets one Vec3 field of the labeled entity's TransformComponent.

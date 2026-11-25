@@ -3,6 +3,7 @@
 #include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/LightingComponent.hpp"
 #include "Raven/Components/MaterialComponent.hpp"
+#include "Raven/Components/PhysicsComponents.hpp"
 #include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
@@ -38,7 +39,10 @@ namespace Raven
 				registry.Register<ECS::WorldTransformComponent>() && registry.Register<ECS::ParentComponent>() &&
 				registry.Register<ECS::CameraComponent>() && registry.Register<ECS::ActiveCameraComponent>() &&
 				registry.Register<ECS::LightingComponent>() && registry.Register<ECS::MaterialComponent>() &&
-				registry.Register<ECS::SpriteComponent>() && registry.Register<ECS::StaticMeshComponent>();
+				registry.Register<ECS::SpriteComponent>() && registry.Register<ECS::StaticMeshComponent>() &&
+				registry.Register<ECS::InterpolateComponent>() && registry.Register<ECS::ColliderComponent>() &&
+				registry.Register<ECS::RigidBodyComponent>() &&
+				registry.Register<ECS::MoverComponent>();
 			if (!registered)
 				throw std::logic_error("An engine component conflicts with a registered layout");
 		}
@@ -279,6 +283,16 @@ namespace Raven
 	ECS::EntityRef Scene::NewRef()
 	{
 		return { NextId() };
+	}
+
+	void Scene::SeedIds(std::uint64_t seed) noexcept
+	{
+		m_IdState = seed;
+	}
+
+	std::uint64_t Scene::GetIdState() const noexcept
+	{
+		return m_IdState;
 	}
 
 	ECS::EntityRef Scene::GetRef(ECS::Entity entity) const noexcept

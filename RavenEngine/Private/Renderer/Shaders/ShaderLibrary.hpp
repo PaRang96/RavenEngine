@@ -18,7 +18,8 @@ namespace Raven
 	enum class ShaderProgram : std::uint8_t
 	{
 		LitVertex, LitFragment, UnlitFragment, NormalsFragment, WireframeFragment,
-		TexturedVertex, TexturedFragment, Scatter, Cull, Count
+		TexturedVertex, TexturedFragment, Scatter, Cull, DebugLineVertex, DebugLineFragment, OverlayVertex,
+		OverlayFragment, Count
 	};
 
 	// The SPIR-V of every program, loaded from the build and replaced by watched compiles.

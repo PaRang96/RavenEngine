@@ -41,6 +41,15 @@ namespace Raven::ECS
 		RAVEN_COMPONENT(Raven::ECS::ParentComponent, Parent);
 	};
 
+	// Opt-in render interpolation (docs/GameServicesDesign.md, FD-34). An entity moved in fixed steps
+	// and tagged with this is drawn between its last two fixed ticks, so motion stays smooth when
+	// frames outnumber steps. Game code sees the latest tick; picking matches what is drawn. Physics bodies and
+	// characters get it automatically.
+	struct InterpolateComponent : Component
+	{
+		RAVEN_COMPONENT(Raven::ECS::InterpolateComponent);
+	};
+
 	template<> inline constexpr bool HostOwned<WorldTransformComponent> = true;
 	template<> inline constexpr bool Transient<WorldTransformComponent> = true;
 	template<> inline constexpr bool HostOwned<ParentComponent> = true;

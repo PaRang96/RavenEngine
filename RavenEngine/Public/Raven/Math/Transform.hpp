@@ -198,4 +198,64 @@ namespace Raven
 		return result;
 	}
 
+	// Rotation as a unit quaternion (X, Y, Z vector part, W scalar). Transform stores XYZ Euler angles
+	// (R = Rz * Ry * Rx); quaternions are for blending them (render interpolation) and for physics.
+	struct Quat
+	{
+		float X = 0.0f;
+		float Y = 0.0f;
+		float Z = 0.0f;
+		float W = 1.0f;
+	};
+
+	inline Quat QuatFromEuler(Vec3 radians) noexcept
+	{
+		const float cx = std::cos(radians.X * 0.5f), sx = std::sin(radians.X * 0.5f);
+		const float cy = std::cos(radians.Y * 0.5f), sy = std::sin(radians.Y * 0.5f);
+		const float cz = std::cos(radians.Z * 0.5f), sz = std::sin(radians.Z * 0.5f);
+		return { sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz,
+			cx * cy * cz + sx * sy * sz };
+	}
+
+	// The XYZ Euler angles of `rotation` closest to `reference`, so a stored rotation that changes a
+	// little never jumps by a full turn or flips to its equivalent form (179° to -179°).
+	inline Vec3 EulerFromQuat(Quat q, Vec3 reference = {}) noexcept
+	{
+		constexpr float pi = 3.14159265358979323846f;
+		constexpr float turn = 2.0f * pi;
+		const float sinY = std::fmax(-1.0f, std::fmin(1.0f, 2.0f * (q.W * q.Y - q.Z * q.X)));
+		const Vec3 first{ std::atan2(2.0f * (q.W * q.X + q.Y * q.Z), 1.0f - 2.0f * (q.X * q.X + q.Y * q.Y)),
+			std::asin(sinY), std::atan2(2.0f * (q.W * q.Z + q.X * q.Y), 1.0f - 2.0f * (q.Y * q.Y + q.Z * q.Z)) };
+		const Vec3 second{ first.X + pi, pi - first.Y, first.Z + pi };
+		const auto nearest = [&](float angle, float target)
+		{
+			return angle + turn * std::round((target - angle) / turn);
+		};
+		const auto align = [&](Vec3 angles)
+		{
+			return Vec3{ nearest(angles.X, reference.X), nearest(angles.Y, reference.Y), nearest(angles.Z, reference.Z) };
+		};
+		const Vec3 a = align(first);
+		const Vec3 b = align(second);
+		const auto distance = [&](Vec3 angles)
+		{
+			const Vec3 d = angles - reference;
+			return d.X * d.X + d.Y * d.Y + d.Z * d.Z;
+		};
+		return distance(a) <= distance(b) ? a : b;
+	}
+
+	// Normalized linear blend along the shorter arc; accurate for the small steps between two fixed
+	// ticks.
+	inline Quat Nlerp(Quat from, Quat to, float t) noexcept
+	{
+		const float dot = from.X * to.X + from.Y * to.Y + from.Z * to.Z + from.W * to.W;
+		const float sign = dot < 0.0f ? -1.0f : 1.0f;
+		Quat result{ from.X + (sign * to.X - from.X) * t, from.Y + (sign * to.Y - from.Y) * t,
+			from.Z + (sign * to.Z - from.Z) * t, from.W + (sign * to.W - from.W) * t };
+		const float length = std::sqrt(result.X * result.X + result.Y * result.Y + result.Z * result.Z + result.W * result.W);
+		if (!(length > 0.0f))
+			return to;
+		return { result.X / length, result.Y / length, result.Z / length, result.W / length };
+	}
 }

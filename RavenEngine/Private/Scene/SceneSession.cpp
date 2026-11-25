@@ -134,6 +134,14 @@ namespace Raven
 		m_Impl->Publish(m_Impl->Prepare(m_Impl->Description, m_Impl->Project.GetCatalog()));
 	}
 
+	void SceneSession::RestoreSnapshot(std::span<const std::byte> bytes)
+	{
+		auto world = m_Impl->Build(bytes, m_Impl->Path, m_Impl->Project.GetCatalog());
+		if (!world)
+			throw std::runtime_error("Scene factory returned no world");
+		m_Impl->Active.swap(world);
+	}
+
 	bool SceneSession::Update(bool restart, bool next)
 	{
 		try

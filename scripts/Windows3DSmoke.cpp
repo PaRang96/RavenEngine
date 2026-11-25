@@ -1,7 +1,9 @@
 // The Windows 3D smoke test: the Samples game on the engine session, its scene and module reloads,
 // and the hierarchy edge cases (docs/DataModelDesign.md).
 
+#include "Core/FixedGameplayStep.hpp"
 #include "Core/GameSession.hpp"
+#include "Physics/PickWorld.hpp"
 #include "SampleComponents.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
@@ -36,6 +38,36 @@ namespace
 	using namespace Raven;
 	using namespace std::chrono_literals;
 	namespace fs = std::filesystem;
+
+	// The smoke drives systems without input; mapped actions are always idle.
+	// The smoke drives game systems without a physics world: every query misses.
+	class NoPhysics final : public PhysicsQueries
+	{
+	public:
+		std::optional<PhysicsHit> CastRay(Vec3, Vec3, float, std::uint32_t) const override { return std::nullopt; }
+		std::optional<PhysicsHit> CastShape(const PhysicsShape&, Vec3, float, std::uint32_t) const override
+		{
+			return std::nullopt;
+		}
+		std::span<const ECS::Entity> Overlap(const PhysicsShape&, std::uint32_t) const override { return {}; }
+		std::span<const ContactEvent> GetContacts() const noexcept override { return {}; }
+	};
+
+	class NoActions final : public InputActions
+	{
+	public:
+		ActionSample Get(ActionId action) const noexcept override { return { action }; }
+		void SetContextActive(std::string_view, bool) override {}
+		bool IsContextActive(std::string_view) const noexcept override { return false; }
+		void BeginListening() override {}
+		void CancelListening() noexcept override {}
+		bool IsListening() const noexcept override { return false; }
+		std::optional<InputChord> TakeListened() noexcept override { return std::nullopt; }
+		bool Rebind(std::string_view, std::string_view, std::size_t, const InputBinding&) override { return false; }
+		void ResetBindings(std::string_view) override {}
+		std::span<const InputBinding> GetBindings(std::string_view, std::string_view) const noexcept override { return {}; }
+		std::string GetDisplayName(const InputChord&) const override { return {}; }
+	};
 
 	void Check(bool condition, const char* message)
 	{
@@ -215,11 +247,32 @@ namespace
 		config.ContentRoot = content;
 		config.WatchContent = true;
 		GameSession session(renderer, instance, config);
+		PickWorld picking;
+		session.SetPicking(&picking);
 		const auto scene = [&] { return session.GetScene().GetAccess(); };
 		const InputState idle;
+		NoActions actions;
+		const NoPhysics physics;
+		FixedGameplayStep stream;
+		SimulationRandom random(1);
+		// The smoke test draws no UI; declarations go nowhere.
+		struct NoUi final : UI::Ui
+		{
+			void Begin(std::string_view, const UI::Style&) override {}
+			void BeginKey(std::string_view, std::uint64_t, const UI::Style&) override {}
+			void End() override {}
+			void Text(std::string_view, std::string_view, const UI::Style&) override {}
+			UI::Interaction Button(std::string_view, std::string_view, const UI::Style&) override { return {}; }
+			UI::Interaction Toggle(std::string_view, std::string_view, bool&, const UI::Style&) override { return {}; }
+			void Image(std::string_view, AssetRef<TextureAsset>, const UI::Style&) override {}
+			void Focus(std::string_view) override {}
+			bool IsCapturingInput() const noexcept override { return false; }
+			bool IsRightToLeft() const noexcept override { return false; }
+		} ui;
 		const auto tick = [&](std::span<const PickHit> picks = {})
 		{
-			SystemContext context{ scene(), idle, FrameTime{ 0, .1 }, picks, session.GetCommands(), session.GetServices() };
+			SystemContext context{ scene(), idle, actions, stream, FrameTime{ 0, .1 }, picks, physics,
+				session.GetCommands(), session.GetServices(), random, ui };
 			game.Update(context);
 			session.ApplyCommands();
 		};
@@ -254,7 +307,7 @@ namespace
 			const auto entity = scene().Find(id);
 			const auto origin = Position(scene().GetWorldTransform(ActiveCamera(scene())));
 			const auto target = Position(scene().GetWorldTransform(entity));
-			const auto hit = Pick(session.GetScene(), renderer, {origin, Normalize(target - origin)}, 100.0f);
+			const auto hit = session.Pick({ origin, Normalize(target - origin) }, 100.0f);
 			Check(hit && hit->Entity == entity, "A pickup could not be reached by mesh picking");
 			tick(std::array{ *hit, *hit });
 			Check(Read<Samples::PickupComponent>(scene(), entity).Collected, "Picked mesh did not collect");

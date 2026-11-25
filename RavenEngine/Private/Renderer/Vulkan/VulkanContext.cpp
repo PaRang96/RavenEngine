@@ -136,7 +136,8 @@ namespace Raven
 		std::optional<RenderedCameraView> DrawFrameWithView(const CameraViewBuilder& buildView,
 			RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
 			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
+			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {},
+			std::span<const DebugLineVertex> debugLines = {}, const OverlayFrame& overlay = {});
 
 		const std::uint64_t m_MeshContextId = AllocateMeshContextId();
 		const Window& m_Window;
@@ -176,6 +177,8 @@ namespace Raven
 		// GPU-driven lit meshes (docs/GpuDrivenDesign.md, G2/G5); the pass borrows it.
 		VulkanGpuScene m_GpuScene;
 		std::optional<VulkanSwapchain> m_Swapchain;
+		// The overlay's texture regions for the next frame, resolved from their handles.
+		std::vector<VulkanDrawQueue::TextureUpload> m_ResolvedUploads;
 		std::optional<VulkanClearPass> m_ClearPass;
 		VulkanDrawQueue m_DrawQueue;
 		std::uint64_t m_FramebufferRevision = 0;
@@ -268,7 +271,9 @@ namespace Raven
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
 				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
 				m_TextureDescriptors.GetBindlessLayout(), m_FrameLayout.Get(), m_GpuScene, GetLitShaders(),
-				m_Shaders.Get(ShaderProgram::TexturedVertex), m_Shaders.Get(ShaderProgram::TexturedFragment), m_Timeline,
+				m_Shaders.Get(ShaderProgram::TexturedVertex), m_Shaders.Get(ShaderProgram::TexturedFragment),
+				m_Shaders.Get(ShaderProgram::DebugLineVertex), m_Shaders.Get(ShaderProgram::DebugLineFragment),
+				m_Shaders.Get(ShaderProgram::OverlayVertex), m_Shaders.Get(ShaderProgram::OverlayFragment), m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
 			m_RetainedPipelines.reset();
 		}
@@ -363,6 +368,29 @@ namespace Raven
 			return result;
 		}
 
+		// Developer debug lines (FD-32 collider view): DebugLineVertex in, the frame uniform at set 0.
+		ShaderInterface DebugLineVertexInterface()
+		{
+			ShaderInterface result;
+			result.Inputs = { { 0, 3 }, { 1, 4 } };
+			result.Outputs = { { 0, 4 } };
+			result.Buffers.push_back({ 0, 0, 0, { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
+				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
+				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor) } });
+			return result;
+		}
+
+		// The shared 2D path: OverlayQuad instances in, no descriptor buffers (docs/UIDesign.md, section 4).
+		ShaderInterface OverlayVertexInterface()
+		{
+			ShaderInterface result;
+			result.Inputs = { { 0, 4 }, { 1, 4 }, { 2, 4 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 2, true } };
+			result.Outputs = { { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 4 }, { 7, 2, true } };
+			// The push constant is the framebuffer size.
+			result.PushConstantOffsets = { 0 };
+			return result;
+		}
+
 		ShaderInterface TexturedVertexInterface()
 		{
 			ShaderInterface result;
@@ -390,6 +418,18 @@ namespace Raven
 			case ShaderProgram::Cull:
 				CheckShaderInterface(words, VulkanGpuScene::GetCullInterface());
 				break;
+			case ShaderProgram::DebugLineVertex:
+				CheckShaderInterface(words, DebugLineVertexInterface());
+				break;
+			case ShaderProgram::DebugLineFragment:
+				// Its only input is the color the vertex stage writes; pipeline creation checks the match.
+				break;
+			case ShaderProgram::OverlayVertex:
+				CheckShaderInterface(words, OverlayVertexInterface());
+				break;
+			case ShaderProgram::OverlayFragment:
+				// It reads what the vertex stage writes and the bindless array; pipeline creation checks both.
+				break;
 			default:
 				// Every lit view's fragment shader uses the material interface.
 				CheckFragmentShaderInterface(words, FragmentShaderKind::Lit);
@@ -413,6 +453,8 @@ namespace Raven
 		// publish in the same frame and a vertex/fragment pair never mixes versions (H2).
 		std::vector<ShaderLibrary::Candidate> textured;
 		std::vector<ShaderLibrary::Candidate> compute;
+		std::vector<ShaderLibrary::Candidate> debugLines;
+		std::vector<ShaderLibrary::Candidate> overlay;
 		std::vector<ShaderLibrary::Candidate> lit;
 		for (auto& candidate : m_Shaders.TakeReady())
 		{
@@ -420,6 +462,12 @@ namespace Raven
 				lit.push_back(std::move(candidate));
 			else if (candidate.Program == ShaderProgram::Scatter || candidate.Program == ShaderProgram::Cull)
 				compute.push_back(std::move(candidate));
+			else if (candidate.Program == ShaderProgram::DebugLineVertex ||
+				candidate.Program == ShaderProgram::DebugLineFragment)
+				debugLines.push_back(std::move(candidate));
+			else if (candidate.Program == ShaderProgram::OverlayVertex ||
+				candidate.Program == ShaderProgram::OverlayFragment)
+				overlay.push_back(std::move(candidate));
 			else
 				textured.push_back(std::move(candidate));
 		}
@@ -453,6 +501,16 @@ namespace Raven
 		{
 			m_GpuScene.ReplacePipelines(WordsOf(m_Shaders, compute, ShaderProgram::Scatter),
 				WordsOf(m_Shaders, compute, ShaderProgram::Cull));
+		});
+		publish("Debug line", debugLines, [&]
+		{
+			m_ClearPass->ReplaceDebugLinePipeline(WordsOf(m_Shaders, debugLines, ShaderProgram::DebugLineVertex),
+				WordsOf(m_Shaders, debugLines, ShaderProgram::DebugLineFragment));
+		});
+		publish("Overlay", overlay, [&]
+		{
+			m_ClearPass->ReplaceOverlayPipeline(WordsOf(m_Shaders, overlay, ShaderProgram::OverlayVertex),
+				WordsOf(m_Shaders, overlay, ShaderProgram::OverlayFragment));
 		});
 		Merge(m_LitQueued, std::move(lit));
 		UpdateLitBuild();
@@ -616,7 +674,8 @@ namespace Raven
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::Impl::DrawFrameWithView(
 		const CameraViewBuilder& buildView, RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
 		std::span<const VulkanTexturedDraw> texturedDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
+		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting,
+		std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
 	{
 		const auto frameStart = std::chrono::steady_clock::now();
 		auto* metrics = GetFrameMetrics();
@@ -643,6 +702,11 @@ namespace Raven
 
 		// Visibility and ordering complete before acquisition or command recording.
 		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, texturedDraws, transparentDraws, lighting);
+		m_DrawQueue.DebugLines = debugLines;
+		m_DrawQueue.Overlay = overlay.Quads;
+		// Resolved by the public DrawFrame, which may read texture handles.
+		m_DrawQueue.Uploads.swap(m_ResolvedUploads);
+		m_ResolvedUploads.clear();
 		// Lit meshes: plan the GPU scene's upload; culling happens on the GPU (G5).
 		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh);
 		if (metrics)
@@ -893,7 +957,8 @@ namespace Raven
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::DrawFrame(
 		const CameraViewBuilder& buildView, RenderWorld* world,
 			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
+			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting,
+			std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
 	{
 		// Handle resolution belongs to the context, which MeshHandle befriends.
 		const VulkanGpuScene::MeshResolver resolveMesh = [this](MeshHandle handle) -> const VulkanMeshData*
@@ -901,7 +966,34 @@ namespace Raven
 			const auto* mesh = ResolveMesh(handle);
 			return mesh ? mesh->GetData().get() : nullptr;
 		};
-		return m_Impl->DrawFrameWithView(buildView, world, resolveMesh, texturedDraws, transparentDraws, lighting);
+		m_Impl->m_ResolvedUploads.clear();
+		for (const auto& upload : overlay.Uploads)
+		{
+			const auto* texture = ResolveTexture(upload.Texture);
+			const auto extent = texture ? texture->GetExtent() : VkExtent2D{};
+			if (!texture || upload.Width == 0 || upload.Height == 0 || upload.X + upload.Width > extent.width ||
+				upload.Y + upload.Height > extent.height ||
+				upload.Pixels.size() != std::size_t{ upload.Width } * upload.Height * 4)
+				throw std::invalid_argument("Overlay texture upload does not fit its texture");
+			m_Impl->m_ResolvedUploads.push_back({ texture->GetImage(), upload.X, upload.Y, upload.Width, upload.Height,
+				upload.Pixels });
+		}
+		return m_Impl->DrawFrameWithView(buildView, world, resolveMesh, texturedDraws, transparentDraws, lighting,
+			debugLines, overlay);
+	}
+
+	std::uint32_t VulkanContext::GetBindlessIndex(TextureHandle texture) const noexcept
+	{
+		const auto* resolved = ResolveTexture(texture);
+		return resolved ? resolved->GetBindlessIndex() : 0;
+	}
+
+	std::pair<std::uint32_t, std::uint32_t> VulkanContext::GetDrawableSize() const noexcept
+	{
+		if (!m_Impl->m_Swapchain)
+			return { 0, 0 };
+		const auto extent = m_Impl->m_Swapchain->GetExtent();
+		return { extent.width, extent.height };
 	}
 
 	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanTexturedDraw> opaqueDraws,

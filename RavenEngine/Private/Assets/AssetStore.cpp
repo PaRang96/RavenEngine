@@ -26,6 +26,18 @@ namespace Raven
 			return Files::ReadBinary(path, 64 * 1024 * 1024);
 		}
 
+		const char* KindName(AssetKind kind) noexcept
+		{
+			switch (kind)
+			{
+			case AssetKind::Mesh: return "FBX";
+			case AssetKind::Texture: return "PNG";
+			case AssetKind::Audio: return "audio";
+			case AssetKind::Sound: return "sound event";
+			default: return "asset";
+			}
+		}
+
 		DecodedAsset DecodeAsset(std::span<const std::byte> bytes, const std::filesystem::path& path)
 		{
 			DecodedAsset result;
@@ -39,8 +51,10 @@ namespace Raven
 				result.Data = DecodeFbxMesh(bytes, path);
 			else if (extension == ".png")
 				result.Data = DecodePngSource(bytes, path);
-			else if (extension == ".wav")
-				result.Data = DecodeWav(bytes, path);
+			else if (IsAudioExtension(path))
+				result.Data = DecodeAudio(bytes, path);
+			else if (extension == ".ravensound")
+				result.Data = ParseSoundEvent(bytes, path);
 			else
 				throw std::invalid_argument("Unsupported managed asset extension: " + extension);
 			return result;
@@ -68,6 +82,7 @@ namespace Raven
 		if (!Texture.IsNull())
 			Renderer.SwapTextureContents(Texture, candidate.Texture);
 		Clip.swap(candidate.Clip);
+		Sound.swap(candidate.Sound);
 		std::swap(Record, candidate.Record);
 		std::swap(ColorSpace, candidate.ColorSpace);
 		Source.swap(candidate.Source);
@@ -103,14 +118,19 @@ namespace Raven
 			}
 			else if (record.Kind == AssetKind::Audio)
 				result->Clip = std::make_shared<const PcmClip>(std::move(std::get<PcmClip>(decoded->Data)));
+			else if (record.Kind == AssetKind::Sound)
+				result->Sound = std::make_shared<const SoundEvent>(std::move(std::get<SoundEvent>(decoded->Data)));
 			else
 				throw std::invalid_argument("Asset kind cannot be acquired by a scene");
 			result->Bytes = std::move(decoded->Bytes);
-			if ((record.Kind == AssetKind::Mesh && WatchMeshes) || (record.Kind == AssetKind::Texture && WatchTextures))
+			// Content watching covers textures, and with them audio clips and sound events (C8).
+			const bool sound = record.Kind == AssetKind::Audio || record.Kind == AssetKind::Sound;
+			if ((record.Kind == AssetKind::Mesh && WatchMeshes) || ((record.Kind == AssetKind::Texture || sound) && WatchTextures))
 			{
 				const bool mesh = record.Kind == AssetKind::Mesh;
-				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, mesh ? "FBX" : "PNG",
-					mesh ? ImporterVersion::Fbx : ImporterVersion::Png, ReadAsset, DecodeAsset, result->Bytes);
+				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, KindName(record.Kind),
+					mesh ? ImporterVersion::Fbx : sound ? ImporterVersion::Audio : ImporterVersion::Png, ReadAsset, DecodeAsset,
+					result->Bytes);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
 			}
 			return result;
@@ -236,7 +256,7 @@ namespace Raven
 				result.Mesh |= current->Record.Kind == AssetKind::Mesh;
 				result.Texture |= current->Record.Kind == AssetKind::Texture;
 				// The H7 summary: trigger, import and publish times.
-				Log(LogLevel::Info, std::string(current->Record.Kind == AssetKind::Mesh ? "Replaced FBX " : "Replaced PNG ") +
+				Log(LogLevel::Info, std::string("Replaced ") + KindName(current->Record.Kind) + " " +
 					PathToUtf8(current->Source) + "; " + summary);
 			}
 			catch (const std::exception& error)
@@ -267,6 +287,11 @@ namespace Raven
 	}
 
 	AssetId AssetLease::GetId() const noexcept { return m_Asset ? m_Asset->Record.Id : AssetId{}; }
+	const SoundEvent* AssetLease::GetSoundEvent() const noexcept
+	{
+		return m_Asset ? m_Asset->Sound.get() : nullptr;
+	}
+
 	AssetKind AssetLease::GetKind() const noexcept { return m_Asset ? m_Asset->Record.Kind : AssetKind::Unknown; }
 
 	MeshHandle AssetLease::GetMesh() const

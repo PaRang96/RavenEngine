@@ -2,7 +2,8 @@
 
 #include "Assets/FbxMesh.hpp"
 #include "Assets/SettledFileWatch.hpp"
-#include "Platform/AudioBackend.hpp"
+#include "Audio/AudioClip.hpp"
+#include "Audio/SoundEvent.hpp"
 #include "Raven/Assets/AssetRecord.hpp"
 #include "Raven/Assets/Image.hpp"
 #include "Raven/Renderer/MeshHandle.hpp"
@@ -19,7 +20,7 @@ namespace Raven
 	struct DecodedAsset
 	{
 		std::vector<std::byte> Bytes;
-		std::variant<FbxMesh, ImageData, PcmClip> Data;
+		std::variant<FbxMesh, ImageData, PcmClip, SoundEvent> Data;
 	};
 
 	struct ManagedAsset
@@ -37,6 +38,7 @@ namespace Raven
 		MeshHandle Mesh;
 		TextureHandle Texture;
 		std::shared_ptr<const PcmClip> Clip;
+		std::shared_ptr<const SoundEvent> Sound;
 		std::unique_ptr<SettledFileWatch<DecodedAsset>> Watch;
 	};
 }

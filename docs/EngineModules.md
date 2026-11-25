@@ -24,9 +24,13 @@ Games/<Name>/
     Tools/             optional host-built tools
 ```
 
-- **Samples** holds the 3D samples (Perspective, Gallery, Assemblies, Puzzle, Collection) and the benchmark scenes. It flies freely by default and runs the orbit demo with `--orbit`. `SamplesTool create-puzzle|create-collection|create-benchmark` regenerates the tool-made scenes.
+- **Samples** holds the 3D samples (Perspective, Gallery, Assemblies, Puzzle, Collection, Physics) and the benchmark scenes. It flies freely by default and runs the orbit demo with `--orbit`. `SamplesTool create-puzzle|create-collection|create-physics|create-benchmark` regenerates the tool-made scenes.
 - **Courtyard** holds the 2D Courtyard and Orthographic levels: WASD, arrows/wheel/PageUp/PageDown/Home for the camera, F1 order, F2 camera.
-- The engine host owns the developer keys: F3 restart scene, F4 next scene, F5 reload the module, F7 render view, F8 pause.
+- **Arena** is the M6C sample game (FD-46): WASD or arrows steer the craft, Space jumps, Q/E turn the camera, Esc or P pauses. Collect the cyan cells and avoid the red drones. `--swarm` fills the arena with drones for measurements. `ArenaTool create-arena` regenerates its scene.
+- The engine host owns the developer keys:
+  - F3 restart scene, F4 next scene, F5 reload the module, F7 render view, F8 pause;
+  - Shift+F8 restart play, F9 one step while paused, F10 collider view;
+  - Ctrl+F5 quick-save, Ctrl+F9 quick-load.
 - Any other `--name` launch option is the game's, through `GameServices::HasOption("name")`.
 
 **Writing game code.**
@@ -289,9 +293,16 @@ Application processes frame controls once and renders once per drawable frame. T
 
 GameBindings passes nullable camera and player handles by value. The DLL supplies normalized player displacement in GameUpdateResult, and the level resolves it with ResolveMovementXZ before writing the existing Transform once per moving tick. The swept XZ box stops at the first wall and slides with any remaining tangent motion. Y, rotation, and visual scale are independent of collision. The beacon and courier use trigger overlap after player and courier movement each tick. Edge contact counts, and a courier hit takes precedence over reaching the beacon. The level returns an outcome only on the tick it finishes, which lets the host emit one cue.
 
-Further collision and physics work is deferred. See the [roadmap deferral](../ROADMAP.md#deferred-collision-and-physics).
+3D collision, physics and movers run on Jolt since M6C ([Physics.md](Physics.md)). General-purpose 2D collision stays deferred; see the [roadmap](../ROADMAP.md#collision-and-physics).
 
-AudioPlayer caches mono or stereo 16-bit PCM WAV clips at 8–96 kHz by asset ID. The sample owns the service, catalog, and attempt cues across level replacements and DLL reloads. Its private XAudio2 backend owns one source voice at a time and keeps sample data alive until the voice is destroyed. A successful F3 or F4 stops the outgoing cue. Compatible DLL reload retains the current cue and attempt state. Audio failure logs a warning and leaves the attempt playable. Native playback is implemented for Windows.
+AudioPlayer caches WAV, FLAC, MP3 and Ogg Vorbis clips by asset ID. At load it converts them to the mixer format: float stereo at 48 kHz. The sample owns the service, catalog, and attempt cues across level replacements and DLL reloads.
+- **Playback path:** the engine mixer over the private `AudioDevice` interface, whose backend is miniaudio ([UIAudioLibraries.md](UIAudioLibraries.md#hiding-the-device-layer-owner-question-2026-11-25), [record](GameServicesDesign.md#c8-first-part--the-audio-device-layer-2026-11-25)).
+- **Voices:** up to 64 mixed at once, with concurrency groups, virtual voices, spatial panning and six buses ([record](GameServicesDesign.md#c8-second-part--the-engine-mixer-2026-11-25)). Cues overlap instead of replacing each other. The mixer keeps each clip alive until the audio thread releases it.
+- **The output** opens in the background when the session starts.
+- **F3 and F4:** a successful F3 or F4 stops the outgoing cue.
+- **DLL reload:** a compatible reload retains the current cue and attempt state.
+- **Failures:** an audio failure logs a warning and leaves the attempt playable. With no output device, the mixer renders silence and retries the device every 2 s.
+- **Platforms:** playback is verified on Windows. macOS and Linux use the same backend, which is not verified there.
 
 To move the goal while running, change the beacon position in staged Content/Levels/Courtyard.ravenlevel beside the executable and press F3. For a quick test, move it to X = -1.7 and Z = -2.4, then walk right from spawn. Move the platform sprite to move its wall, or change its solid record to resize the collider. A negative solid extent rejects the replacement and the current attempt stays playable. Keep permanent edits in the repository's Content/Levels directory.
 

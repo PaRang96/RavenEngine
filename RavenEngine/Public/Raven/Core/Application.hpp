@@ -27,6 +27,13 @@ namespace Raven
 		// Development: reload the project, scenes, meshes and textures, and every engine shader.
 		bool WatchContent = false;
 		bool WatchShaders = false;
+		// Per-user data for this game (docs/GameServicesDesign.md, FD-33). Empty: no user data.
+		std::filesystem::path UserDataRoot;
+		// The simulation seed (docs/GameServicesDesign.md, FD-48): the random numbers and runtime entity
+		// IDs of every scene start. Empty draws one from the OS per session.
+		std::optional<std::uint64_t> SimulationSeed;
+		// The engine's developer input context (F3, F4, F5, F7, F8 by default). Off in player builds.
+		bool DeveloperInput = true;
 		std::optional<AssetId> StartScene;
 		// `--name` options the engine does not use itself, for GameServices::HasOption.
 		std::vector<std::string> GameOptions;

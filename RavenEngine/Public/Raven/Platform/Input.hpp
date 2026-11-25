@@ -82,21 +82,91 @@ namespace Raven
 		bool Released = false;
 	};
 
-	enum class KeyTransition : std::uint8_t
+	constexpr Modifier operator&(Modifier left, Modifier right)
+	{
+		return static_cast<Modifier>(
+			static_cast<std::uint8_t>(left) &
+			static_cast<std::uint8_t>(right));
+	}
+
+	constexpr Modifier operator~(Modifier value)
+	{
+		return static_cast<Modifier>(~static_cast<std::uint8_t>(value) & 0x0F);
+	}
+
+	// The device a physical input belongs to. Gamepads join later without a layout change
+	// (docs/GameServicesDesign.md, FD-29).
+	enum class InputDevice : std::uint8_t
+	{
+		Keyboard,
+		Mouse,
+	};
+
+	// One physical input: a Key or a MouseButton value on its device. Values are stable,
+	// so saved bindings may store them.
+	struct InputCode
+	{
+		InputDevice Device = InputDevice::Keyboard;
+		std::uint16_t Value = 0;
+
+		static constexpr InputCode FromKey(Key key) noexcept
+		{
+			return { InputDevice::Keyboard, static_cast<std::uint16_t>(key) };
+		}
+		static constexpr InputCode FromMouse(MouseButton button) noexcept
+		{
+			return { InputDevice::Mouse, static_cast<std::uint16_t>(button) };
+		}
+		constexpr bool IsValid() const noexcept
+		{
+			if (Device == InputDevice::Keyboard)
+				return Value != 0 && Value < 256;
+			return Device == InputDevice::Mouse && Value < static_cast<std::uint16_t>(MouseButton::Count);
+		}
+		constexpr Key GetKey() const noexcept
+		{
+			return Device == InputDevice::Keyboard ? static_cast<Key>(Value) : Key::Unknown;
+		}
+		constexpr bool operator==(const InputCode&) const noexcept = default;
+	};
+
+	// The modifier a key sets while it is down, or None.
+	constexpr Modifier GetModifierOfKey(Key key) noexcept
+	{
+		switch (key)
+		{
+		case Key::LeftShift: case Key::RightShift: return Modifier::Shift;
+		case Key::LeftControl: case Key::RightControl: return Modifier::Control;
+		case Key::LeftAlt: case Key::RightAlt: return Modifier::Alt;
+		case Key::LeftSuper: case Key::RightSuper: return Modifier::Super;
+		default: return Modifier::None;
+		}
+	}
+
+	enum class InputTransition : std::uint8_t
 	{
 		Pressed,
 		Released,
-		// Native auto-repeat while the key stays down. Pressed fires once per hold.
+		// Native auto-repeat while a key stays down. Pressed fires once per hold.
 		Repeated
 	};
 
-	struct KeyEvent
+	// One transition of a key or mouse button, in arrival order across devices.
+	struct InputEvent
 	{
-		Key Code = Key::Unknown;
-		KeyTransition Transition = KeyTransition::Pressed;
+		InputCode Code{};
+		InputTransition Transition = InputTransition::Pressed;
+		// Modifiers held after the transition was applied.
 		Modifier Modifiers = Modifier::None;
+		// Mouse buttons: the pointer position in pixels and the size of the source framebuffer.
+		// Zero for keys; a release reports the last cursor position and no framebuffer size.
+		std::int32_t X = 0;
+		std::int32_t Y = 0;
+		std::uint32_t FramebufferWidth = 0;
+		std::uint32_t FramebufferHeight = 0;
 	};
 
+	// What a platform backend reports for a mouse-button press.
 	struct MouseButtonPress
 	{
 		MouseButton Button;
@@ -116,9 +186,8 @@ namespace Raven
 		std::array<ButtonState, KeyCount> Keys{};
 		std::array<ButtonState, MouseButtonCount> MouseButtons{};
 
-		// Key transitions in arrival order, including repeats.
-		std::vector<KeyEvent> KeyEvents{};
-		std::vector<MouseButtonPress> MouseButtonPresses{};
+		// Key and mouse-button transitions in arrival order, including key repeats.
+		std::vector<InputEvent> Events{};
 
 		// Whether the window has keyboard focus. Persistent, not cleared per snapshot.
 		// Backends that do not report focus leave it true.
@@ -187,11 +256,8 @@ namespace Raven
 				return;
 
 			// Capture modifiers after applying this transition.
-			KeyEvents.push_back({
-				key,
-				down ? KeyTransition::Pressed : KeyTransition::Released,
-				GetModifiers()
-			});
+			Events.push_back({ InputCode::FromKey(key),
+				down ? InputTransition::Pressed : InputTransition::Released, GetModifiers() });
 		}
 
 		// A native auto-repeat. A key that is not down yet (for example, held while
@@ -207,7 +273,7 @@ namespace Raven
 				SetKeyDown(key, true);
 				return;
 			}
-			KeyEvents.push_back({ key, KeyTransition::Repeated, GetModifiers() });
+			Events.push_back({ InputCode::FromKey(key), InputTransition::Repeated, GetModifiers() });
 		}
 
 		void ReleaseAllKeys()
@@ -217,11 +283,7 @@ namespace Raven
 				if (!UpdateButtonState(Keys[i], false))
 					continue;
 
-				KeyEvents.push_back({
-					static_cast<Key>(i),
-					KeyTransition::Released,
-					Modifier::None
-				});
+				Events.push_back({ InputCode::FromKey(static_cast<Key>(i)), InputTransition::Released, Modifier::None });
 			}
 		}
 
@@ -239,9 +301,9 @@ namespace Raven
 		// WasKeyPressed and IsKeyDown.
 		bool WasKeyRepeated(Key key) const
 		{
-			for (const KeyEvent& event : KeyEvents)
+			for (const InputEvent& event : Events)
 			{
-				if (event.Code == key && event.Transition == KeyTransition::Repeated)
+				if (event.Code == InputCode::FromKey(key) && event.Transition == InputTransition::Repeated)
 					return true;
 			}
 			return false;
@@ -249,10 +311,10 @@ namespace Raven
 
 		bool WasKeyPressed(Key key, Modifier exactModifiers) const
 		{
-			for (const KeyEvent& event : KeyEvents)
+			for (const InputEvent& event : Events)
 			{
-				if (event.Code == key &&
-					event.Transition == KeyTransition::Pressed &&
+				if (event.Code == InputCode::FromKey(key) &&
+					event.Transition == InputTransition::Pressed &&
 					event.Modifiers == exactModifiers)
 				{
 					return true;
@@ -261,21 +323,31 @@ namespace Raven
 			return false;
 		}
 
+		// A press without a position, or a release. Both record the last cursor position.
 		void SetMouseButtonDown(MouseButton button, bool down)
 		{
 			const auto index = static_cast<std::size_t>(button);
-			if (index < MouseButtons.size())
-				UpdateButtonState(MouseButtons[index], down);
+			if (index >= MouseButtons.size() || !UpdateButtonState(MouseButtons[index], down))
+				return;
+			Events.push_back({ InputCode::FromMouse(button),
+				down ? InputTransition::Pressed : InputTransition::Released, GetModifiers(),
+				HasCursorPosition ? CursorX : 0, HasCursorPosition ? CursorY : 0 });
 		}
 
 		void PressMouseButton(MouseButtonPress press)
 		{
 			const auto index = static_cast<std::size_t>(press.Button);
-			if (index >= MouseButtons.size() || MouseButtons[index].Down)
+			if (index >= MouseButtons.size() || !UpdateButtonState(MouseButtons[index], true))
 				return;
+			Events.push_back({ InputCode::FromMouse(press.Button), InputTransition::Pressed, GetModifiers(),
+				press.X, press.Y, press.FramebufferWidth, press.FramebufferHeight });
+		}
 
-			MouseButtonPresses.push_back(press);
-			SetMouseButtonDown(press.Button, true);
+		ButtonState GetState(InputCode code) const
+		{
+			if (code.Device == InputDevice::Mouse)
+				return GetMouseButtonState(static_cast<MouseButton>(code.Value));
+			return GetKeyState(code.GetKey());
 		}
 
 		bool HasMouseButtonDown() const
@@ -290,8 +362,12 @@ namespace Raven
 
 		void ReleaseAllMouseButtons()
 		{
-			for (ButtonState& state : MouseButtons)
-				UpdateButtonState(state, false);
+			for (std::size_t i = 0; i < MouseButtons.size(); ++i)
+			{
+				if (UpdateButtonState(MouseButtons[i], false))
+					Events.push_back({ InputCode::FromMouse(static_cast<MouseButton>(i)),
+						InputTransition::Released, Modifier::None });
+			}
 		}
 
 		void SetCursorPosition(std::int32_t x, std::int32_t y)
@@ -337,8 +413,7 @@ namespace Raven
 				state.Released = false;
 			}
 
-			KeyEvents.clear();
-			MouseButtonPresses.clear();
+			Events.clear();
 			CursorDeltaX = 0;
 			CursorDeltaY = 0;
 			ScrollX = 0.0f;

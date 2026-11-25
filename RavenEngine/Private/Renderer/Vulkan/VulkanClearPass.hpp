@@ -9,6 +9,8 @@
 #include "Renderer/Vulkan/VulkanDepthAttachment.hpp"
 #include "Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
+#include "Renderer/Vulkan/VulkanDebugLinePipeline.hpp"
+#include "Renderer/Vulkan/VulkanOverlayPipeline.hpp"
 #include "Renderer/Vulkan/VulkanTexturePipeline.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
@@ -76,6 +78,8 @@ namespace Raven
 		{
 			std::shared_ptr<const LitPipelines> Lit;
 			std::shared_ptr<const TexturedPipelines> Textured;
+			std::shared_ptr<const VulkanDebugLinePipeline> DebugLines;
+			std::shared_ptr<const VulkanOverlayPipeline> Overlay;
 			VkFormat ColorFormat = VK_FORMAT_UNDEFINED;
 			VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
 		};
@@ -93,6 +97,8 @@ namespace Raven
 			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
 			VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene, const LitShaders& lit,
 			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+			std::span<const std::uint32_t> debugLineVertex, std::span<const std::uint32_t> debugLineFragment,
+			std::span<const std::uint32_t> overlayVertex, std::span<const std::uint32_t> overlayFragment,
 			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
 		LitPipelineFactory GetLitPipelineFactory() const;
 		Pipelines GetPipelines() const;
@@ -100,6 +106,8 @@ namespace Raven
 		void UseLitPipelines(std::shared_ptr<const LitPipelines> pipelines) noexcept;
 		bool ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
 			std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish = {});
+		void ReplaceDebugLinePipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
+		void ReplaceOverlayPipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
 		~VulkanClearPass();
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
@@ -126,10 +134,16 @@ namespace Raven
 			std::int64_t TimestampFrame = 0;
 		};
 
-		// Returns the ring offset of the textured instances.
-		VkDeviceSize Upload(Frame& frame, const VulkanDrawQueue& queue);
+		struct RingOffsets
+		{
+			VkDeviceSize Textured = 0;
+			VkDeviceSize DebugLines = 0;
+			VkDeviceSize Overlay = 0;
+			std::vector<VkDeviceSize> Uploads;
+		};
+		RingOffsets Upload(Frame& frame, const VulkanDrawQueue& queue);
 		void Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-			const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps,
+			const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, const RingOffsets& offsets, bool timestamps,
 			RenderView view);
 		void PrepareTimestampQueries();
 		void ReadTimestamps(Frame& frame, FrameMetrics& metrics);
@@ -149,6 +163,8 @@ namespace Raven
 		// Owned by the context; outlives the pass.
 		VulkanGpuScene& m_Scene;
 		std::shared_ptr<const TexturedPipelines> m_TexturedPipelines;
+		std::shared_ptr<const VulkanDebugLinePipeline> m_DebugLines;
+		std::shared_ptr<const VulkanOverlayPipeline> m_Overlay;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
 		VkDescriptorPool m_FramePool = VK_NULL_HANDLE;
 		VkExtent2D m_Extent{};

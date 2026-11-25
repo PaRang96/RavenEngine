@@ -107,6 +107,17 @@ namespace Samples
 		RAVEN_COMPONENT(Samples::DemoComponent, WinSound, OrbitAnimation, Animate, Angle);
 	};
 
+	// A mover that walks around a circle in the Physics scene (docs/GameServicesDesign.md, FD-47).
+	struct PatrolComponent : Raven::ECS::Component
+	{
+		Raven::Vec3 Center{};
+		float Radius = 3.0f;
+		// Meters per second along the circle; negative walks the other way.
+		float Speed = 3.0f;
+		float Angle = 0.0f;
+		RAVEN_COMPONENT(Samples::PatrolComponent, Center, Radius, Speed, Angle);
+	};
+
 	// The transparent sprite whose draw order O or F1 toggles.
 	struct OrderToggleComponent : Raven::ECS::Component
 	{

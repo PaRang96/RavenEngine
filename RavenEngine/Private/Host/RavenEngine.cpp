@@ -97,7 +97,7 @@ namespace
 		return true;
 	}
 
-	constexpr std::string_view Usage = "Usage: RavenEngine [--game <Name>] [--scene <UUID>] [--no-watch] "
+	constexpr std::string_view Usage = "Usage: RavenEngine [--game <Name>] [--scene <UUID>] [--no-watch] [--seed <n>] "
 		"[--present fifo|mailbox|immediate] [--max-fps <rate>] [--gpu discrete|integrated] "
 		"[--borderless <x> <y> <width> <height>] [--<game option>...]";
 }
@@ -131,6 +131,13 @@ int main(int argc, char* argv[])
 			}
 			else if (option == "--no-watch")
 				noWatch = true;
+			// The simulation seed (docs/GameServicesDesign.md, FD-48), for reproducing a run.
+			else if (option == "--seed")
+			{
+				if (++index == argc)
+					throw std::invalid_argument("--seed expects a whole number");
+				config.SimulationSeed = static_cast<std::uint64_t>(ParseInteger(argv[index], "--seed"));
+			}
 			// Anything else is the game's: `--orbit` becomes the option "orbit".
 			else if (option.starts_with("--") && option.size() > 2)
 				config.GameOptions.emplace_back(option.substr(2));
@@ -155,6 +162,16 @@ int main(int argc, char* argv[])
 		config.WatchGameModule = !noWatch;
 		config.WatchContent = develop;
 		config.WatchShaders = develop;
+		config.DeveloperInput = !playerBuild;
+		// Players write to the OS per-user folder; development keeps its data in the ignored build tree,
+		// so test runs never touch a player's profile (docs/GameServicesDesign.md, FD-33).
+		if (playerBuild)
+			config.UserDataRoot = Paths::GetUserDataDirectory() / "RavenEngine" / game;
+		else if (GameBuild::Enabled)
+			config.UserDataRoot = std::filesystem::path(GameBuild::Root) / "out" / "User" / game;
+		else
+			config.UserDataRoot = executableDirectory / "User" / game;
+		config.UserDataRoot = config.UserDataRoot.lexically_normal();
 		config.Renderer = presentation.Renderer;
 		config.MaxFrameRate = presentation.MaxFrameRate;
 
@@ -174,7 +191,8 @@ int main(int argc, char* argv[])
 			config.FrameTracePath = trace;
 		Log(LogLevel::Info, "Game " + game + (develop ? ": edit Games/" + game + "/Source, the module rebuilds on save" :
 			(noWatch ? ": watching disabled, using staged content" : "")));
-		Log(LogLevel::Info, "Engine keys: F3 restart scene, F4 next scene, F5 reload game module, F7 render view, F8 pause");
+		Log(LogLevel::Info, "Engine keys: F3 restart scene, F4 next scene, F5 reload game module, F7 render view, F8 pause, "
+			"Shift+F8 restart play, F9 step while paused, F10 colliders, Ctrl+F5 quick-save, Ctrl+F9 quick-load");
 		Application app;
 		app.Run(description, config);
 		return 0;

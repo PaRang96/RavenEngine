@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#include <ShlObj.h>
 
 #include <stdexcept>
 #include <system_error>
@@ -26,5 +27,19 @@ namespace Raven
 				throw std::runtime_error("Executable path exceeds the Windows path limit");
 			buffer.resize(buffer.size() < 16384 ? buffer.size() * 2 : 32768);
 		}
+	}
+
+	std::filesystem::path GetPlatformUserDataDirectory()
+	{
+		PWSTR folder = nullptr;
+		const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &folder);
+		if (FAILED(result))
+		{
+			CoTaskMemFree(folder);
+			throw std::system_error(static_cast<int>(result), std::system_category(), "Cannot locate LocalAppData");
+		}
+		std::filesystem::path path(folder);
+		CoTaskMemFree(folder);
+		return path;
 	}
 }

@@ -167,6 +167,12 @@ namespace Raven
 		return surface;
 	}
 
+	float Win32Window::GetContentScale() const
+	{
+		const UINT dpi = m_Handle ? GetDpiForWindow(m_Handle) : 0;
+		return dpi > 0 ? static_cast<float>(dpi) / 96.0f : 1.0f;
+	}
+
 	const InputState& Win32Window::GetInputState() const
 	{
 		return m_Input.GetState();

@@ -80,6 +80,11 @@ namespace Raven
 			return GetExecutablePath().parent_path();
 		}
 
+		std::filesystem::path GetUserDataDirectory()
+		{
+			return GetPlatformUserDataDirectory();
+		}
+
 		std::filesystem::path GetContentPath(const std::filesystem::path& relativePath)
 		{
 			std::filesystem::path root;

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,6 +16,10 @@
 namespace Raven
 {
 	class Scene;
+	namespace ECS
+	{
+		struct ComponentSchema;
+	}
 
 	// The generic scene file (docs/DataModelDesign.md, FD-10). Every component section carries its
 	// own field list, so a file written with an older component layout loads by matching field
@@ -88,6 +93,18 @@ namespace Raven
 
 	// Copies the scene's live entities and every registered, non-transient component of them.
 	RAVEN_API SceneFile CaptureScene(const Scene& scene);
+
+	// Single records outside a scene, for user data (docs/GameServicesDesign.md, FD-33).
+	// True when a stored section of `type` belongs to `schema`: its name or one of its old names.
+	RAVEN_API bool MatchesSchema(std::string_view type, const ECS::ComponentSchema& schema) noexcept;
+	// One value (schema.Size bytes) as a single-row section for `entityId`.
+	RAVEN_API SceneFile::Component CaptureRecord(const ECS::ComponentSchema& schema, const void* value,
+		std::uint64_t entityId);
+	// Fills `value` (schema.Size bytes) with the schema's defaults, then with every stored field that
+	// matches by name, old name and type. False when the section is of another type or has no row
+	// for `entityId`. `report` receives each field that could not be loaded.
+	RAVEN_API bool ApplyRecord(const SceneFile::Component& component, const ECS::ComponentSchema& schema,
+		std::uint64_t entityId, void* value, const std::function<void(const std::string&)>& report = {});
 
 	// Creates the file's entities with their stored IDs and adds their components, matching each
 	// field by name and type against the registered layout. A component type, field or reference

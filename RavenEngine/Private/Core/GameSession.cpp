@@ -1,4 +1,10 @@
 #include "Core/GameSession.hpp"
+#include "Renderer/Vulkan/VulkanTexture.hpp"
+#include "Core/FrameTrace.hpp"
+#include "Audio/SoundEvent.hpp"
+
+#include "Physics/PickWorld.hpp"
+#include "Renderer/Vulkan/VulkanMesh.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/LightingComponent.hpp"
@@ -19,6 +25,7 @@
 #include <cstring>
 #include <format>
 #include <map>
+#include <random>
 #include <stdexcept>
 #include <utility>
 
@@ -35,6 +42,8 @@ namespace Raven
 			TexturedVertex{ { -0.5f, 0.0f, 0.5f }, { 0.0f, 0.0f } }
 		};
 		constexpr std::array<std::uint16_t, 6> QuadIndices{ 0, 1, 2, 2, 3, 0 };
+		// Scene restarts, quick-loads and StopSounds fade every sound out over 50 ms.
+		constexpr float StopFadeSeconds = 0.05f;
 
 		std::filesystem::path ResolveContentRoot(const std::filesystem::path& root)
 		{
@@ -47,10 +56,11 @@ namespace Raven
 		// before it replaces the active one, and drawing never loads synchronously.
 		void LeaseAssets(const SceneFile& file, Scene& scene, const AssetCatalog& catalog)
 		{
-			static const std::array<std::pair<std::uint64_t, AssetKind>, 3> kinds{ {
+			static const std::array<std::pair<std::uint64_t, AssetKind>, 4> kinds{ {
 				{ ECS::Detail::HashText(AssetTypeTraits<TextureAsset>::Name), AssetKind::Texture },
 				{ ECS::Detail::HashText(AssetTypeTraits<MeshAsset>::Name), AssetKind::Mesh },
-				{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio } } };
+				{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio },
+				{ ECS::Detail::HashText(AssetTypeTraits<SoundAsset>::Name), AssetKind::Sound } } };
 			std::map<AssetId, AssetKind> used;
 			for (const auto& component : file.Components)
 				for (std::size_t field = 0; field < component.Fields.size(); ++field)
@@ -71,7 +81,14 @@ namespace Raven
 					}
 				}
 			for (const auto& [id, kind] : used)
+			{
 				scene.UseAsset(catalog, id, kind);
+				// A sound event's clips are leased with it, so playing it never loads a file.
+				if (kind == AssetKind::Sound)
+					if (const auto* lease = scene.FindAsset(id); lease && lease->GetSoundEvent())
+						for (const auto& clip : lease->GetSoundEvent()->Clips)
+							scene.UseAsset(catalog, clip, AssetKind::Audio);
+			}
 		}
 	}
 
@@ -98,6 +115,15 @@ namespace Raven
 	{
 		if (config.WatchShaders)
 			renderer.WatchShaders();
+		if (config.SimulationSeed)
+			m_SimulationSeed = *config.SimulationSeed;
+		else
+		{
+			std::random_device device;
+			m_SimulationSeed = (std::uint64_t{ device() } << 32) ^ device();
+		}
+		Log(LogLevel::Info, std::format("Simulation seed {}", m_SimulationSeed));
+		StartSimulation();
 	}
 
 	GameSession::~GameSession() = default;
@@ -112,15 +138,20 @@ namespace Raven
 		return m_Project.GetCatalog();
 	}
 
-	bool GameSession::Prepare(const InputState& input, const FrameTime& time)
+	bool GameSession::Prepare(const DeveloperRequests& requests, const FrameTime& time)
 	{
-		if (input.WasKeyPressed(Key::F8))
+		if (requests.RestartPlay && !m_Playing)
+		{
+			m_Playing = true;
+			Log(LogLevel::Info, "Play restarted");
+		}
+		else if (requests.TogglePlay)
 		{
 			m_Playing = !m_Playing;
-			Log(LogLevel::Info, m_Playing ? "Play resumed (F8)" : "Play paused (F8): game systems do not run");
+			Log(LogLevel::Info, m_Playing ? "Play resumed" : "Play paused: game systems do not run");
 		}
-		// F7 cycles the lit-mesh debug views (docs/HotReloadDesign.md, H3).
-		if (input.WasKeyPressed(Key::F7))
+		// Cycles the lit-mesh debug views (docs/HotReloadDesign.md, H3).
+		if (requests.CycleRenderView)
 		{
 			constexpr std::array<std::pair<RenderView, const char*>, 4> views{ {
 				{ RenderView::Shaded, "shaded" }, { RenderView::Unlit, "unlit" },
@@ -131,7 +162,9 @@ namespace Raven
 			while (!m_Renderer.SetRenderView(views[index].first));
 			Log(LogLevel::Info, std::string("Render view: ") + views[index].second);
 		}
-		const bool replaced = Advance(input.WasKeyPressed(Key::F3), input.WasKeyPressed(Key::F4));
+		const bool replaced = Advance(requests.RestartScene || requests.RestartPlay, requests.NextScene);
+		if (replaced)
+			StartSimulation();
 		// Picks of the presented frame reach the next update once; a replaced scene or the first
 		// frame after a pause drops them.
 		m_Picks.clear();
@@ -153,14 +186,141 @@ namespace Raven
 		m_Commands.Reset(m_Session->GetActive());
 		m_Picks.clear();
 		m_PendingPicks.clear();
-		m_Audio.Stop();
+		m_Audio.StopAll(StopFadeSeconds);
 		m_CameraProblem.clear();
 		return true;
 	}
 
-	SystemContext GameSession::MakeContext(const InputState& input, const FrameTime& time)
+	void GameSession::QuickSave(std::uint64_t tick)
 	{
-		return SystemContext{ m_Session->GetActive().GetAccess(), input, time, m_Picks, m_Commands, *this };
+		const auto& scene = m_Session->GetActive();
+		const auto file = CaptureScene(scene);
+		Snapshot snapshot;
+		snapshot.Scene = m_Session->GetActiveDescription().Id;
+		snapshot.Bytes = file.Encode();
+		snapshot.Random = m_Random.GetState();
+		snapshot.Ids = scene.GetIdState();
+		snapshot.Tick = tick;
+		snapshot.Entities = file.Entities.size();
+		Log(LogLevel::Info, std::format("Quick-saved tick {} ({} entities, {:.1f} KB)", tick, snapshot.Entities,
+			static_cast<double>(snapshot.Bytes.size()) / 1024.0));
+		m_QuickSave = std::move(snapshot);
+	}
+
+	std::optional<std::uint64_t> GameSession::QuickLoad()
+	{
+		if (!m_QuickSave)
+		{
+			Log(LogLevel::Info, "No quick-save to load; Ctrl+F5 saves one");
+			return std::nullopt;
+		}
+		if (m_QuickSave->Scene != m_Session->GetActiveDescription().Id)
+		{
+			Log(LogLevel::Warning, "The quick-save belongs to another scene; open it first");
+			return std::nullopt;
+		}
+		try
+		{
+			m_Session->RestoreSnapshot(m_QuickSave->Bytes);
+		}
+		catch (const std::exception& error)
+		{
+			Log(LogLevel::Error, std::string("Quick-load failed; the world stays as it was: ") + error.what());
+			return std::nullopt;
+		}
+		m_Commands.Reset(m_Session->GetActive());
+		m_Picks.clear();
+		m_PendingPicks.clear();
+		m_Audio.StopAll(StopFadeSeconds);
+		m_CameraProblem.clear();
+		m_Random.SetState(m_QuickSave->Random);
+		m_Session->GetActive().SeedIds(m_QuickSave->Ids);
+		Log(LogLevel::Info, std::format("Quick-loaded tick {} ({} entities)", m_QuickSave->Tick, m_QuickSave->Entities));
+		return m_QuickSave->Tick;
+	}
+
+	void GameSession::SetSimulationPaused(bool paused) noexcept
+	{
+		if (paused != m_SimulationPaused)
+			Log(LogLevel::Info, paused ? "Simulation paused by the game" : "Simulation resumed by the game");
+		m_SimulationPaused = paused;
+	}
+
+	UserDataStore& GameSession::GetUserData()
+	{
+		if (!m_UserData)
+			throw std::runtime_error("This host has no user data folder");
+		return *m_UserData;
+	}
+
+	SystemContext GameSession::MakeContext(const InputState& input, InputActions& actions, InputStream& stream,
+		const FrameTime& time)
+	{
+		// Without a physics world (tools and smoke tests) every query misses.
+		static const struct NoPhysics final : PhysicsQueries
+		{
+			std::optional<PhysicsHit> CastRay(Vec3, Vec3, float, std::uint32_t) const override { return std::nullopt; }
+			std::optional<PhysicsHit> CastShape(const PhysicsShape&, Vec3, float, std::uint32_t) const override
+			{
+				return std::nullopt;
+			}
+			std::span<const ECS::Entity> Overlap(const PhysicsShape&, std::uint32_t) const override { return {}; }
+			std::span<const ContactEvent> GetContacts() const noexcept override { return {}; }
+		} none;
+		// Tools and smoke tests run without a UI; declarations then go nowhere.
+		static struct NoUi final : UI::Ui
+		{
+			void Begin(std::string_view, const UI::Style&) override {}
+			void BeginKey(std::string_view, std::uint64_t, const UI::Style&) override {}
+			void End() override {}
+			void Text(std::string_view, std::string_view, const UI::Style&) override {}
+			UI::Interaction Button(std::string_view, std::string_view, const UI::Style&) override { return {}; }
+			UI::Interaction Toggle(std::string_view, std::string_view, bool&, const UI::Style&) override { return {}; }
+			void Image(std::string_view, AssetRef<TextureAsset>, const UI::Style&) override {}
+			void Focus(std::string_view) override {}
+			bool IsCapturingInput() const noexcept override { return false; }
+			bool IsRightToLeft() const noexcept override { return false; }
+		} noUi;
+		UI::Ui& ui = m_Ui ? static_cast<UI::Ui&>(*m_Ui) : static_cast<UI::Ui&>(noUi);
+		return SystemContext{ m_Session->GetActive().GetAccess(), input, actions, stream, time, m_Picks,
+			m_Physics ? *m_Physics : none, m_Commands, *this, m_Random, ui };
+	}
+
+	void GameSession::SetUi(Text::TextSystem* text, UI::UiContext* game, UI::UiContext* developer)
+	{
+		m_Text = text;
+		m_Ui = game;
+		m_DeveloperUi = developer;
+		if (!m_Ui)
+			return;
+		// UI images use the active scene's texture leases, like sprites; a bad reference draws nothing.
+		m_Ui->SetTextureResolver([this](const AssetId& id) -> std::optional<std::uint32_t>
+		{
+			auto& scene = m_Session->GetActive();
+			const auto* lease = scene.FindAsset(id);
+			if (!lease || lease->GetKind() != AssetKind::Texture)
+				lease = scene.TryUseAsset(m_Project.GetCatalog(), id, AssetKind::Texture);
+			if (!lease)
+				return std::nullopt;
+			return lease->GetTexture().GetBindlessIndex();
+		});
+	}
+
+	double GameSession::GetFixedStepRate() const noexcept
+	{
+		return m_Project.GetFixedStepRate();
+	}
+
+	const PhysicsLimits& GameSession::GetPhysicsLimits() const noexcept
+	{
+		return m_Project.GetPhysicsLimits();
+	}
+
+	void GameSession::StartSimulation() noexcept
+	{
+		m_Random.SetState(m_SimulationSeed);
+		// A different stream for IDs, so drawing random numbers never shifts which IDs spawns get.
+		m_Session->GetActive().SeedIds(m_SimulationSeed ^ 0xA5A5A5A5DEADBEEFull);
 	}
 
 	void GameSession::ApplyCommands()
@@ -168,28 +328,79 @@ namespace Raven
 		m_Commands.Apply();
 	}
 
-	void GameSession::PlaySound(AssetRef<AudioAsset> sound)
+	SoundHandle GameSession::PlaySound(AssetRef<AudioAsset> sound, const SoundParams& params)
 	{
 		// The scene leased its sounds at load, through the store that resolves paths against the
 		// game's content root; a reference it does not hold is a data error, logged once (FD-06).
 		if (!sound.IsValid())
-			return;
+			return {};
 		auto& scene = m_Session->GetActive();
 		const auto* lease = scene.FindAsset(sound.Id);
 		if (!lease)
 			lease = scene.TryUseAsset(m_Project.GetCatalog(), sound.Id, AssetKind::Audio);
-		if (lease)
-			m_Audio.Play(*lease);
+		return lease ? m_Audio.Play(*lease, params) : SoundHandle{};
+	}
+
+	SoundHandle GameSession::PlaySound(AssetRef<SoundAsset> sound, const SoundOverrides& overrides)
+	{
+		if (!sound.IsValid())
+			return {};
+		auto& scene = m_Session->GetActive();
+		const auto& catalog = m_Project.GetCatalog();
+		const auto* lease = scene.FindAsset(sound.Id);
+		if (!lease)
+			lease = scene.TryUseAsset(catalog, sound.Id, AssetKind::Sound);
+		const auto* event = lease ? lease->GetSoundEvent() : nullptr;
+		if (!event || event->Clips.empty())
+			return {};
+		std::uniform_int_distribution<std::size_t> pick(0, event->Clips.size() - 1);
+		const auto clipId = event->Clips[pick(m_SoundRandom)];
+		const auto* clip = scene.FindAsset(clipId);
+		if (!clip)
+			clip = scene.TryUseAsset(catalog, clipId, AssetKind::Audio);
+		if (!clip)
+			return {};
+		const auto range = [this](float low, float high)
+		{
+			return low >= high ? low : std::uniform_real_distribution<float>(low, high)(m_SoundRandom);
+		};
+		SoundParams params = event->Defaults;
+		params.Volume = range(event->VolumeMin, event->VolumeMax) * overrides.Volume;
+		params.Pitch = range(event->PitchMin, event->PitchMax) * overrides.Pitch;
+		params.Position = overrides.Position;
+		return m_Audio.Play(*clip, params);
 	}
 
 	void GameSession::StopSounds() noexcept
 	{
-		m_Audio.Stop();
+		m_Audio.StopAll(StopFadeSeconds);
 	}
 
 	bool GameSession::HasOption(std::string_view name) const noexcept
 	{
 		return std::find(m_Options.begin(), m_Options.end(), name) != m_Options.end();
+	}
+
+	std::optional<PickHit> GameSession::Pick(const Ray& ray, float maxDistance)
+	{
+		if (!m_Picking)
+			return std::nullopt;
+		auto& scene = m_Session->GetActive();
+		// Normally a no-op: the frame's world pass already ran. Tools and tests may pick between frames.
+		scene.UpdateWorldTransforms();
+		// Only meshes the scene already leases can be hit; picking never loads an asset.
+		const PickMeshResolver meshes = [&](AssetId id) -> PickMesh
+		{
+			const auto* lease = scene.FindAsset(id);
+			if (!lease || lease->GetKind() != AssetKind::Mesh)
+				return {};
+			const auto* mesh = m_Renderer.ResolveMesh(lease->GetMesh());
+			if (!mesh || !mesh->GetData())
+				return {};
+			const auto& data = mesh->GetData();
+			return { data, data->PickVertices, data->PickIndices };
+		};
+		return m_Picking->Pick(scene, m_Game.GetRegistry(), meshes, ray, maxDistance);
 	}
 
 	void GameSession::ReportCamera(const std::string& message)
@@ -225,7 +436,25 @@ namespace Raven
 			});
 	}
 
-	bool GameSession::Render(VulkanContext& renderer, RenderWorld& world, const InputState& input)
+	OverlayFrame GameSession::BuildOverlay()
+	{
+		// The game's UI, then the developer overlay over it (docs/UIDesign.md, section 4).
+		auto* metrics = GetFrameMetrics();
+		FrameSection timing(metrics ? &metrics->Ui : nullptr);
+		m_Overlay.clear();
+		if (m_Ui)
+			m_Ui->EndFrame(m_Overlay);
+		if (m_DeveloperUi)
+			m_DeveloperUi->EndFrame(m_Overlay);
+		if (metrics)
+			metrics->UiQuads = static_cast<std::uint32_t>(m_Overlay.size());
+		if (!m_Text)
+			return { m_Overlay, {} };
+		return { m_Overlay, m_Text->TakeUploads() };
+	}
+
+	bool GameSession::Render(VulkanContext& renderer, RenderWorld& world, const InputState& input,
+		std::span<const DebugLineVertex> debugLines)
 	{
 		auto& scene = m_Session->GetActive();
 		const auto access = scene.GetAccess();
@@ -243,6 +472,13 @@ namespace Raven
 				camera = entity;
 				return false;
 			});
+		// Spatial sounds are heard from the camera that draws the frame.
+		if (const auto* view = camera.IsNull() ? nullptr : access.TryGet<const ECS::WorldTransformComponent>(camera))
+			m_Audio.SetListener({ view->World(0, 3), view->World(1, 3), view->World(2, 3) },
+				{ view->World(0, 0), view->World(1, 0), view->World(2, 0) });
+		else
+			m_Audio.ClearListener();
+		m_Audio.Update();
 		SceneLighting lighting;
 		access.View<const ECS::LightingComponent>().Each([&lighting](ECS::Entity, const ECS::LightingComponent& value)
 		{
@@ -268,7 +504,9 @@ namespace Raven
 				ReportCamera(error.what());
 				return std::nullopt;
 			}
-		}, &world, m_OpaqueSprites, m_TransparentSprites, lighting);
+		}, &world, m_OpaqueSprites, m_TransparentSprites, lighting, debugLines, BuildOverlay());
+		if (m_Text)
+			m_Text->EndFrame(rendered.has_value());
 
 		if (m_MeshReloadAwaitingPresent || m_TextureReloadAwaitingPresent)
 		{
@@ -288,9 +526,10 @@ namespace Raven
 			return false;
 
 		const auto* lens = scene.FindComponent<ECS::CameraComponent>(camera);
-		for (const MouseButtonPress& press : input.MouseButtonPresses)
+		for (const InputEvent& press : input.Events)
 		{
-			if (!lens || press.Button != MouseButton::Left || press.X < 0 || press.Y < 0 ||
+			if (!lens || press.Code != InputCode::FromMouse(MouseButton::Left) ||
+				press.Transition != InputTransition::Pressed || press.X < 0 || press.Y < 0 ||
 				static_cast<std::uint32_t>(press.X) >= press.FramebufferWidth ||
 				static_cast<std::uint32_t>(press.Y) >= press.FramebufferHeight)
 				continue;
@@ -302,10 +541,13 @@ namespace Raven
 			const auto distance = RayDistanceToFarPlane(rendered->Camera, *ray, lens->FarPlane);
 			if (!distance)
 				continue;
-			if (const auto picked = Pick(scene, renderer, *ray, *distance))
+			if (const auto picked = Pick(*ray, *distance))
 			{
 				m_PendingPicks.push_back(*picked);
-				Log(LogLevel::Info, "Picked " + scene.GetAuthoredId(picked->Entity));
+				const auto stats = m_Picking->GetStats();
+				Log(LogLevel::Info, std::format("Picked {} (pick sync {:.3f} ms, query {:.3f} ms, {} bodies)",
+					scene.GetAuthoredId(picked->Entity), static_cast<double>(stats.SyncNanoseconds) / 1e6,
+					static_cast<double>(stats.QueryNanoseconds) / 1e6, stats.Bodies));
 			}
 		}
 		return true;

@@ -789,6 +789,34 @@ namespace Raven
 		return file;
 	}
 
+	namespace
+	{
+		// Each registered field takes the stored field of the same name or an old name, with the same
+		// type; any other field keeps its default (FD-16). Returns the stored index per field, or -1.
+		template<typename Report>
+		std::vector<std::ptrdiff_t> MatchFields(const SceneFile::Component& component, const ECS::ComponentSchema& schema,
+			const Report& report)
+		{
+			std::vector<std::ptrdiff_t> source(schema.Fields.size(), -1);
+			for (std::size_t index = 0; index < component.Fields.size(); ++index)
+			{
+				const auto& stored = component.Fields[index];
+				const auto* field = schema.FindField(stored.Name);
+				if (!field)
+				{
+					report(component.Type + "::" + stored.Name + " is no longer a field; its value is not loaded");
+					continue;
+				}
+				if (stored.Kind == field->Kind && stored.Flags == field->Flags && stored.Extent == field->Extent &&
+					stored.Tag == field->Tag && stored.Size == field->Size)
+					source[static_cast<std::size_t>(field - schema.Fields.data())] = static_cast<std::ptrdiff_t>(index);
+				else
+					report(component.Type + "::" + field->Name + " changed type; it takes its default value");
+			}
+			return source;
+		}
+	}
+
 	// Friend of Scene and Registry: reads and writes whole pools.
 	class SceneSerializer
 	{
@@ -900,24 +928,7 @@ namespace Raven
 				}
 				if (schema->Flags & ECS::ComponentIsTransient)
 					continue;
-				// Each registered field takes the file field of the same name or an old name, with the
-				// same type; any other field keeps its default.
-				std::vector<std::ptrdiff_t> source(schema->Fields.size(), -1);
-				for (std::size_t index = 0; index < component.Fields.size(); ++index)
-				{
-					const auto& stored = component.Fields[index];
-					const auto* field = schema->FindField(stored.Name);
-					if (!field)
-					{
-						report(component.Type + "::" + stored.Name + " is no longer a field; its value is not loaded");
-						continue;
-					}
-					if (stored.Kind == field->Kind && stored.Flags == field->Flags && stored.Extent == field->Extent &&
-						stored.Tag == field->Tag && stored.Size == field->Size)
-						source[static_cast<std::size_t>(field - schema->Fields.data())] = static_cast<std::ptrdiff_t>(index);
-					else
-						report(component.Type + "::" + field->Name + " changed type; it takes its default value");
-				}
+				const auto source = MatchFields(component, *schema, report);
 				const ECS::ComponentInfo info{ schema->Id, schema->Name, schema->Size, schema->Alignment, schema->LayoutHash };
 				// One lookup per row, then a sort of (position, row) pairs: looking positions up inside
 				// the comparison cost about 0.9 s on the 100k-mesh scene.
@@ -980,6 +991,52 @@ namespace Raven
 	SceneFile CaptureScene(const Scene& scene)
 	{
 		return SceneSerializer::Capture(scene);
+	}
+
+	bool MatchesSchema(std::string_view type, const ECS::ComponentSchema& schema) noexcept
+	{
+		return type == schema.Name || std::find(schema.OldNames.begin(), schema.OldNames.end(), type) != schema.OldNames.end();
+	}
+
+	SceneFile::Component CaptureRecord(const ECS::ComponentSchema& schema, const void* value, std::uint64_t entityId)
+	{
+		SceneFile::Component component;
+		component.Type = schema.Name;
+		component.LayoutHash = schema.LayoutHash;
+		component.Entities.push_back(entityId);
+		const auto* bytes = static_cast<const std::byte*>(value);
+		for (const auto& field : schema.Fields)
+		{
+			component.Fields.push_back({ field.Name, field.Kind, field.Flags, field.Extent, field.Tag, field.Size });
+			// Entity handles mean nothing outside the running world; files store EntityRef instead.
+			if (field.Kind == ECS::FieldKind::Entity)
+				component.Values.insert(component.Values.end(), field.Size, std::byte{ 0 });
+			else
+				component.Values.insert(component.Values.end(), bytes + field.Offset, bytes + field.Offset + field.Size);
+		}
+		return component;
+	}
+
+	bool ApplyRecord(const SceneFile::Component& component, const ECS::ComponentSchema& schema, std::uint64_t entityId,
+		void* value, const std::function<void(const std::string&)>& report)
+	{
+		const auto row = std::find(component.Entities.begin(), component.Entities.end(), entityId);
+		if (row == component.Entities.end() || !MatchesSchema(component.Type, schema))
+			return false;
+		const auto index = static_cast<std::size_t>(row - component.Entities.begin());
+		const auto source = MatchFields(component, schema, report ? report : [](const std::string&) {});
+		auto* bytes = static_cast<std::byte*>(value);
+		std::memcpy(bytes, schema.Defaults.data(), schema.Size);
+		for (std::size_t field = 0; field < source.size(); ++field)
+		{
+			const auto& target = schema.Fields[field];
+			if (source[field] < 0 || target.Kind == ECS::FieldKind::Entity)
+				continue;
+			std::memcpy(bytes + target.Offset,
+				component.Values.data() + component.FieldOffset(static_cast<std::size_t>(source[field])) +
+					index * target.Size, target.Size);
+		}
+		return true;
 	}
 
 	void InstantiateScene(const SceneFile& file, Scene& scene)

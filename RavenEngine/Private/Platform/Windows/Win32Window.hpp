@@ -24,6 +24,7 @@ namespace Raven
 		std::vector<const char*> GetRequiredVulkanInstanceExtensions() const override;
 		VkSurfaceKHR CreateVulkanSurface(VkInstance instance) const override;
 		const InputState& GetInputState() const override;
+		float GetContentScale() const override;
 
 	private:
 		static LRESULT CALLBACK WindowProc(

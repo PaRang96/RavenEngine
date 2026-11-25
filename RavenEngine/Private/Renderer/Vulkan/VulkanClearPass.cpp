@@ -80,7 +80,7 @@ namespace Raven
 
 	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
 	{
-		return { m_LitPipelines, m_TexturedPipelines, m_ColorFormat, m_DepthFormat };
+		return { m_LitPipelines, m_TexturedPipelines, m_DebugLines, m_Overlay, m_ColorFormat, m_DepthFormat };
 	}
 
 	bool VulkanClearPass::IsCurrent(const LitPipelineFactory& factory) const noexcept
@@ -119,12 +119,32 @@ namespace Raven
 		return true;
 	}
 
+	void VulkanClearPass::ReplaceDebugLinePipeline(std::span<const std::uint32_t> vertex,
+		std::span<const std::uint32_t> fragment)
+	{
+		auto candidate = std::make_shared<const VulkanDebugLinePipeline>(m_DeviceOwner, m_ColorFormat, m_DepthFormat,
+			m_FrameLayout, vertex, fragment);
+		m_Timeline.Retire(std::move(m_DebugLines));
+		m_DebugLines = std::move(candidate);
+	}
+
+	void VulkanClearPass::ReplaceOverlayPipeline(std::span<const std::uint32_t> vertex,
+		std::span<const std::uint32_t> fragment)
+	{
+		auto candidate = std::make_shared<const VulkanOverlayPipeline>(m_DeviceOwner, m_ColorFormat, m_DepthFormat,
+			m_BindlessLayout, vertex, fragment);
+		m_Timeline.Retire(std::move(m_Overlay));
+		m_Overlay = std::move(candidate);
+	}
+
 	VulkanClearPass::VulkanClearPass(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
 		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
 		VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene,
 		const LitShaders& lit,
 		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+		std::span<const std::uint32_t> debugLineVertex, std::span<const std::uint32_t> debugLineFragment,
+		std::span<const std::uint32_t> overlayVertex, std::span<const std::uint32_t> overlayFragment,
 		VulkanFrameTimeline& timeline, const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
 		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_BindlessLayout(bindlessLayout),
@@ -138,17 +158,21 @@ namespace Raven
 		{
 			m_ColorFormat = swapchain.GetFormat();
 			m_DepthFormat = VulkanDepthAttachment::SelectFormat(physicalDevice);
-			if (reuse && reuse->Lit && reuse->Textured &&
+			if (reuse && reuse->Lit && reuse->Textured && reuse->DebugLines && reuse->Overlay &&
 				reuse->ColorFormat == m_ColorFormat && reuse->DepthFormat == m_DepthFormat)
 			{
 				// Resizing keeps the attachment formats, so the existing pipelines remain valid.
 				m_LitPipelines = reuse->Lit;
 				m_TexturedPipelines = reuse->Textured;
+				m_DebugLines = reuse->DebugLines;
+				m_Overlay = reuse->Overlay;
 			}
 			else
 			{
 				UseLitPipelines(GetLitPipelineFactory().Create(lit));
 				ReplaceTexturedPipelines(texturedVertex, texturedFragment);
+				ReplaceDebugLinePipeline(debugLineVertex, debugLineFragment);
+				ReplaceOverlayPipeline(overlayVertex, overlayFragment);
 			}
 
 			m_ColorImages = swapchain.GetImages();
@@ -243,16 +267,23 @@ namespace Raven
 		for (auto& frame : m_Frames)
 			frame.Ring = {};
 		m_TexturedPipelines.reset();
+		m_DebugLines.reset();
+		m_Overlay.reset();
 		m_LitPipelines.reset();
 		m_DepthAttachments.clear();
 	}
 
-	VkDeviceSize VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
+	VulkanClearPass::RingOffsets VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
 	{
 		const auto uniform = std::as_bytes(std::span(&queue.Frame, 1));
 		const auto textured = std::as_bytes(std::span(queue.TexturedInstances));
-		const VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(uniform.size()) + textured.size()) +
+		const auto lines = std::as_bytes(queue.DebugLines);
+		const auto overlay = std::as_bytes(queue.Overlay);
+		VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(VulkanUploadRing::Align(
+			VulkanUploadRing::Align(uniform.size()) + textured.size()) + lines.size()) + overlay.size()) +
 			m_Scene.GetPlannedBytes();
+		for (const auto& upload : queue.Uploads)
+			required += VulkanUploadRing::Align(upload.Pixels.size());
 		if (frame.Ring.Begin(m_DeviceOwner, m_PhysicalDevice, m_Timeline, required))
 		{
 			// The slot's previous submission has completed, so its set is not in use.
@@ -268,9 +299,15 @@ namespace Raven
 		// The frame set names offset 0, so the uniform is always pushed first.
 		if (frame.Ring.Push(uniform) != 0)
 			throw std::logic_error("The frame uniform must start the upload ring");
-		const auto texturedOffset = frame.Ring.Push(textured);
+		RingOffsets offsets;
+		offsets.Textured = frame.Ring.Push(textured);
+		offsets.DebugLines = frame.Ring.Push(lines);
+		offsets.Overlay = frame.Ring.Push(overlay);
+		offsets.Uploads.clear();
+		for (const auto& upload : queue.Uploads)
+			offsets.Uploads.push_back(frame.Ring.Push(upload.Pixels));
 		m_Scene.Upload(m_FrameIndex, frame.Ring);
-		return texturedOffset;
+		return offsets;
 	}
 
 	void VulkanClearPass::PrepareTimestampQueries()
@@ -316,9 +353,10 @@ namespace Raven
 	}
 
 	void VulkanClearPass::Record(Frame& frame, std::uint32_t imageIndex, const VulkanDrawQueue& queue,
-		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, VkDeviceSize texturedOffset, bool timestamps,
+		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, const RingOffsets& offsets, bool timestamps,
 		RenderView view)
 	{
+		const auto texturedOffset = offsets.Textured;
 		const auto commands = frame.Commands;
 		const auto instanceBuffer = frame.Ring.Get();
 		CheckClearResult(vkResetCommandBuffer(commands, 0), "vkResetCommandBuffer");
@@ -376,6 +414,40 @@ namespace Raven
 		begin[1].subresourceRange = depthRange;
 		transition(begin);
 
+		// Texture regions for this frame, such as new glyphs, copied from the ring. Earlier frames that
+		// sampled these images were submitted to the same queue, so the barrier orders after them.
+		for (std::size_t index = 0; index < queue.Uploads.size(); ++index)
+		{
+			const auto& upload = queue.Uploads[index];
+			std::array<VkImageMemoryBarrier2KHR, 1> toCopy{};
+			toCopy[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+			toCopy[0].srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+			toCopy[0].srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR;
+			toCopy[0].dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			toCopy[0].dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
+			toCopy[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			toCopy[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toCopy[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toCopy[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toCopy[0].image = upload.Image;
+			toCopy[0].subresourceRange = colorRange;
+			transition(toCopy);
+			VkBufferImageCopy region{};
+			region.bufferOffset = offsets.Uploads[index];
+			region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			region.imageOffset = { static_cast<std::int32_t>(upload.X), static_cast<std::int32_t>(upload.Y), 0 };
+			region.imageExtent = { upload.Width, upload.Height, 1 };
+			vkCmdCopyBufferToImage(commands, instanceBuffer, upload.Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+			std::array<VkImageMemoryBarrier2KHR, 1> toRead = toCopy;
+			toRead[0].srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			toRead[0].srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
+			toRead[0].dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+			toRead[0].dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR;
+			toRead[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toRead[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			transition(toRead);
+		}
+
 		VkRenderingAttachmentInfoKHR color{};
 		color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
 		color.imageView = m_ColorViews[imageIndex];
@@ -416,6 +488,14 @@ namespace Raven
 			queue.OpaqueBatches);
 		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Transparent,
 			queue.TransparentBatches);
+		// Developer lines last, tested against the depth of the scene (FD-32 collider view).
+		if (!queue.DebugLines.empty())
+			m_DebugLines->Record(commands, frame.FrameSet, instanceBuffer, offsets.DebugLines,
+				static_cast<std::uint32_t>(queue.DebugLines.size()));
+		// Screen-space 2D over everything (docs/UIDesign.md, section 4): one instanced draw.
+		if (!queue.Overlay.empty())
+			m_Overlay->Record(commands, bindlessTextures, instanceBuffer, offsets.Overlay,
+				static_cast<std::uint32_t>(queue.Overlay.size()), m_Extent);
 		vk.EndRendering(commands);
 		m_Scene.RecordReadback(commands, m_FrameIndex);
 
@@ -458,7 +538,7 @@ namespace Raven
 			metrics->VisibleMeshes = m_Scene.ReadVisible(m_FrameIndex);
 		}
 		// Write the frame's uniform and instances before acquiring the image.
-		const auto texturedOffset = Upload(frame, queue);
+		const auto offsets = Upload(frame, queue);
 		upload.End();
 
 		std::uint32_t imageIndex = 0;
@@ -475,7 +555,7 @@ namespace Raven
 
 		FrameSection submitting(metrics ? &metrics->RecordSubmit : nullptr);
 		const bool timestamps = metrics && m_Timestamps != VK_NULL_HANDLE;
-		Record(frame, imageIndex, queue, meshes, bindlessTextures, texturedOffset, timestamps, view);
+		Record(frame, imageIndex, queue, meshes, bindlessTextures, offsets, timestamps, view);
 
 		// The binary semaphores serve acquire and present; the timeline value marks this frame.
 		VkSemaphoreSubmitInfoKHR acquired{};

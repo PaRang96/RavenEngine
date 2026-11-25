@@ -24,6 +24,8 @@ namespace Raven
 	class SceneAccess;
 	class SceneSerializer;
 	class RenderWorldSync;
+	class PhysicsWorldSync;
+	class PickWorldSync;
 }
 
 namespace Raven::ECS
@@ -329,6 +331,9 @@ namespace Raven::ECS
 		friend class ::Raven::SceneSerializer;
 		// Reads change ticks of whole pools, like Scene (docs/GpuDrivenDesign.md, G1).
 		friend class ::Raven::RenderWorldSync;
+		// Reads change ticks of the physics components (docs/GameServicesDesign.md, FD-32).
+		friend class ::Raven::PhysicsWorldSync;
+		friend class ::Raven::PickWorldSync;
 		template<typename... T>
 		friend class ::Raven::ECS::View;
 

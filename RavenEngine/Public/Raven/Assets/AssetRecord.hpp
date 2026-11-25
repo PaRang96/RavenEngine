@@ -18,7 +18,9 @@ namespace Raven
 		Animation = 6,
 		Shader = 7,
 		Scene = 8,
-		Audio = 9
+		Audio = 9,
+		// A sound-event asset (.ravensound): clips plus how they play (docs/GameServicesDesign.md, C8).
+		Sound = 10
 	};
 
 	struct AssetRecord

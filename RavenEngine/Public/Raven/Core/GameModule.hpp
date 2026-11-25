@@ -43,10 +43,18 @@ namespace Raven
 		RAVEN_API bool Reload();
 		RAVEN_API void Poll();
 		// Run the registered systems of one phase in order with the given context.
+		RAVEN_API void Control(SystemContext& context);
 		RAVEN_API void FixedUpdate(SystemContext& context);
 		RAVEN_API void Update(SystemContext& context);
 		RAVEN_API std::vector<GameSystemStats> GetSystemStats() const;
+		// UI preview entries of the active generation (docs/UIDesign.md, layer 1).
+		RAVEN_API std::vector<std::string> GetPreviewNames() const;
+		// Draws one entry; an exception is logged once per generation and draws nothing.
+		RAVEN_API void RunPreview(std::size_t index, UI::Ui& ui);
 		RAVEN_API std::uint64_t GetGeneration() const noexcept;
+		// Host copies of the active generation's input contexts and actions.
+		RAVEN_API std::vector<RegisteredInputContext> GetInputContexts() const;
+		RAVEN_API std::vector<RegisteredAction> GetInputActions() const;
 		RAVEN_API bool IsBuilding() const noexcept;
 		RAVEN_API std::string GetLastError() const;
 

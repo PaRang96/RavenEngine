@@ -3,6 +3,8 @@
 #include "Raven/Core/Api.hpp"
 
 #include "Raven/Renderer/ColorVertex.hpp"
+#include "Raven/Renderer/DebugLines.hpp"
+#include "Raven/Renderer/Overlay.hpp"
 #include "Raven/Renderer/MeshHandle.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
@@ -64,8 +66,6 @@ namespace Raven
 
 		// Null/foreign/expired-context handles resolve to null. Borrow only while this context lives.
 		RAVEN_API const VulkanMesh* ResolveMesh(MeshHandle mesh) const noexcept;
-		// Two-sided exact triangle hit, in world units, using current CPU/GPU mesh contents.
-		RAVEN_API std::optional<float> IntersectMesh(MeshHandle mesh, const Mat4& model, const Ray& ray) const;
 
 		// Rendering thread, between DrawFrame calls. The mesh reference and handle stay valid.
 		// A failed replacement leaves the current geometry active.
@@ -136,10 +136,18 @@ namespace Raven
 		// Returns the camera and drawable extent used to present this frame.
 		// Lit meshes come from world, culled and drawn on the GPU (docs/GpuDrivenDesign.md, G5);
 		// null draws none. The world's mesh handles and textures must belong to this context.
+		// Debug lines (vertex pairs) are drawn depth-tested against the scene; the overlay's screen-space
+		// quads are drawn last, after its texture regions are written (docs/UIDesign.md, section 4).
 		RAVEN_API std::optional<RenderedCameraView> DrawFrame(const CameraViewBuilder& buildView,
 			RenderWorld* world,
 			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
+			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {},
+			std::span<const DebugLineVertex> debugLines = {}, const OverlayFrame& overlay = {});
+		// The element of a texture in the bindless array that overlay quads name; zero (white) when
+		// the handle does not resolve.
+		RAVEN_API std::uint32_t GetBindlessIndex(TextureHandle texture) const noexcept;
+		// The current drawable size in pixels; zero before the first swapchain.
+		RAVEN_API std::pair<std::uint32_t, std::uint32_t> GetDrawableSize() const noexcept;
 
 		VulkanContext(const VulkanContext&) = delete;
 		VulkanContext& operator=(const VulkanContext&) = delete;

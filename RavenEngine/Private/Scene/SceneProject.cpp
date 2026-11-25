@@ -2,6 +2,7 @@
 
 #include "Assets/AssetPath.hpp"
 #include "Assets/SettledFileWatch.hpp"
+#include "Audio/AudioClip.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Core/PathText.hpp"
 #include "Raven/Core/Log.hpp"
@@ -71,7 +72,24 @@ namespace Raven
 						throw std::runtime_error("expected raven-project 2");
 					header = true;
 				}
-				else if (kind != "scene" && kind != "texture" && kind != "mesh" && kind != "audio")
+				else if (kind == "fixed-step")
+				{
+					double rate = 0.0;
+					if (!(input >> rate) || !(rate >= 10.0 && rate <= 480.0))
+						throw std::runtime_error("expected fixed-step rate in Hz, from 10 to 480");
+					result.FixedStepRate = rate;
+				}
+				else if (kind == "physics-limits")
+				{
+					std::int64_t bodies = 0, pairs = 0, contacts = 0;
+					const auto valid = [](std::int64_t value) { return value >= 16 && value <= 4194304; };
+					if (!(input >> bodies >> pairs >> contacts) || !valid(bodies) || !valid(pairs) || !valid(contacts))
+						throw std::runtime_error("expected physics-limits bodies, body pairs and contact constraints, "
+							"each from 16 to 4194304");
+					result.Physics = { static_cast<std::uint32_t>(bodies), static_cast<std::uint32_t>(pairs),
+						static_cast<std::uint32_t>(contacts) };
+				}
+				else if (kind != "scene" && kind != "texture" && kind != "mesh" && kind != "audio" && kind != "sound")
 				{
 					// raven-project 2 is tolerant (docs/DataModelDesign.md, FD-10): records a later
 					// version adds are skipped by this reader.
@@ -98,11 +116,12 @@ namespace Raven
 							throw std::runtime_error("expected texture UUID, PNG path and srgb/linear");
 						result.Catalog.Register(TextureAssetDesc{ id, PathFromUtf8(source), setting == "srgb" ? TextureColorSpace::SRGB : TextureColorSpace::Linear });
 					}
-					else if (kind == "mesh" || kind == "audio")
+					else if (kind == "mesh" || kind == "audio" || kind == "sound")
 					{
 						if (!(input >> std::quoted(source)))
 							throw std::runtime_error("expected source path");
-						result.Catalog.Register({ id, kind == "mesh" ? AssetKind::Mesh : AssetKind::Audio, PathFromUtf8(source) });
+						result.Catalog.Register({ id, kind == "mesh" ? AssetKind::Mesh : kind == "audio" ? AssetKind::Audio :
+							AssetKind::Sound, PathFromUtf8(source) });
 					}
 				}
 				std::string extra;
@@ -123,8 +142,9 @@ namespace Raven
 				throw std::runtime_error("Missing project source: " + PathToUtf8(source));
 			auto extension = source.extension().string();
 			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-			const auto expected = record.Kind == AssetKind::Texture ? ".png" : record.Kind == AssetKind::Mesh ? ".fbx" : record.Kind == AssetKind::Audio ? ".wav" : ".ravenscene";
-			if (extension != expected)
+			const auto expected = record.Kind == AssetKind::Texture ? ".png" : record.Kind == AssetKind::Mesh ? ".fbx" :
+				record.Kind == AssetKind::Sound ? ".ravensound" : ".ravenscene";
+			if (record.Kind == AssetKind::Audio ? !IsAudioExtension(source) : extension != expected)
 				throw std::runtime_error("Incorrect source type for " + record.Id.ToString());
 		}
 		return result;
@@ -134,7 +154,8 @@ namespace Raven
 	{
 		Impl(VulkanContext& renderer, std::filesystem::path root, bool watch, bool meshes, bool textures)
 			: Root(std::filesystem::absolute(std::move(root)).lexically_normal()), Path(Root / "Project.ravenproject"),
-			  Current(SceneProject::Decode(ReadProject(Path), Path)), Assets(renderer, Root, meshes, textures)
+			  Current(SceneProject::Decode(ReadProject(Path), Path)), Assets(renderer, Root, meshes, textures),
+			  FixedStepRate(Current.FixedStepRate), Physics(Current.Physics)
 		{
 			if (watch)
 			{
@@ -150,6 +171,8 @@ namespace Raven
 		SceneProjectDefinition Current;
 		AssetStore Assets;
 		std::unique_ptr<SettledFileWatch<SceneProjectDefinition>> Watch;
+		const double FixedStepRate;
+		const PhysicsLimits Physics;
 	};
 
 	SceneProject::SceneProject(VulkanContext& renderer, std::filesystem::path root, bool watch, bool meshes, bool textures)
@@ -159,6 +182,8 @@ namespace Raven
 	AssetStore& SceneProject::GetAssets() noexcept { return m_Impl->Assets; }
 	const std::filesystem::path& SceneProject::GetContentRoot() const noexcept { return m_Impl->Root; }
 	std::span<const SceneDescription> SceneProject::GetScenes() const noexcept { return m_Impl->Current.Scenes; }
+	double SceneProject::GetFixedStepRate() const noexcept { return m_Impl->FixedStepRate; }
+	const PhysicsLimits& SceneProject::GetPhysicsLimits() const noexcept { return m_Impl->Physics; }
 	std::optional<SceneProjectDefinition> SceneProject::TakeUpdate()
 	{
 		return m_Impl->Watch ? m_Impl->Watch->Take() : std::nullopt;
@@ -175,5 +200,15 @@ namespace Raven
 		m_Impl->Current.Catalog.Swap(candidate.Catalog);
 		m_Impl->Current.Scenes.swap(candidate.Scenes);
 		m_Impl->Current.SourceBytes.swap(candidate.SourceBytes);
+		if (candidate.FixedStepRate != m_Impl->Current.FixedStepRate)
+		{
+			m_Impl->Current.FixedStepRate = candidate.FixedStepRate;
+			Log(LogLevel::Warning, "Project fixed-step rate changed; it applies when the host restarts");
+		}
+		if (!(candidate.Physics == m_Impl->Current.Physics))
+		{
+			m_Impl->Current.Physics = candidate.Physics;
+			Log(LogLevel::Warning, "Project physics limits changed; they apply when the host restarts");
+		}
 	}
 }

@@ -10,6 +10,8 @@ namespace Raven::ImporterVersion
 {
 	inline constexpr std::uint32_t Png = 1;
 	inline constexpr std::uint32_t Fbx = 1;
+	// Audio clips and sound events (docs/GameServicesDesign.md, C8).
+	inline constexpr std::uint32_t Audio = 1;
 	inline constexpr std::uint32_t Scene = 1;
 	inline constexpr std::uint32_t Project = 1;
 	inline constexpr std::uint32_t Hlsl = 1;

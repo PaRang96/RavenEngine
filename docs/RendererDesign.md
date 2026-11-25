@@ -105,7 +105,7 @@ Measured at the M1 exit (4,000 meshes, 2560 × 1440, mailbox, p95; [ECSDesign.md
 - Uploads go through a staging buffer on the graphics queue, synchronized with synchronization2 barriers. Most changes come in at scene load and FBX reload.
 - Free ranges use a simple first-fit free list, with neighbors merged on free. Replacing a mesh allocates a new range and retires the old one through R3. When a pool runs out, it grows by allocating a larger buffer, copying on the GPU and retiring the old buffer.
 - Draws bind the two pools once and use `firstIndex` and `vertexOffset`. That is exactly what M3's indirect commands need.
-- `IntersectMesh` (picking) keeps its CPU-side copies of positions and indices, which already exist for picking and bounds. GPU memory is never read back.
+- Picking keeps its CPU-side copies of positions and indices, which already exist for picking and bounds. GPU memory is never read back. Since M6C step C5 the pick world builds its Jolt mesh shapes from these copies ([Physics.md](Physics.md#picking)); `IntersectMesh` was removed.
 
 ### R7 — Carried renderer cleanups
 

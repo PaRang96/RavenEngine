@@ -153,7 +153,12 @@ namespace Raven
 
 		const char* PhaseName(SystemPhase phase)
 		{
-			return phase == SystemPhase::FixedUpdate ? "FixedUpdate" : "Update";
+			switch (phase)
+			{
+			case SystemPhase::Control: return "Control";
+			case SystemPhase::FixedUpdate: return "FixedUpdate";
+			default: return "Update";
+			}
 		}
 
 		// One log line per system added, removed, or moved to another phase or order (H4).
@@ -199,9 +204,17 @@ namespace Raven
 			std::filesystem::path Copy;
 			// Sorted by phase, then order. Cleared before the library unloads.
 			std::vector<LoadedSystem> Systems;
+			struct Preview
+			{
+				std::string Name;
+				PreviewFunction Run = nullptr;
+				bool Failed = false;
+			};
+			std::vector<Preview> Previews;
 			~LoadedGame()
 			{
 				Systems.clear();
+				Previews.clear();
 				Platform::UnloadGameLibrary(Library);
 				std::error_code ignored;
 				if (!Copy.empty())
@@ -231,6 +244,9 @@ namespace Raven
 		std::unique_ptr<LoadedGame> Active;
 		// Keyed by system name, so timing accumulates across compatible reloads.
 		std::map<std::string, GameSystemStats, std::less<>> Stats;
+		// Host copies of the active generation's input declarations (docs/GameServicesDesign.md, FD-29).
+		std::vector<RegisteredInputContext> InputContexts;
+		std::vector<RegisteredAction> InputActions;
 		std::uint64_t Generation = 0;
 		std::string Error;
 		bool AutoBuild = false;
@@ -285,6 +301,11 @@ namespace Raven
 		m_Systems.push_back(system);
 	}
 
+	void SystemTable::Preview(const PreviewDesc& preview)
+	{
+		m_Previews.push_back(preview);
+	}
+
 	void SystemTable::AddComponent(const ECS::ComponentInfo& info, std::span<const std::byte> defaults)
 	{
 		m_Components.push_back(ECS::MakeComponentSchema(info, defaults));
@@ -301,7 +322,8 @@ namespace Raven
 			{
 				if (!system.Name || !*system.Name || !system.Run)
 					throw std::runtime_error("Game DLL registered a system without a name or function");
-				if (system.Phase != SystemPhase::FixedUpdate && system.Phase != SystemPhase::Update)
+				if (system.Phase != SystemPhase::Control && system.Phase != SystemPhase::FixedUpdate &&
+					system.Phase != SystemPhase::Update)
 					throw std::runtime_error(std::string("Game system has an unknown phase: ") + system.Name);
 				if (!names.emplace(system.Name).second)
 					throw std::runtime_error(std::string("Game DLL registered a system twice: ") + system.Name);
@@ -432,6 +454,12 @@ namespace Raven
 				throw std::runtime_error("Game system registration threw a non-standard exception");
 			}
 			candidate->Systems = LoadSystems(table);
+			for (const auto& preview : table.GetPreviews())
+			{
+				if (!preview.Name || !*preview.Name || !preview.Run)
+					throw std::runtime_error("Game DLL registered a UI preview without a name or function");
+				candidate->Previews.push_back({ preview.Name, preview.Run });
+			}
 			if (candidate->Systems.empty())
 				throw std::runtime_error("Game DLL registered no systems");
 			auto& registry = Game->GetRegistry();
@@ -447,6 +475,8 @@ namespace Raven
 			// A new generation starts every system again, including ones suspended before.
 			for (auto& [name, stats] : Stats)
 				stats.Suspended = false;
+			InputContexts = table.GetInputContexts();
+			InputActions = table.GetActions();
 			Active.swap(candidate);
 			AttemptedFile = before;
 			++Generation;
@@ -691,6 +721,11 @@ namespace Raven
 		}
 	}
 
+	void GameModule::Control(SystemContext& context)
+	{
+		m_Impl->RunPhase(SystemPhase::Control, context);
+	}
+
 	void GameModule::FixedUpdate(SystemContext& context)
 	{
 		m_Impl->RunPhase(SystemPhase::FixedUpdate, context);
@@ -699,6 +734,38 @@ namespace Raven
 	void GameModule::Update(SystemContext& context)
 	{
 		m_Impl->RunPhase(SystemPhase::Update, context);
+	}
+
+	std::vector<std::string> GameModule::GetPreviewNames() const
+	{
+		std::vector<std::string> names;
+		if (m_Impl->Active)
+			for (const auto& preview : m_Impl->Active->Previews)
+				names.push_back(preview.Name);
+		return names;
+	}
+
+	void GameModule::RunPreview(std::size_t index, UI::Ui& ui)
+	{
+		if (!m_Impl->Active || index >= m_Impl->Active->Previews.size())
+			return;
+		auto& preview = m_Impl->Active->Previews[index];
+		if (preview.Failed)
+			return;
+		try
+		{
+			preview.Run(ui);
+		}
+		catch (const std::exception& error)
+		{
+			preview.Failed = true;
+			Log(LogLevel::Error, "UI preview '" + preview.Name + "' failed: " + error.what() + ". Skipped until the next module reload.");
+		}
+		catch (...)
+		{
+			preview.Failed = true;
+			Log(LogLevel::Error, "UI preview '" + preview.Name + "' failed. Skipped until the next module reload.");
+		}
 	}
 
 	std::vector<GameSystemStats> GameModule::GetSystemStats() const
@@ -710,6 +777,8 @@ namespace Raven
 	}
 
 	std::uint64_t GameModule::GetGeneration() const noexcept { return m_Impl->Generation; }
+	std::vector<RegisteredInputContext> GameModule::GetInputContexts() const { return m_Impl->InputContexts; }
+	std::vector<RegisteredAction> GameModule::GetInputActions() const { return m_Impl->InputActions; }
 	bool GameModule::IsBuilding() const noexcept { return m_Impl->Building.load(); }
 	std::string GameModule::GetLastError() const { return m_Impl->Error; }
 }
