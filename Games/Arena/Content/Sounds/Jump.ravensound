@@ -1,0 +1,7 @@
+raven-sound 1
+clip 56a0085a-5af7-4ed6-86df-f3c9695788c1
+volume 0.6 0.7
+pitch 0.94 1.06
+bus Effects
+limit Jump 2 stop-oldest
+spatial 3 40

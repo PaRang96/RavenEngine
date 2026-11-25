@@ -1,0 +1,8 @@
+raven-sound 1
+clip 8373162a-1604-4d1f-a48b-f198879e3938
+clip d72522b8-e70b-4f05-8a63-5f44d6efb86e
+volume 0.8 1.0
+pitch 0.97 1.03
+bus Effects
+limit Pickup 3 stop-oldest
+spatial 3 45
