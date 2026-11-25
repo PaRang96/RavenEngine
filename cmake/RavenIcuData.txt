@@ -1,0 +1,8 @@
+# ICU data items Raven ships (scripts/UpdateIcu.cmake filters ICU's prebuilt package to these).
+# One glob per line, matched against the item names `icupkg -l` prints. The text stack uses ICU's
+# common library only (decision U5): break iterators with their rules and dictionaries, plus the
+# emoji and Indic layout properties those rules consult. Core character properties, bidi classes
+# and NFC are compiled into the library and need no data.
+brkitr/*
+uemoji.icu
+ulayout.icu
