@@ -134,7 +134,12 @@ namespace Raven
 
 		~Program()
 		{
-			m_Subscription.reset();
+			// Destroying the subscription waits for an import in progress, and that import may still
+			// call SetInputs through m_Subscription. unique_ptr::reset clears the pointer before it
+			// deletes, so the import would read null (an access violation when the host quits during
+			// the startup compiles). Delete in place, and release the pointer once the wait is over.
+			delete m_Subscription.get();
+			static_cast<void>(m_Subscription.release());
 			std::error_code ignored;
 			std::filesystem::remove_all(m_Scratch, ignored);
 		}

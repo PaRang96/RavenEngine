@@ -311,6 +311,11 @@ Where the implementation differs from, or adds to, the decisions above:
 - **Wireframe** draws the shaded image, then the same indirect commands with a `VK_POLYGON_MODE_LINE` pipeline. The lines are depth-tested and biased toward the camera, light on dark materials and dark on light ones. Textured and transparent draws are unchanged in every view.
 - **Directory watching limit:** Win32 waits on at most 63 directories at once. A project whose watched inputs span more directories falls back to 40 ms polling. Today's content uses fewer than ten.
 - **A failed compile at startup** is reported once and keeps the build's SPIR-V.
+- **Quitting during the startup compiles crashed** (found and fixed 2026-11-25, during M6C).
+  - **Symptom:** closing the window within about 0.5 s of the first frame ended in an access violation. It needed watching on (`--no-watch` was unaffected), and it predates M6C: the M6A commit did the same.
+  - **Cause:** `~Program` destroyed its subscription with `unique_ptr::reset`, which clears the pointer before deleting. The subscription's destructor waits for the import in progress, and that import calls `SetInputs` through the same pointer when it follows the includes. So it read null.
+  - **Fix:** `~Program` deletes the subscription in place and releases the pointer after the wait. Ten quick quits in Debug and four in Release then exited cleanly, where every quit at that timing had crashed.
+  - **Rule:** a consumer whose import uses its own subscription must keep that pointer valid until the subscription's destructor returns.
 
 ## M5 exit record (2026-11-23)
 
