@@ -54,3 +54,7 @@ CMakePresets.json text eol=lf
 
 # Versioned machine-readable 3D scene documents.
 *.ravenscene binary
+
+# Vendored libraries are byte-identical upstream copies (ThirdParty/*/README.md records their hashes):
+# Git stores and checks them out exactly as released, without line-ending conversion.
+ThirdParty/** -text

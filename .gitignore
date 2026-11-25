@@ -17,6 +17,8 @@
 # Build and validation output (including nested builds)
 out/
 build/
+# Jolt's build file is part of its vendored release (ThirdParty/JoltPhysics/README.md).
+!/ThirdParty/JoltPhysics/Build/
 cmake-build-*/
 CMakeFiles/
 .cmake/
