@@ -4,10 +4,11 @@ namespace Raven::GameBuild
 {
 	inline constexpr bool Enabled = @RAVEN_GAME_ENABLED@;
 	inline constexpr char Contract[] = "@RAVEN_GAME_CONTRACT@";
-	inline constexpr wchar_t Root[] = LR"raven(@PROJECT_SOURCE_DIR@)raven";
-	inline constexpr wchar_t Cmake[] = LR"raven(@CMAKE_COMMAND@)raven";
+	// Paths are UTF-8, every byte escaped (raven_utf8_literal); std::filesystem::path reads them as UTF-8.
+	inline constexpr char8_t Root[] = @RAVEN_GAME_ROOT_LITERAL@;
+	inline constexpr char8_t Cmake[] = @RAVEN_GAME_CMAKE_LITERAL@;
 	// Games/<Name> builds in BuildRoot/<Name> and produces <Name><ModuleSuffix> beside RavenCore.
-	inline constexpr wchar_t BuildRoot[] = LR"raven(@RAVEN_GAME_BUILD_ROOT@)raven";
-	inline constexpr wchar_t ModuleSuffix[] = L"@CMAKE_SHARED_LIBRARY_SUFFIX@";
+	inline constexpr char8_t BuildRoot[] = @RAVEN_GAME_BUILD_ROOT_LITERAL@;
+	inline constexpr char8_t ModuleSuffix[] = u8"@CMAKE_SHARED_LIBRARY_SUFFIX@";
 	inline constexpr char DefaultGame[] = "@RAVEN_DEFAULT_GAME@";
 }

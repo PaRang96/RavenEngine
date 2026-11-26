@@ -15,7 +15,7 @@ list(FILTER raven_engine_sources EXCLUDE REGEX "/Private/(Host|Tools|Platform|Au
 # together with the native backends.
 set(raven_platform_shared "${raven_private_files}")
 list(FILTER raven_platform_shared INCLUDE REGEX "/Private/Platform/[^/]+\\.(cpp|hpp)$")
-list(FILTER raven_platform_shared EXCLUDE REGEX "/(Unsupported(GameModule|KeyNames)|PosixAtomicFile|PollDirectoryWatch)\\.cpp$")
+list(FILTER raven_platform_shared EXCLUDE REGEX "/(Unsupported(BuildProcess|GameModule|KeyNames)|PosixAtomicFile|PollDirectoryWatch)\\.cpp$")
 target_sources(RavenCore PRIVATE
     ${raven_public_headers} ${raven_engine_sources} ${raven_platform_shared})
 

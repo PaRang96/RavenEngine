@@ -648,7 +648,7 @@ namespace Raven
 				if (!build && buildQueued && observedSource)
 				{
 					build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
-						{ L"-P", (directory / "BuildGame.cmake").wstring() }, directory / "AutoBuild.log"));
+						{ "-P", PathToUtf8(directory / "BuildGame.cmake") }, directory / "AutoBuild.log"));
 					// The linker needs the DLL unopened, so the service must not read it meanwhile.
 					// Linking starts long after this, past any read already in progress.
 					outputWatch->SetPaused(true);

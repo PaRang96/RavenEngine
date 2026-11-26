@@ -47,6 +47,7 @@ if(NOT WIN32)
     target_sources(RavenCore PRIVATE
         "Private/Platform/PollDirectoryWatch.cpp"
         "Private/Platform/PosixAtomicFile.cpp"
+        "Private/Platform/UnsupportedBuildProcess.cpp"
         "Private/Platform/UnsupportedGameModule.cpp"
         "Private/Platform/UnsupportedKeyNames.cpp"
     )

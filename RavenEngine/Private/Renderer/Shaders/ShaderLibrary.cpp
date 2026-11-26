@@ -32,24 +32,24 @@ namespace Raven
 		struct ProgramDesc
 		{
 			const char* Source;
-			const wchar_t* Profile;
-			const wchar_t* Entry;
+			const char* Profile;
+			const char* Entry;
 		};
 
 		constexpr std::array<ProgramDesc, static_cast<std::size_t>(ShaderProgram::Count)> Programs{ {
-			{ "Color.vert.hlsl", L"vs_6_0", L"VSMain" },
-			{ "Color.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Unlit.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Normals.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Wireframe.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Texture.vert.hlsl", L"vs_6_0", L"VSMain" },
-			{ "Texture.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Scatter.comp.hlsl", L"cs_6_0", L"CSMain" },
-			{ "Cull.comp.hlsl", L"cs_6_0", L"CSMain" },
-			{ "DebugLine.vert.hlsl", L"vs_6_0", L"VSMain" },
-			{ "DebugLine.frag.hlsl", L"ps_6_0", L"PSMain" },
-			{ "Overlay.vert.hlsl", L"vs_6_0", L"VSMain" },
-			{ "Overlay.frag.hlsl", L"ps_6_0", L"PSMain" },
+			{ "Color.vert.hlsl", "vs_6_0", "VSMain" },
+			{ "Color.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Unlit.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Normals.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Wireframe.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Texture.vert.hlsl", "vs_6_0", "VSMain" },
+			{ "Texture.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Scatter.comp.hlsl", "cs_6_0", "CSMain" },
+			{ "Cull.comp.hlsl", "cs_6_0", "CSMain" },
+			{ "DebugLine.vert.hlsl", "vs_6_0", "VSMain" },
+			{ "DebugLine.frag.hlsl", "ps_6_0", "PSMain" },
+			{ "Overlay.vert.hlsl", "vs_6_0", "VSMain" },
+			{ "Overlay.frag.hlsl", "ps_6_0", "PSMain" },
 		} };
 
 		const ProgramDesc& Describe(ShaderProgram program)
@@ -193,12 +193,13 @@ namespace Raven
 			const auto dependencies = m_Scratch / "dependencies.d";
 			const auto log = m_Scratch / "compile.log";
 			using namespace ShaderWatchConfig;
-			const std::vector<std::wstring> arguments{
-				std::wstring(L"-DDXC=") + Dxc, std::wstring(L"-DVALIDATOR=") + Validator,
-				std::wstring(L"-DOPTIMIZATION=") + Optimization, std::wstring(L"-DPROFILE=") + desc.Profile,
-				std::wstring(L"-DENTRY=") + desc.Entry, L"-DSOURCE=" + m_Source.wstring(),
-				L"-DOUTPUT=" + output.wstring(), L"-DINCLUDE=" + m_Source.parent_path().wstring(),
-				L"-DDEPENDENCIES=" + dependencies.wstring(), L"-P", CompileScript
+			const auto utf8 = [](const std::filesystem::path& path) { return PathToUtf8(path); };
+			const std::vector<std::string> arguments{
+				"-DDXC=" + utf8(Dxc), "-DVALIDATOR=" + utf8(Validator),
+				std::string("-DOPTIMIZATION=") + Optimization, std::string("-DPROFILE=") + desc.Profile,
+				std::string("-DENTRY=") + desc.Entry, "-DSOURCE=" + utf8(m_Source),
+				"-DOUTPUT=" + utf8(output), "-DINCLUDE=" + utf8(m_Source.parent_path()),
+				"-DDEPENDENCIES=" + utf8(dependencies), "-P", utf8(CompileScript)
 			};
 			std::error_code ignored;
 			std::filesystem::remove(dependencies, ignored);
@@ -306,7 +307,12 @@ namespace Raven
 
 	void ShaderLibrary::Watch(Check check)
 	{
-#ifdef _WIN32
+		// Live compiles run DXC through a background build process.
+		if (!Platform::SupportsBuildProcesses())
+		{
+			Log(LogLevel::Warning, "Shaders are not watched: this platform cannot run background builds yet");
+			return;
+		}
 		if (IsWatching())
 			return;
 		m_Check = std::move(check);
@@ -315,10 +321,6 @@ namespace Raven
 			m_Programs.push_back(std::make_unique<Program>(*this, static_cast<ShaderProgram>(index),
 				directory / Programs[index].Source));
 		Log(LogLevel::Info, "Watching shaders in " + PathToUtf8(directory));
-#else
-		(void)check;
-		throw std::runtime_error("Live shader compilation currently requires Windows");
-#endif
 	}
 
 	std::vector<ShaderLibrary::Candidate> ShaderLibrary::TakeReady()

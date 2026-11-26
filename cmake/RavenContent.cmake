@@ -68,6 +68,12 @@ foreach(include IN LISTS RAVEN_SHADER_INCLUDES)
     target_sources(RavenCore PRIVATE "${include}")
     set_source_files_properties("${include}" PROPERTIES HEADER_FILE_ONLY TRUE)
 endforeach()
+include("${PROJECT_SOURCE_DIR}/cmake/RavenBuildEnvironment.cmake")
+raven_utf8_literal("${CMAKE_CURRENT_SOURCE_DIR}/Private/Renderer/Shaders" RAVEN_SHADER_SOURCE_LITERAL)
+raven_utf8_literal("${CMAKE_COMMAND}" RAVEN_SHADER_CMAKE_LITERAL)
+raven_utf8_literal("${RAVEN_SHADER_COMPILE_SCRIPT}" RAVEN_SHADER_SCRIPT_LITERAL)
+raven_utf8_literal("${RAVEN_DXC_EXECUTABLE}" RAVEN_SHADER_DXC_LITERAL)
+raven_utf8_literal("${RAVEN_SPIRV_VALIDATOR_EXECUTABLE}" RAVEN_SHADER_VALIDATOR_LITERAL)
 configure_file("${PROJECT_SOURCE_DIR}/cmake/ShaderWatchConfig.hpp.in"
     "${CMAKE_CURRENT_BINARY_DIR}/Generated/ShaderWatchConfig.hpp.in" @ONLY)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/$<CONFIG>/ShaderWatchConfig.hpp"

@@ -23,6 +23,7 @@ endif()
 set(RAVEN_GAME_ENABLED false)
 set(RAVEN_GAME_CONTRACT "unsupported")
 set(RAVEN_GAME_BUILD_ROOT "${CMAKE_CURRENT_BINARY_DIR}/GameBuild")
+include("${PROJECT_SOURCE_DIR}/cmake/RavenBuildEnvironment.cmake")
 set(RAVEN_GAME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:RavenCore>")
 if(RAVEN_BUILD_GAME_MODULE)
     if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_GENERATOR STREQUAL "Ninja")
@@ -32,9 +33,8 @@ if(RAVEN_BUILD_GAME_MODULE)
     include("${PROJECT_SOURCE_DIR}/cmake/GameContract.cmake")
     raven_game_contract("${PROJECT_SOURCE_DIR}" RAVEN_GAME_CONTRACT)
 
-    include("${PROJECT_SOURCE_DIR}/cmake/RavenBuildEnvironment.cmake")
     set(RAVEN_GAME_ENVIRONMENT_FILE "${RAVEN_GAME_BUILD_ROOT}/BuildEnvironment.cmake")
-    raven_capture_msvc_environment("${RAVEN_GAME_ENVIRONMENT_FILE}")
+    raven_capture_build_environment("${RAVEN_GAME_ENVIRONMENT_FILE}")
 
     # Use the same content-checked recipe for full builds and runtime game builds.
     set(RAVEN_GAME_CORE_LIBRARY "$<TARGET_LINKER_FILE:RavenCore>")
@@ -57,6 +57,9 @@ if(RAVEN_BUILD_GAME_MODULE)
         )
     endforeach()
 endif()
+raven_utf8_literal("${PROJECT_SOURCE_DIR}" RAVEN_GAME_ROOT_LITERAL)
+raven_utf8_literal("${CMAKE_COMMAND}" RAVEN_GAME_CMAKE_LITERAL)
+raven_utf8_literal("${RAVEN_GAME_BUILD_ROOT}" RAVEN_GAME_BUILD_ROOT_LITERAL)
 configure_file("${PROJECT_SOURCE_DIR}/cmake/GameBuildConfig.hpp.in"
     "${CMAKE_CURRENT_BINARY_DIR}/Generated/GameBuildConfig.hpp" @ONLY)
 
