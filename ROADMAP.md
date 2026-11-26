@@ -11,7 +11,7 @@ RavenEngine v1 is a **cross-platform C++23 game engine on Vulkan** with:
 
 ECS and hot reload are joint design goals. Component values are retained by the host as plain bytes, so reloadable game code can be replaced without losing the world. Fast iteration means shortening the edit → build → observe loop. Games are authored with code and data files in v1. A full visual editor is outside v1, but ownership boundaries must allow future editor and play sessions.
 
-Fixed conventions: right-handed world, +X right, +Y forward, +Z up (Blender). Blender/FBX is the primary 3D authoring path. See [CoordinateSystem.md](docs/CoordinateSystem.md). 3D is the primary development target; the 2D path stays supported but secondary.
+Fixed conventions: right-handed world, +X right, +Y forward, +Z up (Blender). Blender/FBX is the primary 3D authoring path. See [CoordinateSystem.md](docs/CoordinateSystem.md). 3D is the development target. 2D games are not a current target (owner, 2026-11-26, planning decision 18): the engine keeps sprites as world quads, the overlay and the UI, but builds no 2D sample or 2D-only feature.
 
 Check an item only when its behavior is shown in a sample, a tracked test, or a recorded measurement. Detailed evidence for completed work is in the subsystem docs under `docs/` and in [MilestoneHistory.md](docs/MilestoneHistory.md).
 
@@ -36,9 +36,33 @@ The owner reviewed the "decide now" items of [FutureDecisions.md](docs/FutureDec
 | 1 | What comes next (FD-02) | A short pre-M6 fix list, then the M6 design note. The other "now" items of the assessment wait for the M6 step that touches them, or stay opportunistic. | [Pre-M6 hardening](#pre-m6-hardening) |
 | 2 | Frame pacing (FD-03) | FIFO by default with no extra frame cap. Launch options select the present mode (FIFO, Mailbox, Immediate) and an optional `MaxFrameRate`. The 30 FPS throttle while minimized stays. Benchmarks use the options, and the source patch in `scripts/Windows3DHighRefresh.py` is deleted. The sleep-cap precision is measured when `MaxFrameRate` lands. | Pre-M6 hardening |
 | 3 | Warning policy (FD-05) | `/W4` (MSVC) and `-Wall -Wextra` (GCC/Clang) on every engine, sample, tool, test and game target; warnings are errors only in CI. The game DLL follows the same rule, so its local `/WX` is removed. Third-party code is excluded. | M0 |
-| 4 | Linux CI (FD-04) | No Linux job before M4. M4 delivers Linux, including its CI build and CPU tests. | M4 |
+| 4 | Linux CI (FD-04) | No Linux job before M4. M4 delivers Linux, including its CI build and CPU tests. Amended 2026-11-26 (assessment Q2, AA2-PLAT-01): a non-blocking Linux compile-only job is added now. On every push it compiles RavenCore, RavenEngine and RavenSceneTool past errors, with no link, run or tests; a red result never blocks. The repository is public, so it costs CI time, not money. M4 still delivers linking, running, CPU tests and the full CI build. | Now (compile-only), M4 |
 | 5 | Shape of M6 (FD-01) | Three stages, M6A, M6B and M6C, each with its own exit and review. Three corrections to the proposal: the contract narrowing moves into M6A; the game project layout (FD-17) is decided in the M6 note and lands at M6-7; the sample game starts after M6-7. | [M6A–M6C](#m6a--host-and-data-model) |
 | 6 | Audio (FD-30) | Provisional, open to revision: an engine-owned mixer in shared code (voices with IDs, stop-oldest), over one vendored device layer for all three platforms (for example miniaudio). Its license, size and Linux backends are checked before vendoring. M4 then verifies audio natively instead of writing backends. Device layer decided 2026-11-25: miniaudio 0.11.26 behind the private `AudioDevice` interface ([UIAudioLibraries.md](docs/UIAudioLibraries.md#hiding-the-device-layer-owner-question-2026-11-25)). | M6C, M4 |
+| 7 | Review amendments (2026-11-26 assessments, Q12; decided 2026-11-26) | Implemented directly before B2 and folded into the one joint review of M6A and M6C; nothing is pushed before that review. Scope: the high and medium defects, the small script and game fixes, the build and platform settings including the host compile fix, and the fixed-step context group (AA2-GP-02/03/05). The structural group (AA2-ECS-01/03, PERF-02, RND-05/07, CORE-02) lands with the B-step that touches the same files. Four commits: script and game fixes; high defects; medium defects and build settings; the one contract-hash commit. Each passes Debug and Release with warnings as errors and the CPU tests. | Before M6B B2 |
+| 8 | Game-driven scene flow (2026-11-26 assessment Q10, AA2-CORE-01; decided 2026-11-26) | Now, as a review amendment in the contract-hash commit of decision 7: `GameServices::RequestScene` and `RequestRestart` (last request wins, applied between frames, remaining fixed steps skipped once a request is pending) and a `GetSceneTransition()` state that B6's asynchronous loading keeps. Samples' completion flow moves to the requests, and the stale F3 hints are corrected. Arena keeps its in-scene retry. Carrying data into the next scene is a later item, when a game first needs it. | Before M6B B2 |
+| 9 | Stage exits and the M4 contract (2026-11-26 assessment Q13, AA2-PLAT-01; decided 2026-11-26) | Every stage closes with a Windows exit. What macOS and Linux still owe is its platform exit, appended once to M4's list, so platform work stays contained in M4 behind the platform interfaces. M4 ports against the public contract at the end of M6B, not M6A, because C1–C3 and B2/B5 change it. | Roadmap, M4 |
+| 10 | v1 scope exclusions (2026-11-26 assessment Q3–Q5; decided 2026-11-26) | Skeletal animation, player save games and networking are not in v1. Each keeps a designed route, listed under [Not in v1](#not-in-v1-2026-11-26). | Roadmap |
+| 11 | Minimum player CPU (2026-11-26 assessment Q1, AA2-PLAT-03; decided 2026-11-26) | Every x86-64 CPU (SSE2) on Windows, Linux and Intel Macs for v1. Every Jolt instruction-set option is set explicitly in `cmake/RavenJolt.cmake`, so no OS silently requires AVX2, and cross-platform determinism is explicitly off. Apple Silicon is ARM and unaffected. Trigger to revisit: a physics measurement on the laptop that shows a real gain from SSE4.2 or AVX2. | Review amendments, M4 |
+| 12 | Bare-collider friction (2026-11-26 code-quality assessment Q1, CQ-GP-01; decided 2026-11-26) | A collider without a `RigidBodyComponent` uses the component's default friction, 0.5, instead of Jolt's 0.2, so there is one default everywhere. Arena's crate push is checked by hand and retuned in ArenaTool if needed; the documented determinism hash is re-recorded. | Review amendments |
+| 13 | Arena fall-out (2026-11-26 code-quality assessment Q2, CQ-GAME-11; decided 2026-11-26) | Falling out of the arena ends the run through the shared game-over path; the swarm preview respawns the craft instead. The walls and scene stay as they are. The route out is confirmed by hand first. | Review amendments |
+| 14 | One file per Arena screen (2026-11-26 code-quality assessment Q4, CQ-GAME-06; decided 2026-11-26) | Each screen gets one file holding its system and its drawing: `Hud.cpp`, `PauseMenu.cpp` and `Bindings.cpp`. `ArenaUi.cpp`/`.hpp` keep only the shared styles, screen models and F6 preview registration. The owner's reason: splitting made hot reload faster, so the one-file-per-object-or-screen rule is applied strictly. | Review amendments |
+| 15 | Sprite sheets in v1 (2026-11-26 assessment Q8, AA2-RND-03; decided 2026-11-26) | `SpriteComponent` gains `UvRect`, `Size` and `Pivot` in M6B's contract-break window, with defaults that reproduce today's output (whole texture, today's size, centred pivot). B5's GPU sprite record carries them. The engine offers the capability; games decide how to animate with it. | M6B B2 window, B5 |
+| 16 | GPU memory sub-allocation (2026-11-26 code-quality assessment Q3, CQ-VK-05; decided 2026-11-26) | Vendor AMD's Vulkan Memory Allocator (VMA, MIT, vendor-neutral over standard Vulkan) unmodified when B3 or B6 starts, with its settings in `cmake/RavenVma.cmake`, a swap script, and access only through a Raven seam. It removes the per-resource driver allocations (allocation cap, load hitches, waste) and gives the memory budget AA2-RND-08 needs. The download needs the owner's approval at that time. | M6B B3/B6 |
+| 17 | Lighting (M6B FD-26; decided 2026-11-26) | v1 keeps one sun plus ambient light. The renderer's target after v1 is physically based materials plus global illumination, reached through directional shadows first. M6B keeps that path open without building it: four textures fit the PBR set, tangents and an HDR target come with PBR, and lighting stays behind one function in `Material.hlsli` ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-26--lighting-in-v1)). | After v1; constraints in M6B |
+| 18 | No 2D work (M6B 2D-run decision; decided 2026-11-26) | "We can make things in 2D, but no value for now." No 2D run, no 2D sample and no 2D-only feature. The Courtyard sample and the 2D-only `Collision2D` helpers are removed with the review amendments (the public header in the contract-hash commit). Sprites stay as 3D world quads, with the overlay and UI; M6B's B1 becomes a Samples Gallery sprite baseline. | Review amendments, M6B |
+| 19 | Performance off the laptop (2026-11-26 assessment Q11, FD-39; decided 2026-11-26) | Budgets are enforced only on the minimum-spec Windows laptop. On macOS and Linux, M4 checks that the samples run at interactive rates and records the numbers, with no budget gate. Per-OS targets can be set later from those numbers. | M4 |
+
+## Not in v1 (2026-11-26)
+
+Owner decision 10. Each item stays possible later without rework; its trigger is when it is reconsidered.
+
+| Feature | What v1 keeps | Trigger |
+| --- | --- | --- |
+| Skeletal animation (skinned characters) | M6B's B0 contracts record how compute skinning fits, as text only, and the 128-byte object record does not grow. No skinning code is added. | A game needs animated characters. |
+| Player save games (slots or checkpoints beyond profiles) | Profiles, key bindings and the developer quick-save. The planned route is lossless scene capture plus runtime-only fields. | A game needs mid-level saves. |
+| Physically based materials and global illumination (target direction, decision 17) | Sun plus ambient light. M6B's material record, texture count and `Material.hlsli` lighting function keep the path open. | After v1, starting with directional shadows. |
+| Networking (prediction, rollback, lockstep) | The per-tick input records and seeded random streams, which keep lockstep and replay open. | Multiplayer comes into scope. |
 
 ## Where the engine stands (2026-11-23)
 
@@ -134,14 +158,16 @@ Captures match M2, and Debug validation is clean at 50k. See [the exit record](d
 
 ### M4 — Cross-platform parity
 
-Run the same engine on Linux and macOS. Platform contributors own native implementation and verification and can start now.
+Run the same engine on Linux and macOS. Platform contributors own native implementation and verification and can start now. M4 ports against the public contract as it stands at the end of M6B, and it closes every stage's platform exit (planning decision 9): the list below collects what each stage still owes on macOS and Linux.
 
 - [ ] macOS/Linux: random-byte hook for `AssetId::Generate`.
 - [ ] macOS/Linux: native game-module load/unload/replace (`dlopen`), with build-toolchain capture for game-only builds.
 - [ ] macOS/Linux: native directory watching (FSEvents/inotify), or a confirmed polling fallback.
 - [ ] macOS/Linux: native verification of audio through the shared miniaudio device layer, added in M6C on 2026-11-25 (planning decision 6). No native audio backend is written.
 - [ ] Shader toolchain (DXC/spirv-val) on all hosts, plus the MoltenVK portability subset.
-- [ ] CI builds and CPU tests on Windows, Linux and macOS. *The Linux job lands with M4, not before (planning decision 4). A read-only g++ 13/clang 18 syntax check of the shared sources on 2026-11-24 passed 65 of 67 files; see the [pre-M6 list](#pre-m6-hardening) for the one real defect.*
+- [ ] Platform exit of M5: code, every shader stage and supported assets reload on macOS and Linux with recorded timings and failure recovery.
+- [ ] Platform exit of M6: the small 3D game and the stress sample run on macOS and Linux using only engine APIs.
+- [ ] CI builds and CPU tests on Windows, Linux and macOS. *A non-blocking Linux compile-only job lands before M4 (planning decision 4, amended 2026-11-26); M4 adds linking, running and the CPU tests. A read-only g++ 13/clang 18 syntax check of the shared sources on 2026-11-24 passed 65 of 67 files; see the [pre-M6 list](#pre-m6-hardening) for the one real defect.*
 - [ ] Finish Win32 key translation, repeat/text input and focus state, and verify mixed-DPI movement. Bring the other backends to the same input contract. *Windows focus state, key repeat and stable key IDs landed on 2026-11-23 ([InputProcessing.md](docs/InputProcessing.md#focus-key-repeat-and-stable-key-ids-2026-11-23)). Text input waits for a caller. Mixed DPI and real-keyboard checks remain.*
 - [ ] Verify queue-family configurations beyond the single-family device, and document GPU requirements. *Requirements documented, discrete GPUs preferred and the Intel Iris Xe verified on 2026-11-23 ([PlatformHandoff.md](docs/PlatformHandoff.md#gpu-requirements)). No tested device has separate graphics and present families.*
 
@@ -157,7 +183,7 @@ Design: [HotReloadDesign.md](docs/HotReloadDesign.md) (owner decisions Q1–Q7, 
 - [x] Reduce DLL save-to-present from about 3.5 s to a target set after profiling the build (for example below 1.5 s for a one-file edit). *Targets set in review (D1, 2026-11-23): Debug ≤ 1.5 s, Release ≤ 2.0 s. Measured Debug 1.3–1.6 s and Release 1.63–1.87 s (median 1.69 s); see the [exit record](docs/HotReloadDesign.md#m5-exit-record-2026-11-23).*
 - [x] Extend last-good recovery and diagnostics to every newly supported replacement path.
 
-**Exit:** code, every shader stage and supported assets reload on all platforms with recorded timings and failure recovery.
+**Exit (Windows):** code, every shader stage and supported assets reload with recorded timings and failure recovery. The platform exit is owed by [M4](#m4--cross-platform-parity) (planning decision 9).
 
 **Exit status (2026-11-23):** met on Windows. One unexplained 437 ms frame during a game build with validation layers is tracked (D2). macOS and Linux follow through their M4 backends. See the [M5 exit record](docs/HotReloadDesign.md#m5-exit-record-2026-11-23).
 
@@ -171,7 +197,7 @@ Small fixes that no later step replaces, so that game-written data cannot end th
 
 M6 runs in three stages with their own exits and reviews (planning decision 5). One design note comes first and records FD-06 to FD-17, starting with the game project layout (FD-17): [DataModelDesign.md](docs/DataModelDesign.md), decided 2026-11-24. The step numbers are the assessment's ([section 6](docs/ArchitectureAssessment.md)).
 
-**Exit for M6 as a whole:** a small 3D game, the stress sample and the 2D sample run on all platforms using only engine APIs.
+**Exit for M6 as a whole (Windows):** a small 3D game and the stress sample run using only engine APIs. The 2D sample was dropped (planning decision 18). The platform exit is owed by [M4](#m4--cross-platform-parity) (planning decision 9).
 
 ### M6A — Host and data model
 
@@ -187,18 +213,18 @@ M6 runs in three stages with their own exits and reviews (planning decision 5). 
 - [x] M6-8: migrate game components by field name across layout changes, using the field table, now that the host no longer compiles game components. *Moved from M1 via M5 (owner decision Q7, 2026-11-23); see [HotReloadDesign.md](docs/HotReloadDesign.md#h6--field-level-component-migration-q7).*
 - [x] Narrow the module contract to the engine's public surface: generate the watched-input list from CMake, and stop hashing game headers. *Moved from the assessment's M6-10 into M6A, because this exit needs it (planning decision 5).*
 
-**Exit:** a game defines a component the host never compiles, authors it in a scene file, and edits one of its fields while running, with no restart. The save/load round trip runs in CI. Spawning and despawning 1k entities per frame among 100k stays within budget. This is the stable contract M4 ports against.
+**Exit:** a game defines a component the host never compiles, authors it in a scene file, and edits one of its fields while running, with no restart. The save/load round trip runs in CI. Spawning and despawning 1k entities per frame among 100k stays within budget. M6B changes the public contract again, so M4 ports against the end of M6B (planning decision 9).
 
 ### M6B — Rendering and content
 
 Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, textures, asset loading, multi-object FBX) before it starts. Design note: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26), with five owner decisions and the rest delegated.
 
 - [ ] M6-9: draw grouping by (pipeline, mesh), material identity with texture leases, and per-material shaders: a material references a shader asset, and GPU-culled commands are drawn with one pipeline per shader. *Owner decision Q3, 2026-11-23; see [HotReloadDesign.md](docs/HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3).*
-- [ ] M6-9: move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, with an owner-requested 2D run. *Moved from M3 (owner decision Q5, 2026-11-22).*
+- [ ] M6-9: move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, checked against a Samples Gallery baseline (the 2D run was dropped, planning decision 18). *Moved from M3 (owner decision Q5, 2026-11-22).*
 - [ ] M6-10: a per-frame upload batch, and import of multi-object FBX files with stable sub-asset identities.
 - [ ] Asynchronous asset resolution with placeholders.
 
-**Exit:** sprites and one custom material shader run on the GPU-driven path. A multi-object FBX imports with stable IDs. The owner-requested 2D run passes.
+**Exit:** sprites and one custom material shader run on the GPU-driven path. A multi-object FBX imports with stable IDs. The Gallery's sprites match their baseline captures.
 
 ### M6C — Game services and the sample game
 
@@ -215,7 +241,7 @@ Design: [GameServicesDesign.md](docs/GameServicesDesign.md), decided 2026-11-24 
 - [ ] C9: the arena sample game (`Games/Arena`, FD-46) and the developer quick-save. *Both parts built 2026-11-25, the second with the HUD, menus, key bindings and sounds ([record](docs/GameServicesDesign.md#c9-second-part--hud-menus-key-bindings-and-sounds-2026-11-25)).*
 - [ ] C10: the determinism check and the exit check with every measurement. *Done 2026-11-25, pending the owner's review: every exit item passes ([results](docs/GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).*
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
-- [ ] Keep the 3D samples and Courtyard (2D) working on all platforms through the reusable engine.
+- [ ] Keep the 3D samples and Arena working through the reusable engine, on Windows now and on macOS and Linux through M4.
 
 **Exit:** the M6 exit above, checked through the [M6C exit checklist](docs/GameServicesDesign.md#m6c-exit-checklist).
 
@@ -234,4 +260,4 @@ A full visual editor, arbitrary C++ state migration beyond field-level component
 
 ## Collision and physics
 
-3D collision and physics come from Jolt Physics in M6C ([FD-32](docs/GameServicesDesign.md#fd-32--collision-and-physics)). General-purpose 2D collision stays deferred: Courtyard's swept XZ checks and trigger overlaps cover its current gameplay. Crowd movement and navigation for many units are a later milestone ([FD-47](docs/GameServicesDesign.md#fd-47--movement-and-control)).
+3D collision and physics come from Jolt Physics in M6C ([FD-32](docs/GameServicesDesign.md#fd-32--collision-and-physics)). 2D collision is not planned (planning decision 18); Courtyard's swept XZ helpers are removed with it. Crowd movement and navigation for many units are a later milestone ([FD-47](docs/GameServicesDesign.md#fd-47--movement-and-control)).

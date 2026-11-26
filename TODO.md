@@ -4,7 +4,7 @@ This is the actionable task list for the current milestones in [ROADMAP.md](ROAD
 
 Working agreement: the assistant suggests small, reviewable engine snippets and the owner applies them. Engine files change only when the owner explicitly requests that specific change (clarified 2026-11-01). Documentation and CMake edits do not imply engine-edit approval. Check an item only when its result has been demonstrated.
 
-Priority: 3D first. 2D runtime testing needs an explicit owner request. macOS and Linux contributors work on M4 in parallel.
+Priority: 3D only. No 2D work for now (owner, 2026-11-26; Courtyard is removed). macOS and Linux contributors work on M4 in parallel.
 
 ## M0 — Safety net and baseline (done 2026-11-24)
 
@@ -47,7 +47,7 @@ Not planned unless a milestone changes the area: math/projection, scene binary c
 - [x] Add dense sparse-set pools behind the current Read/Write API, so the samples don't change. Applied 2026-11-21. At 100k entities, Transform read+write is 2.1 ms and a random read 15 ns, which meets the ≤ 50 ns budget. See [EngineModules.md](docs/EngineModules.md#retained-ecs-state-and-game-reload).
 - [x] Add views with borrowed references, `TryGet`/`Single`/`Count` and per-slot scene IDs, then port `SceneAccess::Query` and the gameplay loops. Applied 2026-11-21. A 100k-entity Transform view takes 0.11 ms, which meets the ≤ 0.3 ms budget. Change ticks move to the world-transform step.
 - [x] Add the host system schedule: registered systems, FixedUpdate/Update phases and per-system timing. Applied 2026-11-21. The command buffer is deferred until gameplay first spawns or despawns at runtime.
-- [ ] Run Courtyard (2D, fixed step) once on request, to confirm player movement through the FixedUpdate system. It is built but not run.
+- Dropped 2026-11-26: running Courtyard once on request. Courtyard is removed (owner: no 2D work for now).
 - [x] Add change ticks, a cached world-transform component and the hierarchy update, and port draw gathering. Applied 2026-11-21. Picking stays live. 50k entities with 20% changed take 0.52–0.57 ms; the 4,000-mesh M1 stages take 0.37 ms p95 (target ≤ 1.96 ms).
 - [x] M1 exit check (step 7): every budget passed together, including a 50k-match view at 0.18–0.20 ms. Compatible and rejected reloads keep state in the smoke test and in a live Release session, and Vulkan validation is clean at 4,000 meshes. See [the exit record](docs/ECSDesign.md#m1-exit-record-2026-11-21).
 
@@ -149,11 +149,32 @@ Order (owner, 2026-11-25): the owner's review of C1–C6 and a commit, then C9 w
 
 ## M6B — Rendering and content (next)
 
-Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26). Step order B1–B8 there; it starts after the owner's decisions.
+Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26). Step order B1–B8 there. The owner's decisions are settled (2026-11-26); B1 starts after the review amendments and the B0 contracts below.
 
-- [ ] Owner review of [ArchitectureAssessment-2026-11-26.md](docs/ArchitectureAssessment-2026-11-26.md) before step B2: the review amendments for M6A and M6C (its section 7.1, Phase 1), the B0 contracts for this note, and owner questions Q1–Q13 one at a time, starting with Q12.
-- [ ] Owner review of [CodeQualityAssessment-2026-11-26.md](docs/CodeQualityAssessment-2026-11-26.md), together with the item above: the two fixes for now (CQ-GAME-01 unchecked `TryGet` in Arena, CQ-BLD-01 the live harness snapshot missing `Content`), the fix plan in its section 8, the proposed coding rules in section 7, and owner questions Q1–Q4.
-- [ ] Owner decisions, one at a time: FD-18 material model, FD-19 custom material shaders, FD-23 multi-object FBX, FD-26 lighting in v1, and the 2D run. FD-20 to FD-22, FD-24, FD-25, FD-27 and FD-28 are delegated and recorded in the note.
+- [x] Owner questions from [ArchitectureAssessment-2026-11-26.md](docs/ArchitectureAssessment-2026-11-26.md) (Q1–Q13), [CodeQualityAssessment-2026-11-26.md](docs/CodeQualityAssessment-2026-11-26.md) (Q1–Q4) and this note (FD-18, FD-19, FD-23, FD-26, the 2D run), settled one at a time on 2026-11-26. Records: [planning decisions 4 and 7–19](ROADMAP.md#planning-decisions-2026-11-24) and [Not in v1](ROADMAP.md#not-in-v1-2026-11-26).
+  - Q12 decided 2026-11-26: the amendments are implemented directly and folded into the joint review ([planning decision 7](ROADMAP.md#planning-decisions-2026-11-24)).
+  - Q10 decided 2026-11-26: game-driven scene flow lands now, as a review amendment (planning decision 8).
+  - Q2 decided 2026-11-26: a non-blocking Linux compile-only CI job is added now (planning decision 4, amended).
+  - Q13 decided 2026-11-26: Windows exits per stage, platform exits collected in M4, and M4 ports against the end of M6B (planning decision 9).
+  - Q3, Q4 and Q5 decided 2026-11-26: skeletal animation, player save games and networking are not in v1 (planning decision 10, [Not in v1](ROADMAP.md#not-in-v1-2026-11-26)).
+  - Q1 decided 2026-11-26: every x86-64 CPU (SSE2) on every OS for v1 (planning decision 11).
+  - CQ Q1 decided 2026-11-26: a collider without a `RigidBodyComponent` uses the component's default friction 0.5 instead of Jolt's 0.2, landing with CQ-GP-01 in the review amendments (planning decision 12). Arena's crate push is checked by hand, the crate friction is retuned in ArenaTool if it feels wrong, the documented determinism hash is re-recorded, and Physics.md states the default.
+  - CQ Q2 decided 2026-11-26: falling out of the arena ends the run (planning decision 13).
+  - CQ Q4 decided 2026-11-26: one file per Arena screen, `Hud.cpp`, `PauseMenu.cpp` and `Bindings.cpp` (planning decision 14).
+  - Q7 removed 2026-11-26 (owner): what pauses behind a pause menu is gameplay design, not engine design. The engine offers per-bus pause and volume as features (AA2-MEDIA-07), with no engine-imposed policy; each game, Arena included, chooses in its own code.
+  - Q6 removed 2026-11-26 by the same rule: launch languages and shipped fonts are each game's product choice. The engine keeps its OFL Noto Sans, Arabic and KR set as defaults and loads fonts as assets for any script (AA2-MEDIA-05); the ICU data filter fix stays a technical item.
+  - Q8 decided 2026-11-26: sprite sheets are in v1 (planning decision 15).
+  - Q9 delegated 2026-11-26 (no on-screen change for existing content, and the indirect path draws in group order with depth): `Opaque` sprites stay as today, with real depth and no alpha test; a new `Cutout` mode is also depth-ordered; sort layer and order apply only to blended sprites, which stay CPU-sorted.
+  - CQ Q3 decided 2026-11-26: vendor VMA when B3 or B6 starts (planning decision 16).
+  - FD-18 decided 2026-11-26: shared `.ravenmaterial` files referenced by ID, per-object tint kept ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-18--material-model)).
+  - FD-19 decided 2026-11-26 after research: pixel shaders plus a vertex offset hook with declared maximum displacement, four textures and up to 16 named values per shader, build-time compiling for players and a background compile queue in development ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-19--custom-material-shaders)).
+  - FD-23 decided 2026-11-26, storage revised: `.ravenasset` sidecars for imported files, IDs in the headers of Raven's own formats, and project settings only in `Project.ravenproject`, landing at the start of B2 as `raven-project 3` ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-23--multi-object-fbx)).
+  - FD-26 decided 2026-11-26: v1 keeps sun plus ambient; PBR plus global illumination is the target after v1, and M6B keeps the path open (planning decision 17).
+  - The 2D run decided 2026-11-26: no 2D work at all for now. Courtyard and the 2D-only `Collision2D` helpers are removed with the review amendments, and B1 becomes a Samples Gallery sprite baseline (planning decision 18).
+  - Q11 decided 2026-11-26: budgets are enforced only on the laptop; macOS and Linux record their numbers in M4 with no budget gate (planning decision 19).
+- [ ] Review amendments for M6A and M6C, implemented directly and folded into the one joint review (planning decision 7): the trimmed Phase 1 list of the architecture assessment (section 7.1), the code-quality fixes for now (CQ-GAME-01, CQ-BLD-01 and its section 8 Phase 1 rows), scene flow (decision 8), the Linux compile job (decision 4), the Jolt instruction-set settings (decision 11), bare-collider friction (decision 12), Arena fall-out (decision 13), one file per Arena screen (decision 14) and the Courtyard removal (decision 18). Four commits; nothing is pushed before the review.
+- [ ] B0 contracts in this note before B2 (architecture assessment, AA2-DOC-07 and AA2-RND-01..07), now including the FD-19 vertex offset hook and the FD-23 sidecar format.
+- [ ] Adopt the proposed coding rules R1–R15 of the code-quality assessment (section 7) into AGENTS.md, as part of the joint review.
 - [ ] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4).
 
 ## M6A — Host and data model (implemented 2026-11-24, pending review)

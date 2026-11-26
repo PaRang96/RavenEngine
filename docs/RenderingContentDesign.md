@@ -14,11 +14,11 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 
 | # | ID | Question | Recommendation |
 | --- | --- | --- | --- |
-| 1 | [FD-18](#fd-18--material-model) | How designers author materials | A material **file** shared by many objects, referenced by ID; per-object tint stays |
-| 2 | [FD-19](#fd-19--custom-material-shaders) | What a custom material shader may change | Pixel (fragment) shaders only, with four named colors/values and four textures per material; compiled at build time |
-| 3 | [FD-23](#fd-23--multi-object-fbx) | How a multi-part FBX keeps stable IDs when the modelling file changes | IDs generated once and stored in the project file; an import command matches parts by name and reports renames |
-| 4 | [FD-26](#fd-26--lighting-in-v1) | How much lighting v1 has | Keep one sun plus ambient light for v1; directional shadows are the first renderer item after v1 |
-| 5 | [The 2D run](#the-2d-run) | Whether to run Courtyard (2D) now | Yes, as M6B's first step, because sprites move to the GPU path in this stage |
+| 1 | [FD-18](#fd-18--material-model) | How designers author materials | **Decided 2026-11-26 (owner): (b).** A material **file** shared by many objects, referenced by ID; per-object tint stays |
+| 2 | [FD-19](#fd-19--custom-material-shaders) | What a custom material shader may change | **Decided 2026-11-26 (owner), revised after research:** pixel shaders plus an engine-owned vertex offset hook with a declared maximum displacement; four textures and up to 16 named `float4` values declared per shader; compiled at build time for players and on a background compile queue in development |
+| 3 | [FD-23](#fd-23--multi-object-fbx) | How a multi-part FBX keeps stable IDs when the modelling file changes | **Decided 2026-11-26 (owner), revised:** IDs generated once; imported files get a `.ravenasset` sidecar (ID, kind, import settings, part table), Raven's own formats carry their ID in their header, and the project file keeps only project settings; parts match by name path and renames are reported |
+| 4 | [FD-26](#fd-26--lighting-in-v1) | How much lighting v1 has | **Decided 2026-11-26 (owner):** v1 keeps one sun plus ambient light; the renderer's target after v1 is physically based materials plus global illumination, and M6B must not block it |
+| 5 | [The 2D run](#the-2d-run) | Whether to run Courtyard (2D) now | **Decided 2026-11-26 (owner): no 2D work at all for now, and Courtyard is removed.** Sprites stay as 3D world quads (the Samples Gallery), and B5 is checked against a Gallery baseline |
 
 ### Delegated decisions
 
@@ -27,13 +27,13 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 | [FD-20](#fd-20--sprites-and-transparent-objects) | Sprites join the render world. Cut-out sprites are GPU-culled like meshes; blended sprites keep exact back-to-front order through a CPU-sorted path fed from the render world. |
 | [FD-21](#fd-21--textures) | Mip maps generated on the GPU at load, and a small fixed sampler set. Compressed texture formats wait for M7 cooking (a dependency, so an owner decision then). |
 | [FD-22](#fd-22--asset-resolution) | Keep preloading at scene load; asset IDs written at runtime load on workers with a placeholder instead of stalling a frame. |
-| [FD-24, FD-25, FD-27, FD-28](#other-decisions) | No memory allocator, no offscreen targets; measure 100% animated objects; threading already settled by M6C's job system. |
+| [FD-24, FD-25, FD-27, FD-28](#other-decisions) | VMA for GPU memory (owner, 2026-11-26), no offscreen targets; measure 100% animated objects; threading already settled by M6C's job system. |
 
 ---
 
 ## Goals and fixed constraints
 
-- **M6B exit (roadmap):** sprites and one custom material shader run on the GPU-driven path; a multi-object FBX imports with stable IDs; the owner-requested 2D run passes.
+- **M6B exit (roadmap):** sprites and one custom material shader run on the GPU-driven path; a multi-object FBX imports with stable IDs. The 2D run was dropped with Courtyard (owner, 2026-11-26).
 - **No regression:** the 50k animated steady state stays within measurement noise of M6C (same-day A/B), and the 3D captures stay within the M2 image tolerance.
 - **Hot reload:** every new content type (material, shader, multi-object model) reloads with last-good recovery, like textures and meshes today.
 - **No throwaway work**, **minimal tests**, **minimum spec** (the RTX 3070 Ti laptop, Release), and **third-party code never edited**, as in every stage.
@@ -58,6 +58,8 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 | **(b) A material file referenced by ID** | A `.ravenmaterial` text file (shader, colors, textures); objects point to it; per-object tint still works | One edit changes every object using it, live; the material ID is the table key and owns the texture leases | A new file type, edited as text until an editor exists |
 | (c) Material file plus per-object overrides of any parameter | As (b), plus any value overridable per object | Most flexible | Every override combination is a new table entry again; animated overrides grow it every frame |
 
+**Decision (owner, 2026-11-26): (b).** The change is additive: `MaterialComponent` gains the material `AssetRef`, and its inline values stay as defaults ([planning decision 7](../ROADMAP.md#planning-decisions-2026-11-24)).
+
 **Recommendation: (b).** It keeps (a)'s per-object variation through the existing `Tint`, which covers the common "same material, different color" case without (c)'s table growth. Overrides beyond tint can be added later as their own decision without changing the file format. Existing scenes are rewritten by the sample generators (no hand migration).
 
 ---
@@ -81,7 +83,15 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 | Any number of typed parameters per shader | Unlimited parameters | Flexible | Variable sizes break the single table; reflection and validation per shader |
 | Compile shaders at runtime in players | Mods could add shaders | — | Ships DXC (licensing and size), with no v1 need |
 
-**Recommendation:** pixel shaders only, a fixed record of four `float4` values and four texture indices, names mapped to slots in the material file, compiled at build time and reloaded live in development. Naming in the file gives the readability of typed parameters without breaking the single table. Vertex effects stay possible later as a separate decision; they would not change the parameter record or the files.
+**Decision (owner, 2026-11-26), revised after a survey of Unreal 5 (Nanite World Position Offset), Unity 6 (SRP Batcher, GPU Resident Drawer), Godot 4, Bevy and id Tech:**
+
+- **Vertex control:** the engine keeps its own vertex shader. A material may add an `Offset` function (the Nanite World Position Offset model) and must then declare its maximum displacement. Culling grows those objects' bounds by that amount, and only materials with an offset take their own, slower vertex path; plain materials keep today's path. Full custom vertex shaders stay excluded, as in every surveyed GPU-driven engine.
+- **Parameters:** four textures, plus 0 to 16 `float4` values declared per shader as an HLSL struct and named in the material file. Material data lives in one GPU buffer, each material at its own offset, so a material pays only for the values it uses and the single table survives variable sizes. The names are checked against the compiled shader at load. Raising the cap changes one constant, not the format.
+- **Compiling:** players ship only build-time shaders. In development a background compile queue (the process lane of AA2-HR-01) compiles them, and the last good version, or a placeholder for a new material, draws until each compile finishes.
+- **Few shaders, rich data:** the survey shows that shader count, not parameter count, drives cost at scale (Nanite bins, Doom Eternal's few uber shaders), so variety comes from parameters and textures.
+- The B0 contracts specify the fragment-side and vertex-hook plumbing before B2 (AA2-RND-01).
+
+**Original draft recommendation, kept for the record:** pixel shaders only, a fixed record of four `float4` values and four texture indices, names mapped to slots in the material file, compiled at build time and reloaded live in development. Naming in the file gives the readability of typed parameters without breaking the single table. Vertex effects stay possible later as a separate decision; they would not change the parameter record or the files.
 
 ---
 
@@ -93,7 +103,7 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 
 - Sprites are gathered on the CPU every frame, culled on the CPU, sorted (layer, order, depth, submission) and drawn in instanced runs, each run binding its own per-texture descriptor set. They never enter the render world.
 - The M6C UI overlay already draws instanced quads from the bindless texture array with the shared sampler, and was built for sprites to share ("feed 2" in [UIDesign.md](UIDesign.md)).
-- Courtyard draws only sprites.
+- Courtyard draws only sprites. It is removed (owner, 2026-11-26); the Samples Gallery's opaque and blended quads remain the sprite content.
 
 ### Decision
 
@@ -155,7 +165,16 @@ The FBX importer rejects files with more than one mesh node. One project record 
 | (b) IDs computed from each part's name/path in the file | Nothing stored | No records | Renaming a part in the modelling tool silently breaks every reference to it, with nowhere to fix it |
 | (c) Merge all parts into one mesh | One mesh per file | Simplest | Loses per-part transforms, picking and materials |
 
-**Recommendation: (a), with (b)'s convenience.** A `RavenSceneTool import-model` command (and the live reload) matches parts by name path first, so ordinary re-exports need nothing. New parts get new IDs, and a part whose name vanished is reported with its old ID so a rename can be repaired. Each part becomes a mesh sub-asset; the file's node hierarchy is instantiated as entities.
+**Decision (owner, 2026-11-26): (a), with the storage revised so that asset properties and project settings are separate** (the Godot model, compared with Unity's `.meta` files):
+
+- **Imported files** (PNG, FBX, WAV and the other decoded formats) get a sidecar beside them, for example `Cube.fbx.ravenasset`. It holds the asset ID, its kind, its import settings (color space now; mips and compression later) and, for models, the part table: each part's name path and ID.
+- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmaterial`) store their ID in their own header, so they need no second file.
+- **`Project.ravenproject` keeps only project settings:** the scene order and startup scene, the window title and the physics layer names.
+- **Discovery:** development scans `Content/` at startup, and the reload service's existing watch reimports new or edited sidecars live. Packaging writes one generated index, so players never scan.
+- **Reported, never silent:** a source file without a sidecar gets a new ID with one log line; a sidecar without its source is reported as an orphan; two files with one ID (a copy) are reported and the copy gets a new ID.
+- **Timing:** the split lands at the start of B2, before `.ravenmaterial` exists, as `raven-project 3` with a converter from today's records; the sample generators regenerate their content.
+
+**Original draft recommendation, kept for the record: (a), with (b)'s convenience.** A `RavenSceneTool import-model` command (and the live reload) matches parts by name path first, so ordinary re-exports need nothing. New parts get new IDs, and a part whose name vanished is reported with its old ID so a rename can be repaired. Each part becomes a mesh sub-asset; the file's node hierarchy is instantiated as entities.
 
 ---
 
@@ -174,7 +193,14 @@ One directional light plus ambient, simple diffuse shading, no shadows. The v1 g
 | (c) Many point and spot lights | Richer scenes | — | A light-culling structure; changes every lit material |
 | (d) Physically based materials | Standard asset-store look | — | More textures per material; changes FD-18, FD-19 and FD-21 together |
 
-**Recommendation: (a) for v1, (b) as the first renderer item after v1.** M6B's material and shader work keeps (b) open: shadows would add one input to `Material.hlsli` and one pass, without changing material files.
+**Decision (owner, 2026-11-26): (a) for v1; the target direction after v1 is (d), physically based materials, plus global illumination.** M6B keeps that path open without building any of it (no throwaway):
+
+- FD-19's four textures fit the usual PBR set: base color, normal, packed occlusion/roughness/metallic, emissive. Its up to 16 values cover the PBR factors.
+- Normal maps need vertex tangents, which `ColorVertex` lacks today. The B7 FBX importer keeps the tangent data reachable, and tangents join the vertex layout when PBR lands, not before.
+- Directional shadows remain the first step, because GI builds on them. GI and PBR also need an HDR offscreen target with tone mapping, which FD-25's per-view split keeps possible.
+- `Material.hlsli` keeps lighting behind its one lighting function, so PBR and GI replace that function rather than every material shader.
+
+**Original draft recommendation: (a) for v1, (b) as the first renderer item after v1.** M6B's material and shader work keeps (b) open: shadows would add one input to `Material.hlsli` and one pass, without changing material files.
 
 ---
 
@@ -182,7 +208,9 @@ One directional light plus ambient, simple diffuse shading, no shadows. The v1 g
 
 The project rule is that 2D runtime testing needs an explicit owner request. Courtyard builds, but its movement has not been run through the renderer rewrites since M1, and M6B moves its sprites to a new path.
 
-**Recommendation:** request it now as step B1. It records Courtyard's look and play on today's path, so the sprite move (B5) is compared against a known-good baseline, and the exit's "owner-requested 2D run" is checked against the same captures.
+**Decision (owner, 2026-11-26): no 2D work at all for now.** "We can make things in 2D, but no value for now." The Courtyard sample is removed with the review amendments, together with the 2D-only `Collision2D` helpers that only Courtyard calls. The engine keeps sprites as 3D world quads, the overlay and the UI. B1 becomes a sprite baseline: the Samples Gallery's opaque and blended quads captured on today's path, so B5 is compared against it.
+
+**Original draft recommendation:** request it now as step B1. It records Courtyard's look and play on today's path, so the sprite move (B5) is compared against a known-good baseline, and the exit's "owner-requested 2D run" is checked against the same captures.
 
 ---
 
@@ -192,7 +220,7 @@ The project rule is that 2D runtime testing needs an explicit owner request. Cou
 
 | ID | Decision |
 | --- | --- |
-| FD-24 GPU memory | One allocation per resource until a measurement nears the device limit; then engine pools like the geometry pools. M6B records the texture count and the device limit. |
+| FD-24 GPU memory | *Owner decision, 2026-11-26 ([planning decision 16](../ROADMAP.md#planning-decisions-2026-11-24)), replacing the delegated draft:* textures, staging buffers and attachments are sub-allocated through AMD's Vulkan Memory Allocator (VMA, MIT), vendored unmodified behind a Raven seam when B3 or B6 starts. It removes the per-resource allocation cap and load hitches and provides the memory budget. M6B still records the texture count and the device limits. |
 | FD-25 Offscreen targets | Stay swapchain-only unless FD-26 changes. When `VulkanGpuScene` is touched, per-world state is separated from per-view state so a second view needs no rewrite. |
 | FD-27 Every object moving | Measured in M6B (100% of 50k animated) after the render-world sync rewrite; if it misses, tighten the single-threaded path, then use the job system. |
 | FD-28 Threading | Settled by M6C's shared job system: host stages may use it; game systems stay single-threaded. |
@@ -205,7 +233,7 @@ Each step leaves nothing to replace. Steps that need an owner decision start aft
 
 | Step | Content | Uses |
 | --- | --- | --- |
-| B1 | **2D run:** Courtyard played and captured on today's path | The 2D run |
+| B1 | **Sprite baseline:** the Samples Gallery's opaque and blended quads captured on today's path (replaces the 2D run, owner 2026-11-26) | The 2D run decision |
 | B2 | **Material files:** `.ravenmaterial`, the `material` project record, `MaterialComponent` referencing it, the material table keyed by asset ID and owning texture leases, hot reload; samples regenerated | FD-18 |
 | B3 | **Textures:** GPU mip generation, the sampler set, per-texture samplers removed | FD-21 |
 | B4 | **Material shaders:** shader assets, the parameter record, draw grouping by (pipeline, mesh), one indirect draw per pipeline, live reload; the render-world sync rewrite and its 0.27 ms | FD-19 |
@@ -229,7 +257,7 @@ Each step leaves nothing to replace. Steps that need an owner decision start aft
 
 1. Sprites and one custom material shader run on the GPU-driven path.
 2. A multi-object FBX imports with stable IDs, and a re-export with a renamed part is reported, not silently broken.
-3. The owner-requested 2D run passes, compared with B1's captures.
+3. The Gallery's sprites on the GPU path match B1's captures within the M2 image tolerance.
 4. Materials, shaders and multi-object models hot-reload with last-good recovery.
 5. Every measurement above is recorded; the 50k steady state shows no regression; the 3D captures stay within the M2 tolerance.
 6. CI passes with warnings as errors in Debug and Release.
