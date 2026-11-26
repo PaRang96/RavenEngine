@@ -74,7 +74,7 @@ Build a Windows preset once and launch from the repository root.
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --perspective --watch-mesh
 ~~~
 
-Press F6 to swap the two object entities' mesh handles. Press it again to restore them. The floor keeps its original handle. F6 also works in Perspective without file watching.
+Press G to swap the two object entities' mesh handles. Press it again to restore them. The floor keeps its original handle. G also works in Perspective without file watching. (It was F6 until C7's developer preview key took F6 over; the swap is a mapped game action since 2026-11-26.)
 
 Export a single mesh object from Blender to either source FBX under `Content/Meshes`. With mesh development watching enabled, initial geometry and subsequent saves use the configured source Content root. Ordinary runs use staged FBX beside the executable. The startup log shows the absolute source paths being watched. Exporting box geometry over `Sphere.fbx` updates entities using that asset. Exporting sphere geometry over `Cube.fbx` updates both the box and the floor when their original assignments are active.
 

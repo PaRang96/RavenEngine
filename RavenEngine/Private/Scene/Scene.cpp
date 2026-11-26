@@ -634,10 +634,27 @@ namespace Raven
 				return &found->second;
 			error = "incorrect asset type";
 		}
+		// A reference that was skipped stays skipped until the scene reloads (F3, or a save), so a
+		// broken file is not decoded again on every call (AA2-RT-03).
+		else if (m_ReportedAssets.contains(id))
+			return nullptr;
 		else
 			error = m_Store ? m_Store->FindReferenceError(catalog, id, kind) : "no asset store";
 		if (!error)
-			return &UseAsset(catalog, id, kind);
+		{
+			// Decode and upload failures are data errors too (FD-06): the reference draws nothing.
+			try
+			{
+				return &UseAsset(catalog, id, kind);
+			}
+			catch (const std::exception& failure)
+			{
+				m_ReportedAssets.insert(id);
+				Log(LogLevel::Warning, "Scene asset could not be loaded and is skipped until the scene reloads: " +
+					id.ToString() + ": " + failure.what());
+				return nullptr;
+			}
+		}
 		if (m_ReportedAssets.insert(id).second)
 			Log(LogLevel::Warning, std::string("Scene asset reference skipped (") + error + "): " + id.ToString());
 		return nullptr;

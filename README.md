@@ -60,7 +60,7 @@ Each game root's `Games/<Name>/Content/Project.ravenproject` registers stable UU
 
 On Windows, the default development launch watches every engine shader stage and include. See the [Windows 3D workflow](docs/DevelopmentReload.md).
 
-In Perspective, press F6 to swap the cube and sphere mesh sources. The development launch watches the game's source content root, independent of the launch directory. See [live Perspective mesh reload](docs/AssetSystem.md#live-perspective-mesh-reload).
+In Perspective, press G to swap the cube and sphere mesh sources (F6 is the developer preview key). The development launch watches the game's source content root, independent of the launch directory. See [live Perspective mesh reload](docs/AssetSystem.md#live-perspective-mesh-reload).
 
 ## Build on Windows
 

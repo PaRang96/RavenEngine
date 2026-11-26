@@ -4,7 +4,7 @@
 
 The Windows 3D path uses machine-readable binary scenes and reusable DLL gameplay. Launch free-fly development mode, press **F4 three times** to select Puzzle, left-click both orange switches, wait for the purple gate to rise, then fly through it to the cyan goal. Active switches turn green. The goal completes once and plays the existing win cue. F3 restarts. F4 order is Perspective, Gallery, Assemblies, Puzzle.
 
-WASD moves, Q/E changes height, right-drag looks, wheel changes FOV, and left-click picks. Space pauses/resumes component animation while leaving camera control available. F6 swaps the explicitly bound mesh sources. The original Perspective T rotation and standalone orbit/Home controls remain available. The puzzle gates completion through switch/rotator/door state; it uses the existing free-fly controller and does not add general collision or physics.
+WASD moves, Q/E changes height, right-drag looks, wheel changes FOV, and left-click picks. Space pauses/resumes component animation while leaving camera control available. G swaps the explicitly bound mesh sources (a mapped action; F6 was taken by the developer preview key in C7). The original Perspective T rotation and standalone orbit/Home controls remain available. The puzzle gates completion through switch/rotator/door state; it uses the existing free-fly controller and does not add general collision or physics.
 
 ## Complete launch commands
 

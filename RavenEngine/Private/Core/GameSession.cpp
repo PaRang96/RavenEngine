@@ -107,8 +107,9 @@ namespace Raven
 					  throw std::runtime_error("not a scene file; convert it with RavenSceneTool");
 				  const auto file = SceneFile::Decode(bytes);
 				  auto scene = std::make_unique<Scene>(m_Game.GetRegistry(), m_Project.GetAssets());
-				  InstantiateScene(file, *scene);
+				  // Leased first, so a missing or broken asset fails before the costly instantiation.
 				  LeaseAssets(file, *scene, catalog);
+				  InstantiateScene(file, *scene);
 				  return scene;
 			  }, config.StartScene)),
 		  m_Commands(m_Session->GetActive()),

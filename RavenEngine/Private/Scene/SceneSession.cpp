@@ -120,6 +120,8 @@ namespace Raven
 		std::optional<SceneProjectDefinition> PendingProject;
 		std::optional<std::vector<std::byte>> PendingScene;
 		std::chrono::steady_clock::time_point RetryAfter{};
+		// Grows while the scene file cannot be read (an editor holding it open), up to two seconds.
+		std::chrono::milliseconds ReadBackoff{ 0 };
 		std::string ReportedError;
 	};
 
@@ -197,7 +199,24 @@ namespace Raven
 			}
 			if (m_Impl->PendingScene)
 			{
-				if (ReadScene(m_Impl->Path) != *m_Impl->PendingScene)
+				std::vector<std::byte> current;
+				try
+				{
+					current = ReadScene(m_Impl->Path);
+					m_Impl->ReadBackoff = {};
+				}
+				catch (const std::exception& error)
+				{
+					// Only a file that cannot be read is retried, with a growing pause.
+					if (m_Impl->ReportedError != error.what())
+						Log(LogLevel::Warning, "Cannot read scene; retrying: " + std::string(error.what()));
+					m_Impl->ReportedError = error.what();
+					m_Impl->ReadBackoff = std::clamp(m_Impl->ReadBackoff * 2, std::chrono::milliseconds(200),
+						std::chrono::milliseconds(2000));
+					m_Impl->RetryAfter = std::chrono::steady_clock::now() + m_Impl->ReadBackoff;
+					return false;
+				}
+				if (current != *m_Impl->PendingScene)
 				{
 					m_Impl->PendingScene.reset();
 					return false;
@@ -216,10 +235,15 @@ namespace Raven
 		}
 		catch (const std::exception& error)
 		{
+			// A candidate that failed is dropped, not retried: a retry costs a full scene build, and the
+			// watcher delivers the next save anyway (AA2-RT-05).
 			if (m_Impl->ReportedError != error.what())
-				Log(LogLevel::Warning, "Cannot replace scene/project; keeping active world: " + std::string(error.what()));
+				Log(LogLevel::Warning, "Cannot replace scene/project; keeping the active world until the file changes: " +
+					std::string(error.what()));
 			m_Impl->ReportedError = error.what();
-			m_Impl->RetryAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+			m_Impl->PendingScene.reset();
+			m_Impl->PendingProject.reset();
+			m_Impl->RetryAfter = {};
 		}
 		return false;
 	}

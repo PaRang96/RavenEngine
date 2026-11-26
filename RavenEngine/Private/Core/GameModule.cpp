@@ -252,6 +252,8 @@ namespace Raven
 		bool AutoBuild = false;
 		FileStamp AttemptedFile{};
 		std::atomic<bool> Building{ false };
+		// Set by F5: the worker forgets a failed build, so the next build stamp is offered again.
+		std::atomic<bool> ResetBuildFailure{ false };
 		std::mutex EventMutex;
 		std::optional<WatchEvent> Pending;
 		std::atomic<bool> HasEvent{ false };
@@ -416,20 +418,25 @@ namespace Raven
 			if (expected && before != *expected)
 				return false;
 			auto candidate = std::make_unique<LoadedGame>();
-			// The build output is never loaded, so the linker can replace it at any time.
-			// create_directory reserves a unique directory across hosts and processes.
-			std::filesystem::path directory;
-			do
-			{
-				directory = Path.parent_path() / (".raven-game-" + std::to_string(++NextCopy));
-			} while (!std::filesystem::create_directory(directory));
-			candidate->Copy = directory / Path.filename();
 			const auto stamped = ReloadTrace::Now();
-			std::filesystem::copy_file(Path, candidate->Copy);
-			if (!(Stamp(Path) == before) || Stamp(candidate->Copy).Digest != before.Digest)
-				throw std::runtime_error("Game DLL changed during copy; retry reload");
+			if (AutoBuild)
+			{
+				// The build output is never loaded, so the linker can replace it at any time.
+				// create_directory reserves a unique directory across hosts and processes.
+				std::filesystem::path directory;
+				do
+				{
+					directory = Path.parent_path() / (".raven-game-" + std::to_string(++NextCopy));
+				} while (!std::filesystem::create_directory(directory));
+				candidate->Copy = directory / Path.filename();
+				std::filesystem::copy_file(Path, candidate->Copy);
+				if (!(Stamp(Path) == before) || Stamp(candidate->Copy).Digest != before.Digest)
+					throw std::runtime_error("Game DLL changed during copy; retry reload");
+			}
 			const auto copied = ReloadTrace::Now();
-			candidate->Library = Platform::LoadGameLibrary(candidate->Copy);
+			// Without automatic builds (players, --no-watch) nothing replaces the module, so it loads
+			// in place: no copy, and a read-only install folder works (AA2-HR-05).
+			candidate->Library = Platform::LoadGameLibrary(candidate->Copy.empty() ? Path : candidate->Copy);
 			const auto loaded = ReloadTrace::Now();
 			const auto contract = reinterpret_cast<GetGameContractFunction>(
 				Platform::FindGameEntryPoint(candidate->Library, GameContractEntryPoint));
@@ -590,8 +597,11 @@ namespace Raven
 		ReloadOptions sourceOptions{ "game sources", ImporterVersion::GameSources };
 		if (AutoBuild)
 			sourceWatch = ReloadService::Subscribe(SourceInputs(Watched), sources, sourceOptions);
-		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ Path } }, output,
-			{ "game DLL", ImporterVersion::GameSources });
+		// The build's input stamp, not the DLL: every build that passes verification writes it last
+		// (BuildGame.cmake.in), so a manual build is offered only once its DLL and PDB are complete,
+		// and the service never opens the DLL while the linker writes it (AA2-HR-03).
+		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ directory / "BuildInputs.sha256" } }, output,
+			{ "game build stamp", ImporterVersion::GameSources });
 		bool checkSources = AutoBuild;
 		bool checkOutput = false;
 
@@ -599,6 +609,9 @@ namespace Raven
 		{
 			try
 			{
+				// F5 retries the current build output, so a failed build no longer blocks offers.
+				if (ResetBuildFailure.exchange(false))
+					buildFailed = false;
 				int exitCode = 0;
 				if (build && Platform::PollBuildProcess(*build, exitCode))
 				{
@@ -649,8 +662,13 @@ namespace Raven
 				if (checkOutput)
 				{
 					checkOutput = false;
-					if (!build && !buildQueued && !buildFailed)
+					// A new stamp is a build that passed verification, so an earlier failure no
+					// longer applies.
+					if (!build && !buildQueued)
+					{
+						buildFailed = false;
 						offer(Stamp(Path));
+					}
 				}
 			}
 			catch (const std::exception& error)
@@ -679,6 +697,12 @@ namespace Raven
 		m_Impl->BuildDirectory = std::filesystem::path(GameBuild::BuildRoot) / m_Impl->Path.stem();
 		if (autoBuild)
 		{
+			// Copies left by hosts that did not exit cleanly. A copy still loaded by another host is
+			// locked, so its removal fails harmlessly (AA2-HR-05).
+			std::error_code ignored;
+			for (const auto& entry : std::filesystem::directory_iterator(m_Impl->Path.parent_path(), ignored))
+				if (entry.is_directory(ignored) && entry.path().filename().string().starts_with(".raven-game-"))
+					std::filesystem::remove_all(entry.path(), ignored);
 			if (!std::filesystem::is_regular_file(m_Impl->BuildDirectory / "BuildGame.cmake"))
 				throw std::invalid_argument("Automatic builds need a game root this build configured: " +
 					m_Impl->Path.stem().string());
@@ -692,6 +716,13 @@ namespace Raven
 
 	bool GameModule::Reload()
 	{
+		// F5 during a build would race the linker; the build's own offer activates the result.
+		if (m_Impl->Building.load())
+		{
+			Log(LogLevel::Info, "Game build in progress; the new module activates when it finishes");
+			return false;
+		}
+		m_Impl->ResetBuildFailure.store(true);
 		return m_Impl->Activate();
 	}
 

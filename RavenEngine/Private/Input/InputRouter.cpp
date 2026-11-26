@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <format>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -181,6 +182,35 @@ namespace Raven
 		m_Contexts = std::move(next);
 		SortContexts();
 		ClearRoutes();
+		// A game default that a developer key takes is never seen in development: say so at every
+		// activation, once per action (AA2-GP-12).
+		for (const auto& engine : m_Contexts)
+		{
+			if (!engine.Engine)
+				continue;
+			for (const auto& context : m_Contexts)
+			{
+				if (context.Engine)
+					continue;
+				for (const auto& action : context.Actions)
+				{
+					const auto taken = std::find_if(engine.Actions.begin(), engine.Actions.end(), [&action](const Action& developer)
+					{
+						return std::any_of(developer.Bindings.begin(), developer.Bindings.end(), [&action](const InputBinding& key)
+						{
+							return std::any_of(action.Defaults.begin(), action.Defaults.end(), [&key](const InputBinding& binding)
+							{
+								return binding.Code == key.Code && binding.Modifiers == key.Modifiers;
+							});
+						});
+					});
+					if (taken != engine.Actions.end())
+						Log(LogLevel::Warning, std::format("Input action '{}' in '{}' has a default key that the developer action "
+							"'{}' takes, so it never fires in development builds; give it another key", action.Name, context.Name,
+							taken->Name));
+				}
+			}
+		}
 	}
 
 	void InputRouter::Press(const InputEvent& event, bool& consumed)

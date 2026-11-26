@@ -1,5 +1,7 @@
-#include "Interaction.hpp"
-#include "SampleComponents.hpp"
+// The Puzzle and Collection scenes: switches, rotators, doors, pickups and goals. The camera
+// reaching an open goal completes the attempt; Space pauses the puzzle in free flight.
+
+#include "SampleSystems.hpp"
 
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
@@ -54,6 +56,7 @@ namespace Samples
 		}
 	}
 
+	// The whole puzzle update; InteractionSystem runs it in free flight only.
 	void UpdateInteraction(SystemContext& context, ECS::Entity camera, float delta)
 	{
 		const auto& scene = context.World;
@@ -71,7 +74,7 @@ namespace Samples
 			attempt.Announced = true;
 		}
 		const bool readyToExit = attempt.Completed || !hasPickups || UpdatePickups(scene, context.Picks);
-		if (context.Input.WasKeyPressed(Key::Space))
+		if (context.Actions.WasPressed(Pause))
 			attempt.Paused = !attempt.Paused;
 		if (!attempt.Completed)
 			for (const auto& pick : context.Picks)
@@ -154,5 +157,18 @@ namespace Samples
 				return false;
 			});
 		}
+	}
+
+	void InteractionSystem(SystemContext& context)
+	{
+		if (FreeFlight(context))
+			UpdateInteraction(context, ActiveCamera(context.World), Delta(context));
+	}
+
+	// Benchmarks read the first rotor's phase from the frame trace (scripts/Benchmark-Windows3D.py).
+	void TraceSystem(SystemContext& context)
+	{
+		if (const auto* rotor = context.World.TryGet<const ECS::TransformComponent>(context.World.Find("benchmark-rotor-0")))
+			context.Services.SetTracePhase(rotor->Rotation.Y);
 	}
 }

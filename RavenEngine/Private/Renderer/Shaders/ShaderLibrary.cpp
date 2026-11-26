@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -105,6 +106,35 @@ namespace Raven
 			return paths;
 		}
 
+		// Scratch folders of hosts that did not exit cleanly and have not compiled for an hour, once
+		// per process (AA2-HR-05). A live host's folder that sat unused that long is recreated by its
+		// next compile.
+		void SweepStaleScratch(const std::filesystem::path& own)
+		{
+			static std::once_flag swept;
+			std::call_once(swept, [&own]
+			{
+				try
+				{
+					const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+					std::error_code ignored;
+					for (const auto& entry : std::filesystem::directory_iterator(own.parent_path(), ignored))
+					{
+						if (entry.path() == own || !entry.path().filename().string().starts_with("raven-shader-"))
+							continue;
+						const auto time = entry.last_write_time(ignored);
+						if (!ignored && time < cutoff)
+							std::filesystem::remove_all(entry.path(), ignored);
+						ignored.clear();
+					}
+				}
+				catch (const std::exception&)
+				{
+					// Leftover folders cost disk space only; the host starts either way.
+				}
+			});
+		}
+
 		std::vector<std::uint32_t> ToWords(const std::vector<std::byte>& bytes)
 		{
 			if (bytes.size() < 5 * sizeof(std::uint32_t) || bytes.size() % sizeof(std::uint32_t) != 0)
@@ -126,6 +156,7 @@ namespace Raven
 		{
 			if (!std::filesystem::create_directory(m_Scratch))
 				throw std::runtime_error("Cannot reserve shader scratch directory");
+			SweepStaleScratch(m_Scratch);
 			ReloadOptions options;
 			options.Name = "shader " + PathToUtf8(m_Source);
 			options.ImporterVersion = ImporterVersion::Hlsl;
@@ -156,6 +187,8 @@ namespace Raven
 		std::string Import(const ReloadSnapshot&, std::stop_token stop) override
 		{
 			const auto& desc = Describe(m_Program);
+			// Another host's sweep may have removed a folder that sat unused for an hour.
+			std::filesystem::create_directories(m_Scratch);
 			const auto output = m_Scratch / "candidate.spv";
 			const auto dependencies = m_Scratch / "dependencies.d";
 			const auto log = m_Scratch / "compile.log";

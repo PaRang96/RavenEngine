@@ -6,7 +6,7 @@ From a Visual Studio x64 developer shell with Python 3, CMake, Ninja, and the Vu
 python scripts/BuildPlayer.py --preset x64-release --profile public-preview
 ```
 
-The command builds and publishes `out/player/windows-x64/public-preview/`. Copy the entire folder and open `RavenEngine.exe`. The executable opens Puzzle with staged content and development watching disabled. F4 switches to Collection. F3 restarts the active level. The folder's `README.txt` lists native runtime prerequisites. Keep the copy in a writable directory so the game DLL can create its execution copy.
+The command builds and publishes `out/player/windows-x64/public-preview/`. Copy the entire folder and open `RavenEngine.exe`. The executable opens Puzzle with staged content and development watching disabled. F4 switches to Collection. F3 restarts the active level. The folder's `README.txt` lists native runtime prerequisites. The game DLL loads in place, so the folder may be read-only; player data goes to the OS per-user folder (review amendment, 2026-11-26, AA2-HR-05).
 
 ## Select levels and assets
 

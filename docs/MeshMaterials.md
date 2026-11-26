@@ -37,7 +37,7 @@ use-material floor grid
 lighting 0.18 0.20 0.25  -0.3 0.4 -1  0.95 0.88 0.78
 ~~~
 
-`Perspective.ravenscene` has three meshes. `Gallery.ravenscene` uses four meshes, different materials and lighting, and a reflected, nonuniform object scale. Both use the existing camera controller, beacon outcome, win cue and restart logic. F6 swaps geometry between the controlled mesh and beacon while their entity material values stay with their entities.
+`Perspective.ravenscene` has three meshes. `Gallery.ravenscene` uses four meshes, different materials and lighting, and a reflected, nonuniform object scale. Both use the existing camera controller, beacon outcome, win cue and restart logic. G swaps geometry between the controlled mesh and beacon while their entity material values stay with their entities.
 
 ## Shared engine contracts
 
