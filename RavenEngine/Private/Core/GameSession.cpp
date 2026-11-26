@@ -1,4 +1,5 @@
 #include "Core/GameSession.hpp"
+#include "Assets/AssetDependencies.hpp"
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 #include "Core/FrameTrace.hpp"
 #include "Audio/SoundEvent.hpp"
@@ -57,39 +58,17 @@ namespace Raven
 		// before it replaces the active one, and drawing never loads synchronously.
 		void LeaseAssets(const SceneFile& file, Scene& scene, const AssetCatalog& catalog)
 		{
-			static const std::array<std::pair<std::uint64_t, AssetKind>, 4> kinds{ {
-				{ ECS::Detail::HashText(AssetTypeTraits<TextureAsset>::Name), AssetKind::Texture },
-				{ ECS::Detail::HashText(AssetTypeTraits<MeshAsset>::Name), AssetKind::Mesh },
-				{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio },
-				{ ECS::Detail::HashText(AssetTypeTraits<SoundAsset>::Name), AssetKind::Sound } } };
-			std::map<AssetId, AssetKind> used;
-			for (const auto& component : file.Components)
-				for (std::size_t field = 0; field < component.Fields.size(); ++field)
-				{
-					const auto& description = component.Fields[field];
-					const auto kind = std::find_if(kinds.begin(), kinds.end(),
-						[&](const auto& entry) { return entry.first == description.Tag; });
-					if (description.Kind != ECS::FieldKind::AssetRef || kind == kinds.end())
-						continue;
-					const auto count = description.Extent[0] * description.Extent[1];
-					const auto* values = component.Values.data() + component.FieldOffset(field);
-					for (std::size_t item = 0; item < component.Entities.size() * count; ++item)
-					{
-						AssetId id;
-						std::memcpy(&id, values + item * sizeof(AssetId), sizeof(AssetId));
-						if (id.IsValid())
-							used.emplace(id, kind->second);
-					}
-				}
-			for (const auto& [id, kind] : used)
+			ForEachAssetRef(file, [&](AssetId id, AssetKind kind)
 			{
 				scene.UseAsset(catalog, id, kind);
 				// A sound event's clips are leased with it, so playing it never loads a file.
 				if (kind == AssetKind::Sound)
 					if (const auto* lease = scene.FindAsset(id); lease && lease->GetSoundEvent())
-						for (const auto& clip : lease->GetSoundEvent()->Clips)
-							scene.UseAsset(catalog, clip, AssetKind::Audio);
-			}
+						ExpandSoundClips(*lease->GetSoundEvent(), [&](AssetId clip, AssetKind clipKind)
+						{
+							scene.UseAsset(catalog, clip, clipKind);
+						});
+			});
 		}
 	}
 

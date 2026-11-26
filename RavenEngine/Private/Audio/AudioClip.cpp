@@ -4,6 +4,7 @@
 
 #include "Audio/AudioClip.hpp"
 #include "Audio/AudioDevice.hpp"
+#include "Assets/AssetKinds.hpp"
 #include "Core/PathText.hpp"
 
 #include <miniaudio.h>
@@ -23,9 +24,7 @@ namespace Raven
 	{
 		ma_encoding_format FormatOf(const std::filesystem::path& path)
 		{
-			auto extension = path.extension().string();
-			std::transform(extension.begin(), extension.end(), extension.begin(),
-				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			const auto extension = LowercaseExtension(path);
 			if (extension == ".wav")
 				return ma_encoding_format_wav;
 			if (extension == ".flac")

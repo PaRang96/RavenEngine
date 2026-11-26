@@ -25,6 +25,10 @@ Paths are checked with the existing `Paths::GetContentPath` policy for rooted pa
 
 Mesh entries can be resolved through AssetResources. Model and material entries currently provide metadata. FBX sub-asset relationships and reimport mapping remain open.
 
+## Asset kinds (2026-11-26)
+
+Everything the engine knows per asset kind is one row of `Private/Assets/AssetKinds.hpp` (review amendment, CQ-DATA-01): the display name, the `Project.ravenproject` keyword, the accepted source extensions, the `AssetRef` field tag, and whether a scene reference to it is a load dependency. The project reader and writer, the catalog, the source-type check and the decoders' extension helper read it. One scan, `ForEachAssetRef` with `ExpandSoundClips` (`Private/Assets/AssetDependencies.cpp`), gives both the scene load's leases and `stage-player`'s copy list, so the editor and a staged player can no longer disagree about what a scene needs; an ID referenced under two kinds fails both. A new kind (B2 materials, B4 shaders, B7 model sub-assets, fonts) is one row. A kind with no source extensions fails the project check by name instead of being taken for a scene. Checked: `stage-player` output for Samples (six scenes) and Arena is byte-identical before and after.
+
 ## Content trust (2026-11-26)
 
 Delegated (business alignment and expandability; AA2-MEDIA-02). v1 game content is trusted author input: it is bounded but not sandboxed. Every decoder bounds its output before it allocates: images and FBX meshes by their header limits, audio by `MaxClipSeconds` and `MaxDecodedAudioBytes` (128 MiB of decoded samples) in `Private/Audio/AudioClip.hpp`. Mods or user-generated content would need their own owner decision on scope.

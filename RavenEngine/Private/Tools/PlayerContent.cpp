@@ -1,6 +1,8 @@
 #include "Audio/SoundEvent.hpp"
 #include "PlayerContent.hpp"
 
+#include "Assets/AssetDependencies.hpp"
+#include "Assets/AssetKinds.hpp"
 #include "Assets/AssetPath.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/ECS/Component.hpp"
@@ -32,26 +34,14 @@ namespace Raven
 
 		void WriteAssetRecord(std::ostream& manifest, const AssetCatalog& catalog, const AssetRecord& asset)
 		{
-			const auto source = ManifestPath(asset.SourcePath);
-			const auto path = std::quoted(source);
-			switch (asset.Kind)
-			{
-			case AssetKind::Texture:
-				manifest << "texture " << asset.Id.ToString() << ' ' << path << ' '
-					<< (catalog.GetTexture({asset.Id}).ColorSpace == TextureColorSpace::SRGB ? "srgb" : "linear") << '\n';
-				break;
-			case AssetKind::Mesh:
-				manifest << "mesh " << asset.Id.ToString() << ' ' << path << '\n';
-				break;
-			case AssetKind::Audio:
-				manifest << "audio " << asset.Id.ToString() << ' ' << path << '\n';
-				break;
-			case AssetKind::Sound:
-				manifest << "sound " << asset.Id.ToString() << ' ' << path << '\n';
-				break;
-			default:
+			const auto* kind = FindAssetKind(asset.Kind);
+			if (!kind || !kind->SceneDependency || kind->Keyword.empty())
 				throw std::invalid_argument("This kind cannot be included as a player asset: " + asset.Id.ToString());
-			}
+			manifest << kind->Keyword << ' ' << asset.Id.ToString() << ' ' << std::quoted(ManifestPath(asset.SourcePath));
+			// A texture's record also carries its color space.
+			if (asset.Kind == AssetKind::Texture)
+				manifest << ' ' << (catalog.GetTexture({ asset.Id }).ColorSpace == TextureColorSpace::SRGB ? "srgb" : "linear");
+			manifest << '\n';
 		}
 	}
 
@@ -69,12 +59,6 @@ namespace Raven
 			requiredAssets.insert(id);
 		};
 		requiredAssets.insert(extras.begin(), extras.end());
-		// A scene's dependencies are its AssetRef fields, tagged with their asset type (FD-08).
-		const std::pair<std::uint64_t, AssetKind> kinds[]{
-			{ ECS::Detail::HashText(AssetTypeTraits<TextureAsset>::Name), AssetKind::Texture },
-			{ ECS::Detail::HashText(AssetTypeTraits<MeshAsset>::Name), AssetKind::Mesh },
-			{ ECS::Detail::HashText(AssetTypeTraits<AudioAsset>::Name), AssetKind::Audio },
-			{ ECS::Detail::HashText(AssetTypeTraits<SoundAsset>::Name), AssetKind::Sound } };
 
 		std::vector<SelectedScene> selected;
 		std::set<AssetId> selectedIds;
@@ -86,25 +70,8 @@ namespace Raven
 			if (found == project.Scenes.end())
 				throw std::invalid_argument("Unknown player scene: " + id.ToString());
 			auto bytes = Files::ReadBinary(ResolveAssetPath(source, found->SourcePath), std::size_t{ 1 } << 30);
-			const auto scene = SceneFile::Decode(bytes);
-			for (const auto& component : scene.Components)
-				for (std::size_t field = 0; field < component.Fields.size(); ++field)
-				{
-					const auto& description = component.Fields[field];
-					const auto kind = std::find_if(std::begin(kinds), std::end(kinds),
-						[&](const auto& entry) { return entry.first == description.Tag; });
-					if (description.Kind != ECS::FieldKind::AssetRef || kind == std::end(kinds))
-						continue;
-					const auto count = std::size_t{ description.Extent[0] } * description.Extent[1] * component.Entities.size();
-					const auto* values = component.Values.data() + component.FieldOffset(field);
-					for (std::size_t item = 0; item < count; ++item)
-					{
-						AssetId asset;
-						std::memcpy(&asset, values + item * sizeof(AssetId), sizeof(AssetId));
-						if (asset.IsValid())
-							require(asset, kind->second);
-					}
-				}
+			// A scene's dependencies are its AssetRef fields, tagged with their asset type (FD-08).
+			ForEachAssetRef(SceneFile::Decode(bytes), require);
 			selected.push_back({ &*found, std::move(bytes) });
 		}
 
@@ -115,8 +82,7 @@ namespace Raven
 			if (record.Kind != AssetKind::Sound)
 				continue;
 			const auto path = ResolveAssetPath(source, record.SourcePath);
-			for (const auto& clip : ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path).Clips)
-				require(clip, AssetKind::Audio);
+			ExpandSoundClips(ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path), require);
 		}
 
 		std::ostringstream manifest;

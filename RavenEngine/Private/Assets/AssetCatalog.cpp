@@ -1,6 +1,7 @@
 #include "Raven/Assets/AssetCatalog.hpp"
 
 #include "Raven/Core/Paths.hpp"
+#include "Assets/AssetKinds.hpp"
 
 #include <map>
 #include <optional>
@@ -29,22 +30,8 @@ namespace Raven
 		if (!record.Id.IsValid())
 			throw std::invalid_argument("Cannot register a nil asset ID");
 		const std::string identity = record.Id.ToString();
-		switch (record.Kind)
-		{
-		case AssetKind::Texture:
-		case AssetKind::Model:
-		case AssetKind::Mesh:
-		case AssetKind::Material:
-		case AssetKind::Skeleton:
-		case AssetKind::Animation:
-		case AssetKind::Shader:
-		case AssetKind::Scene:
-		case AssetKind::Audio:
-		case AssetKind::Sound:
-			break;
-		default:
+		if (!FindAssetKind(record.Kind))
 			throw std::invalid_argument("Invalid asset kind: " + identity);
-		}
 		if (record.Kind == AssetKind::Texture && !colorSpace)
 			throw std::invalid_argument("Texture registration requires TextureAssetDesc: " + identity);
 		if (colorSpace && *colorSpace != TextureColorSpace::Linear && *colorSpace != TextureColorSpace::SRGB)

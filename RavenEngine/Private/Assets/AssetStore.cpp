@@ -1,5 +1,6 @@
 #include "Raven/Assets/AssetStore.hpp"
 
+#include "Assets/AssetKinds.hpp"
 #include "Assets/AssetPath.hpp"
 #include "Assets/ManagedAsset.hpp"
 #include "Assets/PngFileWatch.hpp"
@@ -26,27 +27,11 @@ namespace Raven
 			return Files::ReadBinary(path, 64 * 1024 * 1024);
 		}
 
-		const char* KindName(AssetKind kind) noexcept
-		{
-			switch (kind)
-			{
-			case AssetKind::Mesh: return "FBX";
-			case AssetKind::Texture: return "PNG";
-			case AssetKind::Audio: return "audio";
-			case AssetKind::Sound: return "sound event";
-			default: return "asset";
-			}
-		}
-
 		DecodedAsset DecodeAsset(std::span<const std::byte> bytes, const std::filesystem::path& path)
 		{
 			DecodedAsset result;
 			result.Bytes.assign(bytes.begin(), bytes.end());
-			auto extension = path.extension().string();
-			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value)
-			{
-				return static_cast<char>(std::tolower(value));
-			});
+			const auto extension = LowercaseExtension(path);
 			if (extension == ".fbx")
 				result.Data = DecodeFbxMesh(bytes, path);
 			else if (extension == ".png")
@@ -128,7 +113,7 @@ namespace Raven
 			if ((record.Kind == AssetKind::Mesh && WatchMeshes) || ((record.Kind == AssetKind::Texture || sound) && WatchTextures))
 			{
 				const bool mesh = record.Kind == AssetKind::Mesh;
-				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, KindName(record.Kind),
+				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, AssetKindName(record.Kind),
 					mesh ? ImporterVersion::Fbx : sound ? ImporterVersion::Audio : ImporterVersion::Png, ReadAsset, DecodeAsset,
 					result->Bytes);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
@@ -256,7 +241,7 @@ namespace Raven
 				result.Mesh |= current->Record.Kind == AssetKind::Mesh;
 				result.Texture |= current->Record.Kind == AssetKind::Texture;
 				// The H7 summary: trigger, import and publish times.
-				Log(LogLevel::Info, std::string("Replaced ") + KindName(current->Record.Kind) + " " +
+				Log(LogLevel::Info, "Replaced " + std::string(AssetKindName(current->Record.Kind)) + " " +
 					PathToUtf8(current->Source) + "; " + summary);
 			}
 			catch (const std::exception& error)

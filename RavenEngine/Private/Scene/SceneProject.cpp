@@ -1,5 +1,6 @@
 #include "Raven/Scene/SceneProject.hpp"
 
+#include "Assets/AssetKinds.hpp"
 #include "Assets/AssetPath.hpp"
 #include "Assets/SettledFileWatch.hpp"
 #include "Audio/AudioClip.hpp"
@@ -89,7 +90,7 @@ namespace Raven
 					result.Physics = { static_cast<std::uint32_t>(bodies), static_cast<std::uint32_t>(pairs),
 						static_cast<std::uint32_t>(contacts) };
 				}
-				else if (kind != "scene" && kind != "texture" && kind != "mesh" && kind != "audio" && kind != "sound")
+				else if (!FindAssetKindByKeyword(kind))
 				{
 					// raven-project 2 is tolerant (docs/DataModelDesign.md, FD-10): records a later
 					// version adds are skipped by this reader.
@@ -116,12 +117,12 @@ namespace Raven
 							throw std::runtime_error("expected texture UUID, PNG path and srgb/linear");
 						result.Catalog.Register(TextureAssetDesc{ id, PathFromUtf8(source), setting == "srgb" ? TextureColorSpace::SRGB : TextureColorSpace::Linear });
 					}
-					else if (kind == "mesh" || kind == "audio" || kind == "sound")
+					else
 					{
+						// Every other kind's record is its keyword, ID and source path.
 						if (!(input >> std::quoted(source)))
 							throw std::runtime_error("expected source path");
-						result.Catalog.Register({ id, kind == "mesh" ? AssetKind::Mesh : kind == "audio" ? AssetKind::Audio :
-							AssetKind::Sound, PathFromUtf8(source) });
+						result.Catalog.Register({ id, FindAssetKindByKeyword(kind)->Kind, PathFromUtf8(source) });
 					}
 				}
 				std::string extra;
@@ -140,12 +141,9 @@ namespace Raven
 			const auto source = ResolveAssetPath(path.parent_path(), record.SourcePath);
 			if (!std::filesystem::is_regular_file(source))
 				throw std::runtime_error("Missing project source: " + PathToUtf8(source));
-			auto extension = source.extension().string();
-			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-			const auto expected = record.Kind == AssetKind::Texture ? ".png" : record.Kind == AssetKind::Mesh ? ".fbx" :
-				record.Kind == AssetKind::Sound ? ".ravensound" : ".ravenscene";
-			if (record.Kind == AssetKind::Audio ? !IsAudioExtension(source) : extension != expected)
-				throw std::runtime_error("Incorrect source type for " + record.Id.ToString());
+			if (!AcceptsSource(record.Kind, source))
+				throw std::runtime_error("Incorrect source type for " + record.Id.ToString() + ": expected " +
+					std::string(AssetKindName(record.Kind)));
 		}
 		return result;
 	}
