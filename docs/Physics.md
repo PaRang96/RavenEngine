@@ -23,6 +23,8 @@ Raven simulates collision and rigid bodies with [Jolt Physics](../ThirdParty/Jol
   - a changed velocity sets it;
   - a changed size, scale, offset or mass rebuilds only that body's shape;
   - a changed motion type or sensor flag rebuilds the body.
+  - a kinematic body moves when game code changes its transform, and stops when the transform stops changing. Writing the same transform again (a mutable view, or interpolation's restore) also stops it; it never drifts (review amendment, 2026-11-26, AA2-GP-01).
+- **Friction:** a collider without a `RigidBodyComponent` uses the component's defaults: friction 0.5, restitution 0. Adding or removing the component at run time updates the body to match (planning decision 12, 2026-11-26; Jolt's own default of 0.2 is never used).
 - **Interpolation:** dynamic and kinematic bodies are drawn with render interpolation without the `InterpolateComponent` tag ([FD-34](GameServicesDesign.md#fd-34--smaller-services)).
 
 **Queries and contacts** (`Raven/Physics/PhysicsQueries.hpp`, `SystemContext::Physics`):

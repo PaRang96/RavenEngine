@@ -1,0 +1,49 @@
+name: Linux compile check
+
+# Non-blocking compile-only signal (ROADMAP planning decision 4, amended 2026-11-26): it shows the
+# cross-platform breakage Windows-only development adds, while M4 still delivers Linux. It compiles
+# the engine targets past errors, so one run lists every error, and runs nothing. Link errors are
+# expected until M4 ports the missing platform pieces.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: linux-debug (compile only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # A red result here never blocks a push or a merge.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libxcb1-dev libxcb-xkb-dev
+
+      # Headers, DXC and spirv-val for the shader build that RavenCore depends on.
+      - uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: false
+          cache: true
+          stripdown: true
+
+      - name: Configure
+        run: cmake --preset linux-debug
+
+      - name: Compile
+        run: cmake --build --preset linux-debug --target RavenCore RavenEngine RavenSceneTool -- -k 0

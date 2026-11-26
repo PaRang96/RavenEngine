@@ -356,6 +356,77 @@ namespace RavenTests
 	}
 }
 
+namespace RavenTests
+{
+	// A kinematic body that game code stops moving, but keeps writing with the same transform (a
+	// door's mutable view, or interpolation's restore), stays where its component says. The sync that
+	// guards it is rewritten as a changed-since scan (AA2-PERF-02).
+	void KinematicStopsOnUnchangedWrite()
+	{
+		ECS::Registry registry;
+		Scene scene(registry);
+		PhysicsWorld world(PhysicsLimits{});
+		world.SetFixedPhase(true);
+		ECS::RigidBodyComponent kinematic;
+		kinematic.Motion = ECS::MotionType::Kinematic;
+		const auto door = AddBody(scene, registry, "door", {}, Box({ 0.5f, 0.5f, 0.5f }), kinematic);
+		auto transform = *registry.TryGet<const ECS::TransformComponent>(door);
+		for (int step = 0; step < 30; ++step)
+		{
+			transform.Position.X += 0.1f;
+			RAVEN_CHECK(registry.Write(door, transform));
+			world.Step(scene, registry, Step);
+		}
+		for (int step = 0; step < 60; ++step)
+		{
+			RAVEN_CHECK(registry.Write(door, transform));
+			world.Step(scene, registry, Step);
+		}
+		// At 6 m/s, a drifting body would be 6 m away by now.
+		const Vec3 above{ transform.Position.X, 0.0f, 5.0f };
+		const auto hit = world.CastRay(above, { 0.0f, 0.0f, -1.0f }, 10.0f);
+		RAVEN_CHECK(hit && hit->Entity == door);
+	}
+
+	// A collider without a RigidBodyComponent slides like one with the component's default friction,
+	// including after that component is removed at run time (planning decision 12).
+	void BareColliderFriction()
+	{
+		const auto slide = [](bool floorBody, bool removeIt)
+		{
+			ECS::Registry registry;
+			Scene scene(registry);
+			PhysicsWorld world(PhysicsLimits{});
+			world.SetFixedPhase(true);
+			std::optional<ECS::RigidBodyComponent> floorRigid;
+			if (floorBody)
+			{
+				floorRigid.emplace();
+				floorRigid->Motion = ECS::MotionType::Static;
+				// The component's default, or a frictionless floor that is about to lose its component.
+				floorRigid->Friction = removeIt ? 0.0f : ECS::RigidBodyComponent{}.Friction;
+			}
+			const auto floor = AddBody(scene, registry, "floor", { 0.0f, 0.0f, -0.5f }, Box({ 20.0f, 20.0f, 0.5f }), floorRigid);
+			world.Step(scene, registry, Step);
+			if (removeIt)
+			{
+				RAVEN_CHECK(registry.Remove<ECS::RigidBodyComponent>(floor));
+				world.Step(scene, registry, Step);
+			}
+			ECS::RigidBodyComponent moving;
+			moving.LinearVelocity = { 4.0f, 0.0f, 0.0f };
+			const auto crate = AddBody(scene, registry, "crate", { 0.0f, 0.0f, 0.5f }, Box({ 0.5f, 0.5f, 0.5f }), moving);
+			for (int step = 0; step < 60; ++step)
+				world.Step(scene, registry, Step);
+			return PositionOf(registry, crate).X;
+		};
+		const float bare = slide(false, false);
+		RAVEN_CHECK(bare > 0.1f && bare < 4.0f);
+		RAVEN_CHECK(std::abs(bare - slide(true, false)) < 1.0e-3f);
+		RAVEN_CHECK(std::abs(bare - slide(true, true)) < 1.0e-3f);
+	}
+}
+
 int main()
 {
 	return RavenTests::Run("PhysicsTests", []
@@ -364,5 +435,7 @@ int main()
 		RavenTests::SensorsAndRejection();
 		RavenTests::Picking();
 		RavenTests::Movers();
+		RavenTests::KinematicStopsOnUnchangedWrite();
+		RavenTests::BareColliderFriction();
 	});
 }

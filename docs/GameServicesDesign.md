@@ -966,7 +966,15 @@ From the 2026-11-26 assessments, implemented directly per planning decision 7:
 - **Latched steering** (AA2-GP-04): `CraftSystem` latches the latest `CraftCommand` into a `CraftInputComponent` and steers from it on every fixed step, so the craft keeps its speed on catch-up steps and below 60 FPS. A jump stays pending until one step applies it.
 - **The run ends one way** (AA2-GP-05 step 3, CQ-GAME-02, planning decision 13): `EndRun` ends a run when a drone catches the craft or the craft falls below `ArenaRulesComponent::FallOutZ` (−5 m); in swarm mode a fallen craft returns to its spawn. Fixed steps no longer read or write user data: the Update-phase `RunRecordSystem` writes finished runs to the profile and raises the run's best to the profile's between runs. One `IsNewBest` rule (`Score > Best`) serves the log, the profile and the banner, so a tie no longer shows "a new best".
 - **Shared action names** (CQ-GAME-05): one set of constants serves the registration, the systems and the key-binding screen.
-- The determinism hash after 600 ticks is now `2be0f7b328f640eb`. The new components are part of the captured state.
+- The determinism hash after 600 ticks was `2be0f7b328f640eb` with the new components, and is `6ffd2f94624f42eb` after the friction change below.
+
+#### Review amendments to the engine services (2026-11-26)
+
+- **Bare-collider friction** (planning decision 12, CQ-GP-01): a collider without a `RigidBodyComponent` now gets the component's defaults (friction 0.5) instead of Jolt's 0.2, so Arena's crates on the bare floor combine to 0.55 instead of 0.35. The physics world keeps one `BodyState` per body, compared field by field and assigned whole, so it can no longer drift from the components. Not yet checked by hand: how pushing a crate feels in Arena (retune `crate.Friction` in ArenaTool if it feels wrong).
+- **Kinematic stop** (AA2-GP-01): a kinematic body written with an unchanged transform stops instead of drifting on its last velocity.
+- **Deferred saves** (AA2-GP-05 steps 1 and 5): with the host's user-data service, `Save` only marks a file, and the host writes marked files after the frame, so a fixed step never waits on the disk. Writes are flushed to disk before the atomic rename (`FlushFileBuffers`; POSIX `fsync` follows in M4). The flush runs on the main thread for now; moving it to a blocking-I/O thread waits for the thread-placement table (AA2-PERF-03).
+- **`--seed`** (CQ-CORE-15) parses unsigned 64-bit values, so every logged seed can be replayed; `--determinism-check` takes up to 2³²−1 ticks.
+- **CPU floor** (planning decision 11): every Jolt instruction-set option is off in `cmake/RavenJolt.cmake`, so no OS build requires more than SSE2. Windows builds are unchanged.
 
 **Measurement 5: a one-line game-code edit, save to active** (an external probe edits a log string five times per run, the laptop, Jolt and the UI stack present):
 

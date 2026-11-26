@@ -37,6 +37,21 @@ function(raven_add_jolt)
     set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON)
     # Link-time optimization is decided after measuring (FD-32).
     set(INTERPROCEDURAL_OPTIMIZATION OFF)
+    # The player CPU floor is every x86-64 CPU, SSE2, on every OS (ROADMAP planning decision 11).
+    # Jolt enables AVX2, FMA and the rest by default and applies them PUBLIC on GCC and Clang, which
+    # would make Linux and Intel-Mac builds of all of RavenCore crash on older CPUs. Windows already
+    # gets SSE2: Jolt's MSVC branch applies no flags under Ninja. Revisit only on a measured gain.
+    set(USE_SSE4_1 OFF)
+    set(USE_SSE4_2 OFF)
+    set(USE_AVX OFF)
+    set(USE_AVX2 OFF)
+    set(USE_AVX512 OFF)
+    set(USE_LZCNT OFF)
+    set(USE_TZCNT OFF)
+    set(USE_F16C OFF)
+    set(USE_FMADD OFF)
+    # The same simulation on different operating systems (determinism level 3) is not in v1 (FD-48).
+    set(CROSS_PLATFORM_DETERMINISTIC OFF)
     # GPU compute serves only Jolt's hair simulation, which Raven does not use.
     set(JPH_USE_DX12 OFF)
     set(JPH_USE_VK OFF)

@@ -330,11 +330,39 @@ namespace Raven
 
 	bool UserDataService::Save(std::string_view name)
 	{
+		File* file = nullptr;
 		try
 		{
-			auto& file = Open(name);
-			if (!file.Dirty)
-				return true;
+			file = &Open(name);
+		}
+		catch (const std::exception& error)
+		{
+			Log(LogLevel::Error, "User data '" + std::string(name) + "' was not saved: " + error.what());
+			return false;
+		}
+		if (!file->Dirty)
+			return true;
+		if (m_Deferred)
+		{
+			file->SaveRequested = true;
+			return true;
+		}
+		return Write(name, *file);
+	}
+
+	bool UserDataService::FlushSaves()
+	{
+		bool saved = true;
+		for (auto& [name, file] : m_Files)
+			if (file.SaveRequested && file.Dirty)
+				saved = Write(name, file) && saved;
+		return saved;
+	}
+
+	bool UserDataService::Write(std::string_view name, File& file)
+	{
+		try
+		{
 			const auto path = WithExtension(m_Root, name, file.Format);
 			const auto bytes = Encode(file);
 			std::filesystem::create_directories(m_Root);
@@ -346,6 +374,7 @@ namespace Raven
 			const auto other = file.Format == UserDataFormat::Text ? UserDataFormat::Binary : UserDataFormat::Text;
 			std::filesystem::remove(WithExtension(m_Root, name, other), ignored);
 			file.Dirty = false;
+			file.SaveRequested = false;
 			return true;
 		}
 		catch (const std::exception& error)
@@ -360,7 +389,7 @@ namespace Raven
 		bool saved = true;
 		for (auto& [name, file] : m_Files)
 			if (file.Dirty)
-				saved = Save(name) && saved;
+				saved = Write(name, file) && saved;
 		return saved;
 	}
 }

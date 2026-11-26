@@ -32,7 +32,13 @@ namespace Raven
 		RAVEN_API void Remove(std::string_view file, std::string_view key = {}) override;
 		RAVEN_API std::vector<std::string> GetKeys(std::string_view file) const override;
 		RAVEN_API void SetFormat(std::string_view file, UserDataFormat format) override;
+		// Writes `file` if it changed, or with deferred saves, only marks it for the next FlushSaves.
 		RAVEN_API bool Save(std::string_view file) override;
+		// The host defers game saves to after the frame, so a fixed step never waits on the disk
+		// (docs/GameServicesDesign.md, FD-33). Off by default: tools and tests save at once.
+		void SetDeferredSaves(bool deferred) noexcept { m_Deferred = deferred; }
+		// Writes the files marked since the last flush; false when one failed (it stays marked).
+		RAVEN_API bool FlushSaves();
 		// Saves every changed file; called by the host at shutdown.
 		RAVEN_API bool SaveAll();
 		const std::filesystem::path& GetRoot() const noexcept { return m_Root; }
@@ -58,7 +64,11 @@ namespace Raven
 			UserDataFormat Format = UserDataFormat::Binary;
 			bool Loaded = false;
 			bool Dirty = false;
+			// Marked by a deferred Save, written by the next FlushSaves.
+			bool SaveRequested = false;
 		};
+
+		bool Write(std::string_view name, File& file);
 
 		File& Open(std::string_view name) const;
 		void Load(std::string_view name, File& file) const;
@@ -69,6 +79,7 @@ namespace Raven
 		std::filesystem::path m_Root;
 		mutable std::map<std::string, File, std::less<>> m_Files;
 		mutable std::set<std::string, std::less<>> m_Reported;
+		bool m_Deferred = false;
 	};
 
 	// The entity ID a key's records are stored under: 1 for the empty key.

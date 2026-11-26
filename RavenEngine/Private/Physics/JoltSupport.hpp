@@ -68,7 +68,8 @@ namespace Raven::Physics
 
 	// Translation, rotation and signed axis scale of an affine matrix; a mirrored matrix gets a
 	// negative Z scale. Shear (a rotated child of a non-uniformly scaled parent) has no exact
-	// rotation, so the axes are orthogonalized. False for a zero or non-finite axis.
+	// rotation, so the axes are orthogonalized. False for a zero or non-finite axis, and for X and Y
+	// axes so nearly parallel that no Y direction remains.
 	inline bool Decompose(const Mat4& world, Placement& result) noexcept
 	{
 		Vec3 axes[3];
@@ -80,7 +81,13 @@ namespace Raven::Physics
 			if (!(length > 0.0f) || !std::isfinite(length))
 				return false;
 		const Vec3 x = axes[0] * (1.0f / lengths[0]);
-		const Vec3 y = Normalize(axes[1] - x * Dot(x, axes[1]));
+		// Not Normalize, which throws: a throw in this noexcept function would end the process.
+		// The limit is Normalize's own.
+		const Vec3 orthogonal = axes[1] - x * Dot(x, axes[1]);
+		const float orthogonalSquared = Dot(orthogonal, orthogonal);
+		if (!std::isfinite(orthogonalSquared) || orthogonalSquared <= 1.0e-12f)
+			return false;
+		const Vec3 y = orthogonal * (1.0f / std::sqrt(orthogonalSquared));
 		const Vec3 z = Cross(x, y);
 		result.Position = { world(0, 3), world(1, 3), world(2, 3) };
 		result.Scale = { lengths[0], lengths[1], Dot(z, axes[2]) < 0.0f ? -lengths[2] : lengths[2] };

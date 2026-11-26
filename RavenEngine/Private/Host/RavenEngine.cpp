@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <format>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -39,6 +41,16 @@ namespace
 		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
 		if (error != std::errc{} || end != text.data() + text.size())
 			throw std::invalid_argument(std::string(option) + " expects whole numbers");
+		return value;
+	}
+
+	// For unsigned options: no sign, and nothing above `max`, so every logged seed reads back.
+	std::uint64_t ParseUnsigned(std::string_view text, const char* option, std::uint64_t max)
+	{
+		std::uint64_t value = 0;
+		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+		if (error != std::errc{} || end != text.data() + text.size() || value > max)
+			throw std::invalid_argument(std::format("{} expects 0 to {}", option, max));
 		return value;
 	}
 
@@ -136,14 +148,15 @@ int main(int argc, char* argv[])
 			{
 				if (++index == argc)
 					throw std::invalid_argument("--seed expects a whole number");
-				config.SimulationSeed = static_cast<std::uint64_t>(ParseInteger(argv[index], "--seed"));
+				config.SimulationSeed = ParseUnsigned(argv[index], "--seed", std::numeric_limits<std::uint64_t>::max());
 			}
 			// The determinism check (FD-48): `--determinism-check [ticks]`, 600 ticks by default.
 			else if (option == "--determinism-check")
 			{
 				config.DeterminismTicks = 600;
 				if (index + 1 < argc && std::string_view(argv[index + 1]).find_first_not_of("0123456789") == std::string_view::npos)
-					config.DeterminismTicks = static_cast<std::uint32_t>(ParseInteger(argv[++index], "--determinism-check"));
+					config.DeterminismTicks = static_cast<std::uint32_t>(ParseUnsigned(argv[++index], "--determinism-check",
+						std::numeric_limits<std::uint32_t>::max()));
 				if (config.DeterminismTicks == 0)
 					throw std::invalid_argument("--determinism-check expects at least one tick");
 			}

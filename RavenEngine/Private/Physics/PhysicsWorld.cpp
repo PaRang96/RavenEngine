@@ -303,6 +303,24 @@ namespace Raven
 	{
 		static constexpr std::uint32_t NoSlot = 0xffffffffu;
 
+		// A collider entity's body state: what its components ask for, or what its body was built
+		// from and last applied or written. One struct for both, compared field by field and assigned
+		// whole, so the record cannot drift from the components (FD-32).
+		struct BodyState
+		{
+			ECS::ColliderComponent Collider;
+			// The component's values, velocities included. A collider without one gets the
+			// component's defaults, so its friction is the one a designer reads on the component.
+			ECS::RigidBodyComponent RigidBody;
+			bool HasRigidBody = false;
+			bool Child = false;
+			// Roots: the transform last applied to or written from the body.
+			ECS::TransformComponent Transform;
+			// Children: the world matrix last applied.
+			Mat4 World = Mat4::Identity();
+			Placement Place;
+		};
+
 		// One collider entity the world knows, with or without a body.
 		struct Entry
 		{
@@ -310,18 +328,7 @@ namespace Raven
 			std::uint64_t Id = 0;
 			// Invalid while the entity is rejected or the body limit was reached.
 			JPH::BodyID Body;
-			// The configuration the body was built from.
-			ECS::ColliderComponent Collider;
-			ECS::RigidBodyComponent RigidBody;
-			bool HasRigidBody = false;
-			bool Child = false;
-			Placement Applied;
-			// Roots: the transform last applied to or written from the body.
-			ECS::TransformComponent Transform;
-			// Children: the world matrix last applied.
-			Mat4 World = Mat4::Identity();
-			Vec3 Linear{};
-			Vec3 Angular{};
+			BodyState Built;
 			bool Active = false;
 			bool KinematicMoving = false;
 			// Why the entity is left out, logged once per distinct reason.
@@ -509,7 +516,7 @@ namespace Raven
 				const bool changed = (collider != Pool::NoIndex && m_Colliders.Ticks[collider] > since) ||
 					(body != Pool::NoIndex && m_Bodies.Ticks[body] > since) ||
 					(transform != Pool::NoIndex && m_Transforms.Ticks[transform] > since) ||
-					(entry.Child && placed != Pool::NoIndex && m_Worlds.Ticks[placed] > since);
+					(entry.Built.Child && placed != Pool::NoIndex && m_Worlds.Ticks[placed] > since);
 				if (changed)
 					m_Changed.push_back(slot);
 				else if (entry.KinematicMoving && !entry.Body.IsInvalid())
@@ -571,7 +578,7 @@ namespace Raven
 					continue;
 				const bool isActive = m_Interface.IsActive(entry.Body);
 				active += isActive ? 1u : 0u;
-				if (!entry.HasRigidBody || entry.RigidBody.Motion != ECS::MotionType::Dynamic || (!isActive && !entry.Active))
+				if (!entry.Built.HasRigidBody || entry.Built.RigidBody.Motion != ECS::MotionType::Dynamic || (!isActive && !entry.Active))
 				{
 					entry.Active = isActive;
 					continue;
@@ -584,31 +591,20 @@ namespace Raven
 				auto* body = m_Registry.TryGet<ECS::RigidBodyComponent>(entry.Target);
 				if (!transform || !body)
 					continue;
-				ECS::TransformComponent next = entry.Transform;
+				ECS::TransformComponent next = entry.Built.Transform;
 				next.Position = FromJolt(JPH::Vec3(position));
 				// The Euler angles closest to the stored ones, so they never jump (FD-32).
-				next.Rotation = EulerFromQuat(FromJolt(rotation), entry.Transform.Rotation);
+				next.Rotation = EulerFromQuat(FromJolt(rotation), entry.Built.Transform.Rotation);
 				*transform = next;
-				entry.Transform = next;
-				entry.Linear = body->LinearVelocity = FromJolt(m_Interface.GetLinearVelocity(entry.Body));
-				entry.Angular = body->AngularVelocity = FromJolt(m_Interface.GetAngularVelocity(entry.Body));
-				entry.RigidBody.LinearVelocity = entry.Linear;
-				entry.RigidBody.AngularVelocity = entry.Angular;
+				entry.Built.Transform = next;
+				entry.Built.RigidBody.LinearVelocity = body->LinearVelocity = FromJolt(m_Interface.GetLinearVelocity(entry.Body));
+				entry.Built.RigidBody.AngularVelocity = body->AngularVelocity = FromJolt(m_Interface.GetAngularVelocity(entry.Body));
 			}
 			world.Stats.ActiveBodies = active;
 		}
 
 	private:
-		struct Desired
-		{
-			ECS::ColliderComponent Collider;
-			ECS::RigidBodyComponent RigidBody;
-			bool HasRigidBody = false;
-			bool Child = false;
-			ECS::TransformComponent Transform;
-			Mat4 World = Mat4::Identity();
-			Placement Place;
-		};
+		using Desired = PhysicsWorld::Impl::BodyState;
 
 		ECS::MotionType MotionOf(const Desired& desired) const noexcept
 		{
@@ -749,19 +745,18 @@ namespace Raven
 				settings.mCollideKinematicVsNonDynamic = true;
 				settings.mAllowSleeping = false;
 			}
-			if (desired.HasRigidBody)
+			// Also for a collider without a RigidBodyComponent: its defaults, not Jolt's 0.2 friction
+			// (planning decision 12).
+			const auto& rigid = desired.RigidBody;
+			settings.mFriction = rigid.Friction;
+			settings.mRestitution = rigid.Restitution;
+			settings.mMotionQuality = rigid.Continuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+			if (motion == ECS::MotionType::Dynamic)
 			{
-				const auto& rigid = desired.RigidBody;
-				settings.mFriction = rigid.Friction;
-				settings.mRestitution = rigid.Restitution;
-				settings.mMotionQuality = rigid.Continuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
-				if (motion == ECS::MotionType::Dynamic)
-				{
-					settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-					settings.mMassPropertiesOverride.mMass = rigid.Mass;
-					settings.mLinearVelocity = ToJolt(rigid.LinearVelocity);
-					settings.mAngularVelocity = ToJolt(rigid.AngularVelocity);
-				}
+				settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+				settings.mMassPropertiesOverride.mMass = rigid.Mass;
+				settings.mLinearVelocity = ToJolt(rigid.LinearVelocity);
+				settings.mAngularVelocity = ToJolt(rigid.AngularVelocity);
 			}
 			auto* body = m_Interface.CreateBody(settings);
 			if (!body)
@@ -776,15 +771,7 @@ namespace Raven
 					m_Scene.GetAuthoredId(entry.Target)));
 			entry.Problem.clear();
 			entry.Body = body->GetID();
-			entry.Collider = desired.Collider;
-			entry.RigidBody = desired.RigidBody;
-			entry.HasRigidBody = desired.HasRigidBody;
-			entry.Child = desired.Child;
-			entry.Applied = desired.Place;
-			entry.Transform = desired.Transform;
-			entry.World = desired.World;
-			entry.Linear = desired.RigidBody.LinearVelocity;
-			entry.Angular = desired.RigidBody.AngularVelocity;
+			entry.Built = desired;
 			entry.Active = internalMotion != ECS::MotionType::Static;
 			entry.KinematicMoving = false;
 			world.BodyIds[entry.Body.GetIndexAndSequenceNumber()] = entry.Id;
@@ -862,20 +849,20 @@ namespace Raven
 				return;
 			}
 			const auto motion = MotionOf(desired);
-			const bool rebuild = entry.Body.IsInvalid() || motion != (entry.HasRigidBody ? entry.RigidBody.Motion
-				: ECS::MotionType::Static) || desired.Collider.Sensor != entry.Collider.Sensor ||
-				desired.Child != entry.Child;
+			const auto& built = entry.Built;
+			const bool rebuild = entry.Body.IsInvalid() || motion != MotionOf(built) ||
+				desired.Collider.Sensor != built.Collider.Sensor || desired.Child != built.Child;
 			if (rebuild)
 			{
 				DropBody(entry);
 				Build(slot);
 				return;
 			}
-			const auto& old = entry.Collider;
-			const bool scaleChanged = !SameVector(desired.Place.Scale, entry.Applied.Scale);
+			const auto& old = built.Collider;
+			const bool scaleChanged = !SameVector(desired.Place.Scale, built.Place.Scale);
 			const bool shapeChanged = scaleChanged || desired.Collider.Shape != old.Shape ||
 				!SameVector(desired.Collider.Size, old.Size) || !SameVector(desired.Collider.Offset, old.Offset);
-			const bool massChanged = motion == ECS::MotionType::Dynamic && desired.RigidBody.Mass != entry.RigidBody.Mass;
+			const bool massChanged = motion == ECS::MotionType::Dynamic && desired.RigidBody.Mass != built.RigidBody.Mass;
 			if (shapeChanged || massChanged)
 			{
 				const Vec3 offset{ desired.Collider.Offset.X * desired.Place.Scale.X,
@@ -902,23 +889,22 @@ namespace Raven
 			if (desired.Collider.Layer != old.Layer)
 				m_Interface.SetObjectLayer(entry.Body, MakeObjectLayer(desired.Collider.Layer,
 					motion != ECS::MotionType::Static || desired.Collider.Sensor));
-			if (desired.HasRigidBody)
-			{
-				const auto& rigid = desired.RigidBody;
-				if (rigid.Friction != entry.RigidBody.Friction)
-					m_Interface.SetFriction(entry.Body, rigid.Friction);
-				if (rigid.Restitution != entry.RigidBody.Restitution)
-					m_Interface.SetRestitution(entry.Body, rigid.Restitution);
-				if (rigid.Continuous != entry.RigidBody.Continuous)
-					m_Interface.SetMotionQuality(entry.Body, rigid.Continuous ? JPH::EMotionQuality::LinearCast
-						: JPH::EMotionQuality::Discrete);
-			}
+			// Compared also when the component was added or removed: a collider without one carries
+			// the component's defaults, as its body was built with.
+			const auto& rigid = desired.RigidBody;
+			if (rigid.Friction != built.RigidBody.Friction)
+				m_Interface.SetFriction(entry.Body, rigid.Friction);
+			if (rigid.Restitution != built.RigidBody.Restitution)
+				m_Interface.SetRestitution(entry.Body, rigid.Restitution);
+			if (rigid.Continuous != built.RigidBody.Continuous)
+				m_Interface.SetMotionQuality(entry.Body, rigid.Continuous ? JPH::EMotionQuality::LinearCast
+					: JPH::EMotionQuality::Discrete);
 
 			// Placement: compared with what physics last applied or wrote, so an unchanged value
 			// rewritten by render interpolation's restore is not a teleport.
-			const bool moved = desired.Child ? std::memcmp(&desired.World, &entry.World, sizeof(Mat4)) != 0
-				: !SameVector(desired.Transform.Position, entry.Transform.Position) ||
-					!SameVector(desired.Transform.Rotation, entry.Transform.Rotation);
+			const bool moved = desired.Child ? std::memcmp(&desired.World, &built.World, sizeof(Mat4)) != 0
+				: !SameVector(desired.Transform.Position, built.Transform.Position) ||
+					!SameVector(desired.Transform.Rotation, built.Transform.Rotation);
 			if (moved)
 			{
 				const auto position = JPH::RVec3(ToJolt(desired.Place.Position));
@@ -932,22 +918,28 @@ namespace Raven
 					m_Interface.SetPositionAndRotation(entry.Body, position, rotation,
 						motion == ECS::MotionType::Dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
 			}
-			if (motion == ECS::MotionType::Dynamic && (!SameVector(desired.RigidBody.LinearVelocity, entry.Linear) ||
-				!SameVector(desired.RigidBody.AngularVelocity, entry.Angular)))
+			else if (motion == ECS::MotionType::Kinematic && entry.KinematicMoving)
+			{
+				// Written but not moved (an unchanged rewrite, or interpolation's restore): the body
+				// would keep its last MoveKinematic velocity and drift, so it stops here.
+				m_Interface.SetLinearAndAngularVelocity(entry.Body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+				entry.KinematicMoving = false;
+			}
+			// Velocities stay what physics last applied or wrote, unless a dynamic body's were edited.
+			Vec3 linear = built.RigidBody.LinearVelocity;
+			Vec3 angular = built.RigidBody.AngularVelocity;
+			if (motion == ECS::MotionType::Dynamic && (!SameVector(desired.RigidBody.LinearVelocity, linear) ||
+				!SameVector(desired.RigidBody.AngularVelocity, angular)))
 			{
 				m_Interface.SetLinearAndAngularVelocity(entry.Body, ToJolt(desired.RigidBody.LinearVelocity),
 					ToJolt(desired.RigidBody.AngularVelocity));
 				m_Interface.ActivateBody(entry.Body);
-				entry.Linear = desired.RigidBody.LinearVelocity;
-				entry.Angular = desired.RigidBody.AngularVelocity;
+				linear = desired.RigidBody.LinearVelocity;
+				angular = desired.RigidBody.AngularVelocity;
 			}
-			entry.Collider = desired.Collider;
-			entry.RigidBody = desired.RigidBody;
-			entry.RigidBody.LinearVelocity = entry.Linear;
-			entry.RigidBody.AngularVelocity = entry.Angular;
-			entry.Applied = desired.Place;
-			entry.Transform = desired.Transform;
-			entry.World = desired.World;
+			entry.Built = desired;
+			entry.Built.RigidBody.LinearVelocity = linear;
+			entry.Built.RigidBody.AngularVelocity = angular;
 		}
 
 		PhysicsWorld::Impl& m_World;

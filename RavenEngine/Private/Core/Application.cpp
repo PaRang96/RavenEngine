@@ -357,6 +357,8 @@ namespace Raven
 			instance.GetRegistry().Register<InputBindingRecord>();
 			userData.emplace(instance.GetRegistry(), config.UserDataRoot);
 			userData->SetFormat(BindingsFile, UserDataFormat::Text);
+			// Game saves are written after the frame, never inside a fixed step (AA2-GP-05).
+			userData->SetDeferredSaves(true);
 			session.SetUserData(&*userData);
 			Log(LogLevel::Info, "User data folder: " + config.UserDataRoot.string());
 		}
@@ -693,6 +695,8 @@ namespace Raven
 			}
 			wasDrawable = drawable;
 			saveBindings();
+			if (userData)
+				userData->FlushSaves();
 			// Dropped game time is reported at most once a second (FD-34).
 			droppedSeconds += gameplay.TakeDroppedSeconds();
 			if (droppedSeconds > 0.0 && std::chrono::steady_clock::now() - droppedReport >= std::chrono::seconds(1))
