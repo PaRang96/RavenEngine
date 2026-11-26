@@ -481,13 +481,21 @@ namespace Raven::UI
 				}
 			}
 			box(element.X, element.Y, element.Width, element.Height, fill, border, borderWidth, look.CornerRadius);
+			// The content box inside the border and padding, as Yoga laid it out: Padding.Left and
+			// Right are the start and end edges, so they swap from right to left (CQ-MEDIA-01).
+			const float inset = look.BorderWidth;
+			const float contentX = element.X + inset + (m_RightToLeft ? look.Padding.Right : look.Padding.Left);
+			const float contentY = element.Y + inset + look.Padding.Top;
+			const float contentWidth = std::max(0.0f, element.Width - 2.0f * inset - look.Padding.Left - look.Padding.Right);
+			const float contentHeight = std::max(0.0f, element.Height - 2.0f * inset - look.Padding.Top - look.Padding.Bottom);
 			if (element.Kind == ElementKind::Image && element.HasTexture)
 			{
+				// Inside the border, so an image never paints over its own border.
 				OverlayQuad quad;
-				quad.Rect[0] = (element.X + look.Padding.Left) * m_Scale;
-				quad.Rect[1] = (element.Y + look.Padding.Top) * m_Scale;
-				quad.Rect[2] = std::max(0.0f, element.Width - look.Padding.Left - look.Padding.Right) * m_Scale;
-				quad.Rect[3] = std::max(0.0f, element.Height - look.Padding.Top - look.Padding.Bottom) * m_Scale;
+				quad.Rect[0] = contentX * m_Scale;
+				quad.Rect[1] = contentY * m_Scale;
+				quad.Rect[2] = contentWidth * m_Scale;
+				quad.Rect[3] = contentHeight * m_Scale;
 				quad.Uv[2] = quad.Uv[3] = 1.0f;
 				const auto tint = Linear(look.TextColor);
 				std::copy(tint.begin(), tint.end(), quad.Color);
@@ -500,11 +508,10 @@ namespace Raven::UI
 				continue;
 			if (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button || element.Kind == ElementKind::Toggle)
 			{
-				const float inset = look.BorderWidth;
-				float left = element.X + inset + (m_RightToLeft ? look.Padding.Right : look.Padding.Left);
-				const float top = element.Y + inset + look.Padding.Top;
-				float width = std::max(0.0f, element.Width - 2.0f * inset - look.Padding.Left - look.Padding.Right);
-				const float height = std::max(0.0f, element.Height - 2.0f * inset - look.Padding.Top - look.Padding.Bottom);
+				float left = contentX;
+				const float top = contentY;
+				float width = contentWidth;
+				const float height = contentHeight;
 				if (element.Kind == ElementKind::Toggle)
 				{
 					// The box at the start edge, then the label.
