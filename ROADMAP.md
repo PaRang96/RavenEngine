@@ -191,7 +191,7 @@ M6 runs in three stages with their own exits and reviews (planning decision 5). 
 
 ### M6B — Rendering and content
 
-Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, textures, asset loading, multi-object FBX) before it starts.
+Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, textures, asset loading, multi-object FBX) before it starts. Design note: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26), with five owner decisions and the rest delegated.
 
 - [ ] M6-9: draw grouping by (pipeline, mesh), material identity with texture leases, and per-material shaders: a material references a shader asset, and GPU-culled commands are drawn with one pipeline per shader. *Owner decision Q3, 2026-11-23; see [HotReloadDesign.md](docs/HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3).*
 - [ ] M6-9: move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, with an owner-requested 2D run. *Moved from M3 (owner decision Q5, 2026-11-22).*
