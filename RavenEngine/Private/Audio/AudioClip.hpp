@@ -20,6 +20,10 @@ namespace Raven
 	inline constexpr std::size_t MaxAudioFileBytes = 64 * 1024 * 1024;
 	// Clips are decoded whole, 384 KB per second; longer sounds wait for streaming.
 	inline constexpr std::uint32_t MaxClipSeconds = 300;
+	// Every decoder bounds its output before allocating (docs/AssetSystem.md, content trust): a
+	// decoded buffer, in the source's channels and rate, never grows past this. A 300-second stereo
+	// clip at 48 kHz is about 115 MB.
+	inline constexpr std::size_t MaxDecodedAudioBytes = 128 * 1024 * 1024;
 
 	// True for the extensions DecodeAudio reads: .wav, .flac, .mp3 and .ogg, in any letter case.
 	bool IsAudioExtension(const std::filesystem::path& path);

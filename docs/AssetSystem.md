@@ -25,6 +25,10 @@ Paths are checked with the existing `Paths::GetContentPath` policy for rooted pa
 
 Mesh entries can be resolved through AssetResources. Model and material entries currently provide metadata. FBX sub-asset relationships and reimport mapping remain open.
 
+## Content trust (2026-11-26)
+
+Delegated (business alignment and expandability; AA2-MEDIA-02). v1 game content is trusted author input: it is bounded but not sandboxed. Every decoder bounds its output before it allocates: images and FBX meshes by their header limits, audio by `MaxClipSeconds` and `MaxDecodedAudioBytes` (128 MiB of decoded samples) in `Private/Audio/AudioClip.hpp`. Mods or user-generated content would need their own owner decision on scope.
+
 ## Runtime resource service
 
 The migrated sample path uses [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its weak cache shares resources by UUID while host-owned AssetLease values keep them live. Scene owns its acquired leases; the last owner stops the watcher and releases the managed mesh/texture or PCM clip. SceneProject validates source paths against its explicit root, including physical escapes and source existence. References written by game code at runtime go through `Scene::TryUseAsset` (2026-11-24): a nil or unregistered ID, a wrong kind or a missing file returns null and logs once per asset, so a material samples the white texture and a sprite is skipped. Decode and GPU failures still throw. The placeholder stays until the material or sprite changes again. See [scene/resource ownership](SceneWorkflow.md#scene-and-resource-ownership).

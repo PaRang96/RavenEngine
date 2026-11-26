@@ -90,6 +90,14 @@ namespace Raven
 			std::uint64_t frames = 0;
 			for (;;)
 			{
+				// Checked before the buffer grows: a many-channel, high-rate file would otherwise ask for
+				// gigabytes before the length check below rejects it (AA2-MEDIA-02).
+				if ((frames + ChunkFrames) * channels * sizeof(float) > MaxDecodedAudioBytes)
+				{
+					stb_vorbis_close(vorbis);
+					throw std::runtime_error(std::format("decoded audio would exceed {} MiB; long sounds need streaming, "
+						"which is not built yet: {}", MaxDecodedAudioBytes >> 20, PathToUtf8(path)));
+				}
 				samples.resize(static_cast<std::size_t>((frames + ChunkFrames) * channels));
 				const int read = stb_vorbis_get_samples_float_interleaved(vorbis, info.channels,
 					samples.data() + frames * channels, static_cast<int>(ChunkFrames * channels));
@@ -140,6 +148,8 @@ namespace Raven
 		constexpr std::uint64_t MaxFrames = std::uint64_t{ MaxClipSeconds } * MixerSampleRate;
 		ma_result result = MA_SUCCESS;
 		std::uint64_t frames = 0;
+		// The decoder outputs the mixer format, so the length limit bounds the buffer as well.
+		static_assert((MaxFrames + ChunkFrames) * MixerChannels * sizeof(float) <= MaxDecodedAudioBytes);
 		while (result == MA_SUCCESS)
 		{
 			clip.Samples.resize(static_cast<std::size_t>((frames + ChunkFrames) * MixerChannels));
