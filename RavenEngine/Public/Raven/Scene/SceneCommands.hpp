@@ -17,7 +17,8 @@ namespace Raven
 	// Deferred structural changes (docs/DataModelDesign.md, FD-14). Systems record them; the engine
 	// applies the buffer after each fixed step and at the end of Update, in record order. Create
 	// returns the new entity's persistent ID at once, so it can be stored in components before the
-	// entity exists; later commands in the same buffer may address it. A command whose entity is
+	// entity exists; later commands in the same buffer may address it. An entity created in Control or
+	// Update takes its ID from the presentation sequence and is tagged PresentationComponent. A command whose entity is
 	// gone by then is skipped and logged once (FD-06). Values are copied when recorded.
 	class SceneCommands
 	{
@@ -59,7 +60,8 @@ namespace Raven
 		{
 			Kind Type = Kind::Create;
 			std::uint64_t Entity = 0;
-			// SetParent: the parent ID. Add and Remove: the index into m_Types.
+			// SetParent: the parent ID. Add and Remove: the index into m_Types. Create: 1 for a
+			// presentation entity.
 			std::uint64_t Other = 0;
 			// Create: the index into m_Labels. Add: the offset into m_Values.
 			std::size_t Data = 0;

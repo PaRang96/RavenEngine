@@ -17,7 +17,9 @@ namespace Raven
 	// The fixed gameplay clock and the input stream it delivers (docs/GameServicesDesign.md, FD-34,
 	// FD-47). Each fixed step sees one tick: the key and mouse-button input and mapped actions
 	// accumulated since the previous step (already filtered by the input contexts), and the stream
-	// records emitted before it. Pointer motion and scroll stay frame-based.
+	// records emitted before it. BeginStep takes all three into one per-tick record, so a tick is a
+	// function of its record alone (review amendment, AA2-GP-02 step 3); replay can store exactly that.
+	// Pointer motion and scroll stay frame-based.
 	class FixedGameplayStep final : public InputStream
 	{
 	public:
@@ -75,28 +77,35 @@ namespace Raven
 		}
 
 		bool HasStep() const noexcept { return m_Accumulated + 1.0e-10 >= m_StepSeconds; }
-		const InputState& GetInput() const noexcept { return m_Input; }
-		std::span<const ActionSample> GetActions() const noexcept { return m_Actions; }
-		FrameTime GetStepTime() const noexcept { return { m_Elapsed + m_StepSeconds, m_StepSeconds }; }
+		// The running tick's input and actions, from BeginStep to ConsumeStep.
+		const InputState& GetInput() const noexcept { return m_Running.Input; }
+		std::span<const ActionSample> GetActions() const noexcept { return m_Running.Actions; }
+		// Derived from the tick alone, so a restarted scene or a restored snapshot sees the same time
+		// at the same tick (AA2-GP-03).
+		FrameTime GetStepTime() const noexcept
+		{
+			return { static_cast<double>(m_Tick + 1) * m_StepSeconds, m_StepSeconds };
+		}
 		// How far the frame is past the latest tick, as a fraction of a step: the render
 		// interpolation weight (docs/GameServicesDesign.md, FD-34).
 		double GetAlpha() const noexcept { return std::clamp(m_Accumulated / m_StepSeconds, 0.0, 1.0); }
 
-		// Delivers the records emitted so far to the step about to run.
+		// Takes the input, actions and records gathered so far into the record of the tick about to run.
 		void BeginStep()
 		{
-			m_Current.swap(m_Pending);
+			m_Running.Input = m_Input;
+			m_Running.Actions = m_Actions;
+			m_Running.Records.swap(m_Pending);
 			m_Pending.clear();
+			m_Input.ClearTransientState();
+			for (auto& pending : m_Actions)
+				pending.Pressed = pending.Released = false;
 		}
 
 		void ConsumeStep()
 		{
 			m_Accumulated = std::max(0.0, m_Accumulated - m_StepSeconds);
-			m_Elapsed += m_StepSeconds;
-			m_Input.ClearTransientState();
-			for (auto& pending : m_Actions)
-				pending.Pressed = pending.Released = false;
-			m_Current.clear();
+			m_Running = {};
 			++m_Tick;
 		}
 
@@ -107,7 +116,7 @@ namespace Raven
 			m_Input = {};
 			m_Actions.clear();
 			m_Pending.clear();
-			m_Current.clear();
+			m_Running = {};
 		}
 
 		// A new scene starts its ticks from zero; a restored snapshot from its own tick.
@@ -117,7 +126,7 @@ namespace Raven
 		void DropRecords() noexcept
 		{
 			m_Pending.clear();
-			m_Current.clear();
+			m_Running.Records.clear();
 		}
 
 		// Game time dropped since the last call, in seconds.
@@ -144,10 +153,10 @@ namespace Raven
 			const auto* bytes = static_cast<const std::byte*>(record);
 			m_Pending.push_back({ info.Id, info.LayoutHash, player, { bytes, bytes + info.Size } });
 		}
-		std::size_t GetRecordCount() const noexcept override { return m_Current.size(); }
+		std::size_t GetRecordCount() const noexcept override { return m_Running.Records.size(); }
 		Record GetRecord(std::size_t index) const noexcept override
 		{
-			const auto& stored = m_Current[index];
+			const auto& stored = m_Running.Records[index];
 			return { stored.Type, stored.LayoutHash, stored.Player, stored.Bytes.data() };
 		}
 
@@ -158,13 +167,21 @@ namespace Raven
 			pending.Released |= state.Released;
 		}
 
+		// Everything one tick sees.
+		struct TickRecord
+		{
+			InputState Input;
+			std::vector<ActionSample> Actions;
+			std::vector<Stored> Records;
+		};
+
+		// Gathered for the next tick.
 		InputState m_Input;
 		std::vector<ActionSample> m_Actions;
 		std::vector<Stored> m_Pending;
-		std::vector<Stored> m_Current;
+		TickRecord m_Running;
 		double m_StepSeconds = 1.0 / 60.0;
 		double m_Accumulated = 0.0;
-		double m_Elapsed = 0.0;
 		double m_DroppedSeconds = 0.0;
 		std::uint64_t m_Tick = 0;
 	};

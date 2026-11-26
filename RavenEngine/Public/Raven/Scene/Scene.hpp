@@ -41,11 +41,18 @@ namespace Raven
 		RAVEN_API ECS::EntityRef GetRef(ECS::Entity entity) const noexcept;
 		// A fresh ID no entity of this scene uses; CreateEntity(name, id) claims it later.
 		RAVEN_API ECS::EntityRef NewRef();
-		// Restarts the ID sequence from a seed, so entities created at runtime get the same IDs in
-		// every run with that seed (docs/GameServicesDesign.md, FD-48). IDs already in use are skipped.
+		// Restarts the simulation ID sequence from a seed, so entities created in fixed steps get the
+		// same IDs in every run with that seed (docs/GameServicesDesign.md, FD-48). IDs already in use
+		// are skipped.
 		RAVEN_API void SeedIds(std::uint64_t seed) noexcept;
-		// The sequence's current state; SeedIds(state) continues it, for world snapshots.
+		// The simulation sequence's current state; SeedIds(state) continues it, for world snapshots.
 		RAVEN_API std::uint64_t GetIdState() const noexcept;
+		// Which sequence NewRef and CreateEntity draw from. The host selects the seeded simulation
+		// sequence only while a fixed step runs; at all other times IDs come from a second, OS-seeded
+		// presentation sequence, so cosmetic spawns in Control or Update never shift the IDs the
+		// simulation gets (review amendment, AA2-GP-03).
+		RAVEN_API void UseSimulationIds(bool simulation) noexcept;
+		RAVEN_API bool IsUsingSimulationIds() const noexcept;
 		RAVEN_API ECS::Entity GetParent(ECS::Entity entity) const;
 		// Reparent/detach preserves local TRS. A null parent detaches to the scene root. Writes
 		// ParentComponent (FD-07), so it is rejected while a view iterates. Costs the moved subtree.
@@ -139,6 +146,8 @@ namespace Raven
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> m_DepthWalk;
 		std::vector<std::uint32_t> m_RemoveWalk;
 		std::uint64_t m_IdState = 0;
+		std::uint64_t m_PresentationIdState = 0;
+		bool m_SimulationIds = false;
 		// Entities already logged as detached roots, so a broken hierarchy logs once.
 		mutable std::unordered_set<ECS::Entity, EntityHash> m_ReportedDetached;
 		std::unordered_map<std::string, ECS::Entity> m_Names;

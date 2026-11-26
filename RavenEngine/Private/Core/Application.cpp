@@ -33,6 +33,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <set>
 #include <utility>
 #include <stdexcept>
 #include <string>
@@ -209,13 +210,25 @@ namespace Raven
 				return m_Input;
 			}
 
+			// After the frame's Update, before its commands apply: in the first run only, one cosmetic
+			// spawn, as game code makes in Update. Its ID comes from the presentation sequence, so the
+			// second run's simulation IDs still match, and the hash leaves it out (AA2-GP-03 step 5).
+			void FramePhase(SceneCommands& commands)
+			{
+				if (m_Pass != Pass::Record || m_TicksThisRun != 30 || m_Spawned)
+					return;
+				m_Spawned = true;
+				const auto debris = commands.Create("determinism-debris");
+				commands.Add(debris, ECS::TransformComponent{});
+			}
+
 			// After each fixed step: records or compares the scene's hash.
-			void AfterStep(const Scene& scene)
+			void AfterStep(const Scene& scene, const ECS::Registry& registry)
 			{
 				if (m_Pass == Pass::Done)
 					return;
 				++m_TicksThisRun;
-				const auto bytes = CaptureScene(scene).Encode();
+				const auto bytes = WithoutPresentation(CaptureScene(scene), scene, registry).Encode();
 				std::uint64_t hash = 14695981039346656037ull;
 				for (const auto value : bytes)
 					hash = (hash ^ static_cast<std::uint8_t>(value)) * 1099511628211ull;
@@ -262,8 +275,46 @@ namespace Raven
 			}
 
 		private:
+			// The simulation alone: entities created in Control or Update are presentation.
+			static SceneFile WithoutPresentation(SceneFile file, const Scene& scene, const ECS::Registry& registry)
+			{
+				std::set<std::uint64_t> skipped;
+				for (const auto& entity : file.Entities)
+					if (const auto found = scene.Resolve(ECS::EntityRef{ entity.Id });
+						!found.IsNull() && registry.Has<ECS::PresentationComponent>(found))
+						skipped.insert(entity.Id);
+				if (skipped.empty())
+					return file;
+				std::erase_if(file.Entities, [&](const SceneFile::Entity& entity) { return skipped.contains(entity.Id); });
+				for (auto& component : file.Components)
+				{
+					std::vector<std::size_t> kept;
+					for (std::size_t row = 0; row < component.Entities.size(); ++row)
+						if (!skipped.contains(component.Entities[row]))
+							kept.push_back(row);
+					if (kept.size() == component.Entities.size())
+						continue;
+					std::vector<std::byte> values;
+					for (std::size_t field = 0; field < component.Fields.size(); ++field)
+					{
+						const auto size = component.Fields[field].Size;
+						const auto* start = component.Values.data() + component.FieldOffset(field);
+						for (const auto row : kept)
+							values.insert(values.end(), start + row * size, start + (row + 1) * size);
+					}
+					std::vector<std::uint64_t> entities;
+					for (const auto row : kept)
+						entities.push_back(component.Entities[row]);
+					component.Entities = std::move(entities);
+					component.Values = std::move(values);
+				}
+				std::erase_if(file.Components, [](const SceneFile::Component& component) { return component.Entities.empty(); });
+				return file;
+			}
+
 			enum class Pass : std::uint8_t { Record, Compare, Done };
 			std::uint32_t m_Ticks = 0;
+			bool m_Spawned = false;
 			Pass m_Pass = Pass::Record;
 			std::vector<std::uint64_t> m_Hashes;
 			std::vector<std::vector<std::byte>> m_Snapshots;
@@ -540,11 +591,12 @@ namespace Raven
 					physics.SetFixedPhase(true);
 					if (game)
 					{
-						ActionView actions(router, gameplay.GetActions());
-						auto context = session.MakeContext(gameplay.GetInput(), actions, gameplay, step);
+						ActionView actions(router, gameplay.GetActions(), true);
+						auto context = session.MakeContext(SystemPhase::FixedUpdate, gameplay.GetInput(), actions, gameplay, step);
 						game->FixedUpdate(context);
 					}
 					physics.SetFixedPhase(false);
+					session.EndFixedStep();
 					session.ApplyCommands();
 					{
 						FrameSection physicsTime(metrics ? &metrics->Physics : nullptr);
@@ -552,7 +604,7 @@ namespace Raven
 					}
 					gameplay.ConsumeStep();
 					if (determinism.IsActive())
-						determinism.AfterStep(session.GetScene());
+						determinism.AfterStep(session.GetScene(), instance.GetRegistry());
 				};
 				const bool played = boundary.Run(StageBoundary::Gameplay, [&]
 				{
@@ -593,7 +645,7 @@ namespace Raven
 						if (game)
 						{
 							ActionView actions(router, router.GetGameActions());
-							auto context = session.MakeContext(input, actions, gameplay, frameTime);
+							auto context = session.MakeContext(SystemPhase::Control, input, actions, gameplay, frameTime);
 							game->Control(context);
 						}
 						// A game pause (a pause menu) stops the fixed steps and physics, not the frame.
@@ -619,17 +671,20 @@ namespace Raven
 					if (game && session.IsPlaying() && !previewing)
 					{
 						ActionView actions(router, router.GetGameActions());
-						auto context = session.MakeContext(input, actions, gameplay, frameTime);
+						auto context = session.MakeContext(SystemPhase::Update, input, actions, gameplay, frameTime);
 						game->Update(context);
 					}
 					if (previewing)
 						game->RunPreview(static_cast<std::size_t>(preview.Entry), gameUi);
+					if (determinism.IsActive())
+						determinism.FramePhase(session.GetCommands());
 					session.ApplyCommands();
 				});
 				// A failed step is not retried: its remaining steps and recorded commands are dropped with it.
 				if (!played)
 				{
 					gameplay.Reset();
+					session.EndFixedStep();
 					session.DropCommands();
 				}
 				gameplayTime.End();

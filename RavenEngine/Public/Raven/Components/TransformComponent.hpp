@@ -50,7 +50,18 @@ namespace Raven::ECS
 		RAVEN_COMPONENT(Raven::ECS::InterpolateComponent);
 	};
 
+	// Host tag (review amendment, AA2-GP-03): the entity was created in Control or Update, so its ID
+	// came from the presentation sequence and it is outside the simulation. Cosmetic spawns (damage
+	// numbers, debris) belong here; the determinism check leaves such entities out, and the physics
+	// world warns once if one carries physics components. Not saved.
+	struct PresentationComponent : Component
+	{
+		RAVEN_COMPONENT(Raven::ECS::PresentationComponent);
+	};
+
 	template<> inline constexpr bool HostOwned<WorldTransformComponent> = true;
 	template<> inline constexpr bool Transient<WorldTransformComponent> = true;
 	template<> inline constexpr bool HostOwned<ParentComponent> = true;
+	template<> inline constexpr bool HostOwned<PresentationComponent> = true;
+	template<> inline constexpr bool Transient<PresentationComponent> = true;
 }

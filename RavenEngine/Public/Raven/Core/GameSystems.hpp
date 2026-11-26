@@ -90,7 +90,9 @@ namespace Raven
 		virtual bool HasOption(std::string_view name) const noexcept = 0;
 		// Benchmarks: a value the frame trace records as benchmark_phase.
 		virtual void SetTracePhase(double value) noexcept = 0;
-		// Per-user data that outlives a play session (docs/GameServicesDesign.md, FD-33).
+		// Per-user data that outlives a play session (docs/GameServicesDesign.md, FD-33). Read and
+		// write it in Control or Update; what the simulation needs enters through a component or a
+		// stream record. Development builds report a fixed-step call once.
 		virtual UserDataStore& GetUserData() = 0;
 		// A game pause, for example behind a pause menu: from the next frame, fixed steps and physics
 		// stop while Control and Update keep running. Stream records emitted meanwhile are dropped.
@@ -105,6 +107,12 @@ namespace Raven
 	// Borrowed for one system call; retain nothing from it (docs/DataModelDesign.md, FD-12).
 	// Systems see only engine concepts: the scene being played, input, time, the picks of
 	// the presented frame, deferred structural changes and engine services.
+	//
+	// A fixed step is a function of its tick alone (FD-48; review amendment, AA2-GP-02/03): its
+	// input, actions and stream records, its tick-derived time, the seeded random numbers and the
+	// seeded entity IDs. Control and Update are presentation: they get the presented frame's picks,
+	// the live UI, and their own OS-seeded random numbers and entity IDs, so cosmetic work there never
+	// shifts the simulation.
 	struct SystemContext
 	{
 		SceneAccess World;
@@ -112,20 +120,29 @@ namespace Raven
 		// Fixed steps see keyboard and mouse buttons; pointer motion and scroll stay per frame.
 		const InputState& Input;
 		// Mapped actions for this frame or fixed step, plus context, listening and rebinding control.
+		// A fixed step reads its tick's actions only: context, listening and rebinding calls there
+		// are reported once and ignored.
 		InputActions& Actions;
 		// Controllers emit records; fixed steps read the records of their tick (FD-47).
 		InputStream& Stream;
+		// In fixed steps, the tick's time: (tick + 1) times the step, so a restarted scene repeats it.
 		const FrameTime& Time;
-		// Left-click hits on the presented frame, delivered once to the next update.
+		// Left-click hits on the presented frame, for that frame's Control and Update. Fixed steps get
+		// none: a click that should change the simulation becomes a stream record carrying the hit's
+		// EntityRef, emitted in Control.
 		std::span<const PickHit> Picks;
 		// Collision queries, and during fixed steps the previous step's contacts (FD-32).
 		const PhysicsQueries& Physics;
+		// Create in a fixed step takes a seeded ID; in Control or Update a presentation ID, and the
+		// entity is tagged PresentationComponent (left out of the determinism check).
 		SceneCommands& Commands;
 		GameServices& Services;
-		// Seeded when the scene starts; fixed-step code draws its random numbers here (FD-48).
+		// In fixed steps, the stream seeded when the scene starts (FD-48). In Control and Update, a
+		// separate OS-seeded stream for cosmetic randomness such as camera shake.
 		SimulationRandom& Random;
 		// The game's UI context (docs/UIDesign.md). Declare UI in the Control or Update phase, once
-		// per frame; fixed steps run a varying number of times per frame and must not declare UI.
+		// per frame. Fixed steps run a varying number of times per frame: they get an empty UI, and
+		// development builds report a declaration there once.
 		UI::Ui& Ui;
 	};
 

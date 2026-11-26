@@ -78,11 +78,16 @@ namespace RavenTests
 		RAVEN_CHECK(!step.HasStep());
 		const ActionSample held{ ActionId("Jump"), true, false, false, 0.0f };
 		step.BeginFrame({}, std::span(&held, 1), 0.016);
-		RAVEN_CHECK(step.HasStep() && step.GetActions()[0].Pressed);
+		RAVEN_CHECK(step.HasStep());
 		step.BeginStep();
+		RAVEN_CHECK(step.GetActions()[0].Pressed);
 		step.ConsumeStep();
-		RAVEN_CHECK(!step.GetActions()[0].Pressed && step.GetActions()[0].Down);
 		RAVEN_CHECK(step.GetAlpha() >= 0.0 && step.GetAlpha() < 1.0);
+		// The next tick sees the action held, without the press.
+		step.BeginFrame({}, std::span(&held, 1), 1.0 / 60.0);
+		step.BeginStep();
+		RAVEN_CHECK(!step.GetActions()[0].Pressed && step.GetActions()[0].Down);
+		step.ConsumeStep();
 
 		// A long stall catches up at most four 60 Hz steps; the rest is counted as dropped.
 		step.TakeDroppedSeconds();
@@ -97,6 +102,13 @@ namespace RavenTests
 		RAVEN_CHECK(steps == 4);
 		RAVEN_CHECK(std::abs(step.TakeDroppedSeconds() - (1.0 + step.GetStepSeconds() * step.GetAlpha() -
 			FixedGameplayStep::MaxCatchUpSeconds)) < 0.02);
+
+		// Step time follows the tick, so a restarted scene sees the same time at the same tick.
+		RAVEN_CHECK(std::abs(step.GetStepTime().ElapsedSeconds - (step.GetTick() + 1) * step.GetStepSeconds()) < 1e-9);
+		step.RestartTicks();
+		RAVEN_CHECK(std::abs(step.GetStepTime().ElapsedSeconds - step.GetStepSeconds()) < 1e-9);
+		step.RestartTicks(10);
+		RAVEN_CHECK(std::abs(step.GetStepTime().ElapsedSeconds - 11 * step.GetStepSeconds()) < 1e-9);
 
 		// The rate is a project setting within bounds.
 		RAVEN_CHECK_THROWS(FixedGameplayStep(5.0));
@@ -161,14 +173,19 @@ namespace RavenTests
 		RAVEN_CHECK(value >= -2.0f && value < 3.0f);
 		RAVEN_CHECK(first.RangeInt(4, 4) == 4);
 
-		// Runtime IDs follow the seed, so two runs spawn the same IDs.
+		// Runtime IDs follow the seed, so two runs spawn the same IDs, and IDs drawn outside fixed
+		// steps come from the presentation sequence without shifting the simulation's (AA2-GP-03).
 		ECS::Registry registry;
 		Scene left(registry);
 		Scene right(registry);
 		left.SeedIds(7);
 		right.SeedIds(7);
+		const auto cosmetic = left.NewRef();
+		left.UseSimulationIds(true);
+		right.UseSimulationIds(true);
 		for (int index = 0; index < 10; ++index)
 			RAVEN_CHECK(left.NewRef().Id == right.NewRef().Id);
+		RAVEN_CHECK(cosmetic.Id != 0);
 	}
 }
 

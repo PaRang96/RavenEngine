@@ -40,7 +40,8 @@ namespace Raven
 				registry.Register<ECS::CameraComponent>() && registry.Register<ECS::ActiveCameraComponent>() &&
 				registry.Register<ECS::LightingComponent>() && registry.Register<ECS::MaterialComponent>() &&
 				registry.Register<ECS::SpriteComponent>() && registry.Register<ECS::StaticMeshComponent>() &&
-				registry.Register<ECS::InterpolateComponent>() && registry.Register<ECS::ColliderComponent>() &&
+				registry.Register<ECS::InterpolateComponent>() && registry.Register<ECS::PresentationComponent>() &&
+				registry.Register<ECS::ColliderComponent>() &&
 				registry.Register<ECS::RigidBodyComponent>() &&
 				registry.Register<ECS::MoverComponent>();
 			if (!registered)
@@ -130,10 +131,11 @@ namespace Raven
 		: m_Registry(registry), m_SceneId(registry.AllocateSceneId())
 	{
 		RegisterEngineComponents(registry);
-		// One OS draw seeds the scene's ID sequence, so two scenes or contributors never share one.
-		std::array<std::uint8_t, sizeof(m_IdState)> seed{};
+		// OS draws seed the scene's ID sequences, so two scenes or contributors never share one.
+		std::array<std::uint8_t, sizeof(m_IdState) * 2> seed{};
 		Platform::FillRandomBytes(seed);
 		std::memcpy(&m_IdState, seed.data(), sizeof(m_IdState));
+		std::memcpy(&m_PresentationIdState, seed.data() + sizeof(m_IdState), sizeof(m_PresentationIdState));
 	}
 
 	Scene::~Scene()
@@ -147,7 +149,8 @@ namespace Raven
 		// SplitMix64 over a random start: distinct within the sequence, and never zero.
 		for (;;)
 		{
-			std::uint64_t value = (m_IdState += 0x9E3779B97F4A7C15ull);
+			auto& state = m_SimulationIds ? m_IdState : m_PresentationIdState;
+			std::uint64_t value = (state += 0x9E3779B97F4A7C15ull);
 			value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
 			value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
 			value ^= value >> 31;
@@ -293,6 +296,16 @@ namespace Raven
 	std::uint64_t Scene::GetIdState() const noexcept
 	{
 		return m_IdState;
+	}
+
+	void Scene::UseSimulationIds(bool simulation) noexcept
+	{
+		m_SimulationIds = simulation;
+	}
+
+	bool Scene::IsUsingSimulationIds() const noexcept
+	{
+		return m_SimulationIds;
 	}
 
 	ECS::EntityRef Scene::GetRef(ECS::Entity entity) const noexcept

@@ -67,9 +67,14 @@ namespace Raven
 		bool IsPlaying() const noexcept { return m_Playing; }
 		Scene& GetScene() const noexcept;
 		const AssetCatalog& GetCatalog() const noexcept;
-		// The context for one phase; picks are those of the last presented frame.
-		SystemContext MakeContext(const InputState& input, InputActions& actions, InputStream& stream,
-			const FrameTime& time);
+		// The context for one phase (review amendment, AA2-GP-02/03). A fixed step gets no picks, no
+		// UI and the seeded random numbers, and the scene draws IDs from its simulation sequence until
+		// EndFixedStep; Control and Update get the presented frame's picks, the live UI, and the
+		// OS-seeded presentation random numbers and IDs.
+		SystemContext MakeContext(SystemPhase phase, const InputState& input, InputActions& actions,
+			InputStream& stream, const FrameTime& time);
+		// After a fixed step's systems and commands: back to the presentation streams.
+		void EndFixedStep() noexcept;
 		// Applies deferred structural changes; called after each fixed step and after Update.
 		void ApplyCommands();
 		// After a failed Gameplay stage: drops what the failed systems recorded, so the buffer is
@@ -157,6 +162,10 @@ namespace Raven
 		// Seeds the random numbers and runtime entity IDs whenever a scene starts (FD-48).
 		std::uint64_t m_SimulationSeed = 0;
 		SimulationRandom m_Random;
+		// Control and Update draw from this one, so cosmetic randomness never shifts the simulation.
+		SimulationRandom m_PresentationRandom{ (std::uint64_t{ std::random_device{}() } << 32) ^ std::random_device{}() };
+		// The phase whose systems are running, while one runs.
+		bool m_InFixedStep = false;
 		void StartSimulation() noexcept;
 		struct Snapshot
 		{

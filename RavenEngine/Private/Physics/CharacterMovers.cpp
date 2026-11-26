@@ -1,4 +1,5 @@
 #include "Physics/CharacterMovers.hpp"
+#include "Physics/PresentationCheck.hpp"
 
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Core/Log.hpp"
@@ -497,6 +498,7 @@ namespace Raven::Physics
 				Entry entry;
 				entry.Target = entity;
 				entry.Id = scene.GetRef(entity).Id;
+				ReportPresentation(scene, registry, entity);
 				m_Entries.push_back(std::move(entry));
 				m_OrderDirty = true;
 			}

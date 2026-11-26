@@ -11,6 +11,7 @@ namespace Raven
 	inline bool IsHostOwned(const ECS::ComponentInfo& info) noexcept
 	{
 		return info.Id == ECS::ComponentTraits<ECS::WorldTransformComponent>::Info.Id ||
-			info.Id == ECS::ComponentTraits<ECS::ParentComponent>::Info.Id;
+			info.Id == ECS::ComponentTraits<ECS::ParentComponent>::Info.Id ||
+			info.Id == ECS::ComponentTraits<ECS::PresentationComponent>::Info.Id;
 	}
 }

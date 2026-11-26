@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Raven/Core/Api.hpp"
+#include "Raven/Core/Log.hpp"
 #include "Raven/Input/InputMap.hpp"
 
 #include <array>
@@ -141,8 +142,10 @@ namespace Raven
 	class ActionView final : public InputActions
 	{
 	public:
-		ActionView(InputRouter& router, std::span<const ActionSample> samples) noexcept
-			: m_Router(router), m_Samples(samples)
+		// A read-only view serves fixed steps: a tick's actions are part of its record, so context,
+		// listening and rebinding calls there are reported once and ignored (AA2-GP-02 step 3).
+		ActionView(InputRouter& router, std::span<const ActionSample> samples, bool readOnly = false) noexcept
+			: m_Router(router), m_Samples(samples), m_ReadOnly(readOnly)
 		{
 		}
 
@@ -153,18 +156,37 @@ namespace Raven
 					return sample;
 			return { action };
 		}
-		void SetContextActive(std::string_view context, bool active) override { m_Router.SetContextActive(context, active); }
+		void SetContextActive(std::string_view context, bool active) override
+		{
+			if (!Refused("SetContextActive"))
+				m_Router.SetContextActive(context, active);
+		}
 		bool IsContextActive(std::string_view context) const noexcept override { return m_Router.IsContextActive(context); }
-		void BeginListening() override { m_Router.BeginListening(); }
-		void CancelListening() noexcept override { m_Router.CancelListening(); }
+		void BeginListening() override
+		{
+			if (!Refused("BeginListening"))
+				m_Router.BeginListening();
+		}
+		void CancelListening() noexcept override
+		{
+			if (!Refused("CancelListening"))
+				m_Router.CancelListening();
+		}
 		bool IsListening() const noexcept override { return m_Router.IsListening(); }
-		std::optional<InputChord> TakeListened() noexcept override { return m_Router.TakeListened(); }
+		std::optional<InputChord> TakeListened() noexcept override
+		{
+			return Refused("TakeListened") ? std::nullopt : m_Router.TakeListened();
+		}
 		bool Rebind(std::string_view context, std::string_view action, std::size_t slot,
 			const InputBinding& binding) override
 		{
-			return m_Router.Rebind(context, action, slot, binding);
+			return !Refused("Rebind") && m_Router.Rebind(context, action, slot, binding);
 		}
-		void ResetBindings(std::string_view context) override { m_Router.ResetBindings(context); }
+		void ResetBindings(std::string_view context) override
+		{
+			if (!Refused("ResetBindings"))
+				m_Router.ResetBindings(context);
+		}
 		std::span<const InputBinding> GetBindings(std::string_view context,
 			std::string_view action) const noexcept override
 		{
@@ -173,8 +195,30 @@ namespace Raven
 		std::string GetDisplayName(const InputChord& chord) const override { return m_Router.GetDisplayName(chord); }
 
 	private:
+		// True, after reporting once per process, when this view is read-only.
+		bool Refused(const char* call) const noexcept
+		{
+			if (!m_ReadOnly)
+				return false;
+			static bool reported = false;
+			if (!reported)
+			{
+				reported = true;
+				try
+				{
+					Log(LogLevel::Warning, std::string("A fixed-step system called Actions.") + call +
+						"; contexts, listening and bindings change in Control or Update");
+				}
+				catch (...)
+				{
+				}
+			}
+			return true;
+		}
+
 		InputRouter& m_Router;
 		std::span<const ActionSample> m_Samples;
+		bool m_ReadOnly = false;
 	};
 
 	// Layout-independent English names, used when the platform has no localized name.

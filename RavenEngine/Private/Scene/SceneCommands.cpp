@@ -23,7 +23,7 @@ namespace Raven
 	{
 		const auto id = m_Scene->NewRef();
 		m_Labels.emplace_back(label);
-		m_Commands.push_back({ Kind::Create, id.Id, 0, m_Labels.size() - 1 });
+		m_Commands.push_back({ Kind::Create, id.Id, m_Scene->IsUsingSimulationIds() ? 0u : 1u, m_Labels.size() - 1 });
 		return id;
 	}
 
@@ -116,7 +116,9 @@ namespace Raven
 			{
 				try
 				{
-					scene.CreateEntity(labels[command.Data], target);
+					const auto created = scene.CreateEntity(labels[command.Data], target);
+					if (command.Other != 0)
+						registry.Add(created, ECS::PresentationComponent{});
 				}
 				catch (const std::invalid_argument& error)
 				{

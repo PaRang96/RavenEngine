@@ -266,11 +266,25 @@ namespace Raven
 	{
 		if (!m_UserData)
 			throw std::runtime_error("This host has no user data folder");
+#if defined(RAVEN_DEVELOPMENT)
+		// Per-player data must not feed the simulation, and a fixed step must not wait on files
+		// (review amendment, AA2-GP-05 step 4).
+		static bool reported = false;
+		if (m_InFixedStep && !std::exchange(reported, true))
+			Log(LogLevel::Warning, "A fixed-step system reads user data; read and write it in Control or Update, "
+				"and pass what the simulation needs through a component or a stream record");
+#endif
 		return *m_UserData;
 	}
 
-	SystemContext GameSession::MakeContext(const InputState& input, InputActions& actions, InputStream& stream,
-		const FrameTime& time)
+	void GameSession::EndFixedStep() noexcept
+	{
+		m_InFixedStep = false;
+		m_Session->GetActive().UseSimulationIds(false);
+	}
+
+	SystemContext GameSession::MakeContext(SystemPhase phase, const InputState& input, InputActions& actions,
+		InputStream& stream, const FrameTime& time)
 	{
 		// Without a physics world (tools and smoke tests) every query misses.
 		static const struct NoPhysics final : PhysicsQueries
@@ -297,9 +311,45 @@ namespace Raven
 			bool IsCapturingInput() const noexcept override { return false; }
 			bool IsRightToLeft() const noexcept override { return false; }
 		} noUi;
+		// Fixed steps run a varying number of times per frame, so they get no UI; a declaration there
+		// is reported once in development builds.
+		static struct FixedUi final : UI::Ui
+		{
+			void Report() noexcept
+			{
+#if defined(RAVEN_DEVELOPMENT)
+				if (!std::exchange(Reported, true))
+					try
+					{
+						Log(LogLevel::Warning, "A fixed-step system declared UI; declare UI in Control or Update");
+					}
+					catch (...)
+					{
+					}
+#endif
+			}
+			void Begin(std::string_view, const UI::Style&) override { Report(); }
+			void BeginKey(std::string_view, std::uint64_t, const UI::Style&) override { Report(); }
+			void End() override {}
+			void Text(std::string_view, std::string_view, const UI::Style&) override { Report(); }
+			UI::Interaction Button(std::string_view, std::string_view, const UI::Style&) override { Report(); return {}; }
+			UI::Interaction Toggle(std::string_view, std::string_view, bool&, const UI::Style&) override { Report(); return {}; }
+			void Image(std::string_view, AssetRef<TextureAsset>, const UI::Style&) override { Report(); }
+			void Focus(std::string_view) override { Report(); }
+			bool IsCapturingInput() const noexcept override { return false; }
+			bool IsRightToLeft() const noexcept override { return false; }
+			bool Reported = false;
+		} fixedUi;
+		auto& scene = m_Session->GetActive();
+		const bool fixed = phase == SystemPhase::FixedUpdate;
+		m_InFixedStep = fixed;
+		scene.UseSimulationIds(fixed);
+		if (fixed)
+			return SystemContext{ scene.GetAccess(), input, actions, stream, time, {}, m_Physics ? *m_Physics : none,
+				m_Commands, *this, m_Random, fixedUi };
 		UI::Ui& ui = m_Ui ? static_cast<UI::Ui&>(*m_Ui) : static_cast<UI::Ui&>(noUi);
-		return SystemContext{ m_Session->GetActive().GetAccess(), input, actions, stream, time, m_Picks,
-			m_Physics ? *m_Physics : none, m_Commands, *this, m_Random, ui };
+		return SystemContext{ scene.GetAccess(), input, actions, stream, time, m_Picks,
+			m_Physics ? *m_Physics : none, m_Commands, *this, m_PresentationRandom, ui };
 	}
 
 	void GameSession::SetUi(Text::TextSystem* text, UI::UiContext* game, UI::UiContext* developer)

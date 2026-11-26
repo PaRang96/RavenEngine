@@ -11,6 +11,7 @@
 #include "Physics/CharacterMovers.hpp"
 #include "Physics/JoltJobs.hpp"
 #include "Physics/JoltSupport.hpp"
+#include "Physics/PresentationCheck.hpp"
 
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -456,7 +457,6 @@ namespace Raven
 			  m_Colliders(registry.GetPool(ECS::ComponentTraits<ECS::ColliderComponent>::Info)),
 			  m_Bodies(registry.GetPool(ECS::ComponentTraits<ECS::RigidBodyComponent>::Info)),
 			  m_Transforms(registry.GetPool(ECS::ComponentTraits<ECS::TransformComponent>::Info)),
-			  m_Worlds(registry.GetPool(ECS::ComponentTraits<ECS::WorldTransformComponent>::Info)),
 			  m_Interface(world.System.GetBodyInterfaceNoLock())
 		{
 		}
@@ -512,11 +512,19 @@ namespace Raven
 				const auto collider = m_Colliders.Find(entity);
 				const auto body = m_Bodies.Find(entity);
 				const auto transform = m_Transforms.Find(entity);
-				const auto placed = m_Worlds.Find(entity);
+				// A child collider follows its ancestors within the frame: its world is composed live
+				// each step (O(depth); child colliders are few), because the cached world is stamped
+				// only after the frame's steps (review amendment, AA2-GP-02 step 4).
+				const auto movedChild = [&]
+				{
+					if (!entry.Built.Child)
+						return false;
+					const Mat4 world = m_Scene.GetWorldTransform(entity);
+					return std::memcmp(&world, &entry.Built.World, sizeof(Mat4)) != 0;
+				};
 				const bool changed = (collider != Pool::NoIndex && m_Colliders.Ticks[collider] > since) ||
 					(body != Pool::NoIndex && m_Bodies.Ticks[body] > since) ||
-					(transform != Pool::NoIndex && m_Transforms.Ticks[transform] > since) ||
-					(entry.Built.Child && placed != Pool::NoIndex && m_Worlds.Ticks[placed] > since);
+					(transform != Pool::NoIndex && m_Transforms.Ticks[transform] > since) || movedChild();
 				if (changed)
 					m_Changed.push_back(slot);
 				else if (entry.KinematicMoving && !entry.Body.IsInvalid())
@@ -555,6 +563,7 @@ namespace Raven
 				PhysicsWorld::Impl::Entry entry;
 				entry.Target = entity;
 				entry.Id = m_Scene.GetRef(entity).Id;
+				ReportPresentation(m_Scene, m_Registry, entity);
 				world.Entries.push_back(std::move(entry));
 				Build(static_cast<std::uint32_t>(world.Entries.size() - 1));
 			}
@@ -669,9 +678,7 @@ namespace Raven
 			}
 			if (desired.Child)
 			{
-				const auto placed = m_Worlds.Find(entity);
-				desired.World = placed != Pool::NoIndex ? m_Worlds.At<ECS::WorldTransformComponent>(placed).World
-					: m_Scene.GetWorldTransform(entity);
+				desired.World = m_Scene.GetWorldTransform(entity);
 				if (!Decompose(desired.World, desired.Place))
 				{
 					problem = "its world transform has a zero or non-finite scale";
@@ -949,7 +956,6 @@ namespace Raven
 		const Pool m_Colliders;
 		const Pool m_Bodies;
 		const Pool m_Transforms;
-		const Pool m_Worlds;
 		JPH::BodyInterface& m_Interface;
 		std::vector<Entity> m_Added;
 		std::vector<std::uint32_t> m_Changed;
