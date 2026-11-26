@@ -27,6 +27,7 @@ namespace Raven
 namespace Raven::Physics
 {
 	class CharacterGrid;
+	class InnerBodyFilter;
 
 	// The character backend of MoverComponent (docs/GameServicesDesign.md, FD-47): one Jolt virtual
 	// character per mover, with an inner kinematic body so sensors, contacts and queries find it.
@@ -96,6 +97,9 @@ namespace Raven::Physics
 		JPH::PhysicsSystem& m_System;
 		// Character-vs-character collision through a grid of nearby characters.
 		std::unique_ptr<CharacterGrid> m_Characters;
+		// Every character's inner body, by body index: character queries skip them, because
+		// characters meet each other only through the grid.
+		std::unique_ptr<InnerBodyFilter> m_InnerBodies;
 		std::vector<Entry> m_Entries;
 		std::vector<std::uint32_t> m_SlotOfIndex;
 		// Slots in persistent-ID order, rebuilt when membership changes (FD-48).

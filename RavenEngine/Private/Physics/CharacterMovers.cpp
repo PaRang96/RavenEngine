@@ -215,8 +215,45 @@ namespace Raven::Physics
 		mutable std::uint32_t m_Stamp = 0;
 	};
 
+	// Rejects every character's inner body in character queries. Jolt skips only the character's
+	// own inner body; another character's would be solved a second time as a static obstacle, after
+	// the grid has already handled that pair (docs/Physics.md).
+	class InnerBodyFilter final : public JPH::BodyFilter
+	{
+	public:
+		void Add(JPH::BodyID body)
+		{
+			const auto index = body.GetIndex();
+			if (index >= m_Inner.size())
+				m_Inner.resize(index + 1, 0);
+			m_Inner[index] = 1;
+		}
+
+		void Remove(JPH::BodyID body) noexcept
+		{
+			if (body.GetIndex() < m_Inner.size())
+				m_Inner[body.GetIndex()] = 0;
+		}
+
+		void Clear() noexcept
+		{
+			m_Inner.clear();
+		}
+
+		bool ShouldCollide(const JPH::BodyID& body) const override
+		{
+			const auto index = body.GetIndex();
+			return index >= m_Inner.size() || m_Inner[index] == 0;
+		}
+
+	private:
+		// Indexed by body index; a removed body's index is cleared before Jolt can reuse it.
+		std::vector<std::uint8_t> m_Inner;
+	};
+
 	CharacterMovers::CharacterMovers(JPH::PhysicsSystem& system) noexcept
-		: m_System(system), m_Characters(std::make_unique<CharacterGrid>())
+		: m_System(system), m_Characters(std::make_unique<CharacterGrid>()),
+		m_InnerBodies(std::make_unique<InnerBodyFilter>())
 	{
 	}
 
@@ -239,6 +276,7 @@ namespace Raven::Physics
 		m_SlotOfIndex.clear();
 		m_Order.clear();
 		m_OrderDirty = false;
+		m_InnerBodies->Clear();
 	}
 
 	std::uint32_t CharacterMovers::GetCount() const noexcept
@@ -311,7 +349,10 @@ namespace Raven::Physics
 		entry.Character->SetCharacterVsCharacterCollision(m_Characters.get());
 		m_Characters->Add(entry.Character);
 		if (!entry.Character->GetInnerBodyID().IsInvalid())
+		{
 			links.BodyIds[entry.Character->GetInnerBodyID().GetIndexAndSequenceNumber()] = entry.Id;
+			m_InnerBodies->Add(entry.Character->GetInnerBodyID());
+		}
 	}
 
 	void CharacterMovers::Destroy(Entry& entry, Links& links) noexcept
@@ -321,7 +362,10 @@ namespace Raven::Physics
 		if (links.EndContacts)
 			links.EndContacts(entry.Id);
 		if (!entry.Character->GetInnerBodyID().IsInvalid())
+		{
 			links.BodyIds.erase(entry.Character->GetInnerBodyID().GetIndexAndSequenceNumber());
+			m_InnerBodies->Remove(entry.Character->GetInnerBodyID());
+		}
 		m_Characters->Remove(entry.Character);
 		entry.Character = nullptr;
 	}
@@ -365,7 +409,7 @@ namespace Raven::Physics
 					MakeObjectLayer(mover.Layer, true));
 				const JPH::DefaultObjectLayerFilter layers(m_System.GetObjectLayerPairFilter(), MakeObjectLayer(mover.Layer, true));
 				const auto shape = MakeCapsule(mover.Radius, mover.HalfHeight);
-				entry.Character->SetShape(shape, std::numeric_limits<float>::max(), trees, layers, {}, {}, temporary);
+				entry.Character->SetShape(shape, std::numeric_limits<float>::max(), trees, layers, *m_InnerBodies, {}, temporary);
 				entry.Character->SetInnerBodyShape(shape);
 				entry.Character->SetSupportingVolume(JPH::Plane(JPH::Vec3::sAxisZ(), mover.HalfHeight));
 			}
@@ -517,7 +561,7 @@ namespace Raven::Physics
 			const auto layer = MakeObjectLayer(mover.Layer, true);
 			const JPH::DefaultBroadPhaseLayerFilter trees(m_System.GetObjectVsBroadPhaseLayerFilter(), layer);
 			const JPH::DefaultObjectLayerFilter layers(m_System.GetObjectLayerPairFilter(), layer);
-			character.ExtendedUpdate(seconds, gravity, settings, trees, layers, {}, {}, temporary);
+			character.ExtendedUpdate(seconds, gravity, settings, trees, layers, *m_InnerBodies, {}, temporary);
 		}
 	}
 

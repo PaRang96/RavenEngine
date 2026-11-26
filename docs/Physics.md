@@ -96,7 +96,7 @@ Jolt's capacities are fixed when the host starts. The project file sets them wit
 **Backend:**
 - **Characters:** each mover is a Jolt virtual character, updated in persistent-ID order right before the simulation step.
 - **Inner body:** an inner kinematic body on `Layer` lets queries, sensors and contact events see it, and the collider view draws it in green.
-- **Movers blocking movers:** a grid of nearby characters handles this. Jolt's own checker compares every pair, which made 500 movers cost 22 ms a step.
+- **Movers blocking movers:** a grid of nearby characters handles this, and only this: a mover's queries skip every other mover's inner body, so each pair is solved once. Jolt's own checker compares every pair, which made 500 movers cost 22 ms a step.
 
 The crowd backend for hundreds to thousands of units comes later, with navigation (FD-47).
 
