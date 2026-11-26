@@ -19,7 +19,9 @@ file(GLOB_RECURSE raven_test_support CONFIGURE_DEPENDS
 
 function(raven_add_test_executable name source)
     add_executable(${name} "${source}" ${raven_test_support})
-    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    # Tests reach RavenCore's private classes the way its own sources do, so a private header's
+    # own includes (relative to Private/) resolve as well.
+    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/RavenEngine/Private")
     target_link_libraries(${name} PRIVATE RavenCore)
     raven_apply_warnings(${name})
     set_target_properties(${name} PROPERTIES

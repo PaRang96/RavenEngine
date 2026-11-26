@@ -1,4 +1,5 @@
 #include "Raven/Core/Application.hpp"
+#include "Core/DataError.hpp"
 #include "Core/ReloadService.hpp"
 #include "Core/FrameClock.hpp"
 #include "Core/FrameTrace.hpp"
@@ -74,15 +75,18 @@ namespace Raven
 		// state. Exhaustion, a broken invariant (std::logic_error) and non-standard exceptions
 		// still end the process, because continuing would hide corruption. A stage that keeps
 		// failing with the same message logs once, until it succeeds again.
+		//
+		// Render recovers only DataError, which is raised while the frame is gathered, before the
+		// swapchain image is acquired. Any other failure there (device loss, a failure after
+		// acquisition) would leave the image and its semaphore unconsumed, so it stays fatal.
 		class StageBoundary
 		{
 		public:
-			enum Stage : std::size_t { Prepare, Gameplay, PostUpdate, Extract, Count };
+			enum Stage : std::size_t { Prepare, Gameplay, PostUpdate, Extract, Render, Count };
 
 			template<typename Function>
 			bool Run(Stage stage, Function&& function)
 			{
-				auto& state = m_States[stage];
 				try
 				{
 					function();
@@ -95,18 +99,17 @@ namespace Raven
 				{
 					throw;
 				}
+				catch (const DataError& error)
+				{
+					return Fail(stage, error);
+				}
 				catch (const std::exception& error)
 				{
-					if (state.Message != error.what())
-					{
-						state.Message = error.what();
-						Log(LogLevel::Error, std::string(Names[stage]) + " failed; the frame continues with its last good state: " +
-							state.Message);
-					}
-					else
-						++state.Repeats;
-					return false;
+					if (stage == Render)
+						throw;
+					return Fail(stage, error);
 				}
+				auto& state = m_States[stage];
 				if (!state.Message.empty())
 				{
 					Log(LogLevel::Info, std::string(Names[stage]) + " recovered after " +
@@ -117,8 +120,22 @@ namespace Raven
 			}
 
 		private:
+			bool Fail(Stage stage, const std::exception& error)
+			{
+				auto& state = m_States[stage];
+				if (state.Message != error.what())
+				{
+					state.Message = error.what();
+					Log(LogLevel::Error, std::string(Names[stage]) + " failed; the frame continues with its last good state: " +
+						state.Message);
+				}
+				else
+					++state.Repeats;
+				return false;
+			}
+
 			static constexpr const char* Names[Count]{ "Scene preparation", "Gameplay",
-				"World transform update", "Render world sync" };
+				"World transform update", "Render world sync", "Render" };
 			struct State
 			{
 				std::string Message;
@@ -343,6 +360,26 @@ namespace Raven
 			session.SetUserData(&*userData);
 			Log(LogLevel::Info, "User data folder: " + config.UserDataRoot.string());
 		}
+		// Saves user data on every exit, also while a fatal error unwinds. That is deliberate: FD-06
+		// ends the process to avoid hiding corruption, but Save keeps a .bak, so at worst one file
+		// is replaced by its backup. Declared after userData, so it runs before userData dies.
+		struct SaveOnExit
+		{
+			std::optional<UserDataService>& Data;
+			~SaveOnExit()
+			{
+				if (!Data)
+					return;
+				try
+				{
+					Data->SaveAll();
+				}
+				catch (const std::exception& error)
+				{
+					Log(LogLevel::Error, std::string("Saving user data on exit failed: ") + error.what());
+				}
+			}
+		} saveOnExit{ userData };
 		// Host-owned input mapping (docs/GameServicesDesign.md, FD-29); survives module reloads.
 		// Saved bindings apply once the game's contexts exist, and changes are saved after the frame.
 		InputRouter router(config.DeveloperInput);
@@ -633,10 +670,14 @@ namespace Raven
 						});
 					});
 				}
-				DrawDeveloperOverlay(developerUi, preview, previewEntries);
-				debugLines.clear();
-				physics.DrawColliders(debugLines);
-				session.Render(renderer, renderWorld, input, debugLines);
+				boundary.Run(StageBoundary::Render, [&]
+				{
+					DrawDeveloperOverlay(developerUi, preview, previewEntries);
+					debugLines.clear();
+					physics.DrawColliders(debugLines);
+					session.Render(renderer, renderWorld, input, debugLines);
+				});
+				// Runs whether or not Render succeeded, so blended transforms never stay authoritative.
 				if (blended)
 					boundary.Run(StageBoundary::PostUpdate, [&]
 					{
@@ -671,8 +712,6 @@ namespace Raven
 			if (rate > 0.0)
 				std::this_thread::sleep_until(frameStart + std::chrono::duration_cast<TraceClock::duration>(Seconds(1.0 / rate)));
 		}
-		if (userData)
-			userData->SaveAll();
 		if (!config.FrameTracePath.empty())
 		{
 			std::ofstream trace(config.FrameTracePath);

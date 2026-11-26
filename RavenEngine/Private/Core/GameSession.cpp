@@ -4,6 +4,7 @@
 #include "Audio/SoundEvent.hpp"
 
 #include "Physics/PickWorld.hpp"
+#include "Renderer/DrawChecks.hpp"
 #include "Renderer/Vulkan/VulkanMesh.hpp"
 
 #include "Raven/Components/CameraComponent.hpp"
@@ -416,12 +417,19 @@ namespace Raven
 		m_TransparentSprites.clear();
 		auto& scene = m_Session->GetActive();
 		const auto& catalog = m_Project.GetCatalog();
+		std::size_t skipped = 0;
 		scene.GetAccess().View<const ECS::SpriteComponent, const ECS::WorldTransformComponent>().Each(
 			[&](ECS::Entity, const ECS::SpriteComponent& sprite, const ECS::WorldTransformComponent& world)
 			{
 				if (!sprite.Texture.IsValid() ||
 					(sprite.BlendMode != ECS::SpriteBlendMode::Opaque && sprite.BlendMode != ECS::SpriteBlendMode::Alpha))
 					return;
+				// A non-finite world or tint is skipped, not thrown in the draw queue (FD-06).
+				if (!IsDrawable(world.World) || !IsFinite(sprite.Tint))
+				{
+					++skipped;
+					return;
+				}
 				// A bad game-written texture reference skips the sprite (FD-06).
 				const auto* lease = scene.FindAsset(sprite.Texture.Id);
 				if (!lease || lease->GetKind() != AssetKind::Texture)
@@ -434,6 +442,9 @@ namespace Raven
 				else
 					m_TransparentSprites.push_back({ draw, sprite.SortLayer, sprite.SortOrder });
 			});
+		if (skipped != m_SkippedSprites && skipped != 0)
+			Log(LogLevel::Warning, std::format("{} sprite(s) not drawn: a non-finite world transform or tint", skipped));
+		m_SkippedSprites = skipped;
 	}
 
 	OverlayFrame GameSession::BuildOverlay()
@@ -485,6 +496,20 @@ namespace Raven
 			lighting = value.GetLighting();
 			return false;
 		});
+		// Authored lighting can hold any finite value (dump/apply); invalid lighting draws with the
+		// default and is reported once until it changes (FD-06).
+		try
+		{
+			lighting.Validate();
+			m_LightingProblem.clear();
+		}
+		catch (const std::invalid_argument& error)
+		{
+			if (m_LightingProblem != error.what())
+				Log(LogLevel::Warning, std::string("Scene lighting ignored, the default is used: ") + error.what());
+			m_LightingProblem = error.what();
+			lighting = SceneLighting{};
+		}
 		GatherSprites();
 		const auto rendered = renderer.DrawFrame([&](std::uint32_t width, std::uint32_t height) -> std::optional<CameraView>
 		{

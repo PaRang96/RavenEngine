@@ -3,6 +3,7 @@
 #include "Audio/AudioClip.hpp"
 #include "Audio/AudioMixer.hpp"
 #include "Raven/Audio/Sound.hpp"
+#include "Raven/Core/Api.hpp"
 
 #include <array>
 #include <cstdint>
@@ -21,21 +22,26 @@ namespace Raven
 	// - steals, virtualization and resumes fade over 10 ms, so they never click;
 	// - Dialogue ducks Music and Ambience.
 	// Handles are serials that never repeat within a run, starting at a random value.
+	//
+	// Clip lifetime follows the audio thread, not the sound: each voice slot owns its clip from the
+	// Start until the mixer reports the slot released. A sound may therefore be erased (stopped,
+	// stolen, or left behind by a scene change) while its voice still fades. A Stop the command queue
+	// drops is retried per slot until it is sent, so no voice keeps looping without an owner.
 	class AudioVoices
 	{
 	public:
 		static constexpr std::size_t MaxSounds = 512;
 
-		explicit AudioVoices(AudioMixer& mixer);
+		RAVEN_API explicit AudioVoices(AudioMixer& mixer);
 		AudioVoices(const AudioVoices&) = delete;
 		AudioVoices& operator=(const AudioVoices&) = delete;
 
 		// An empty handle when the clip is empty, the group refuses it or too many sounds play.
-		SoundHandle Play(std::shared_ptr<const PcmClip> clip, const SoundParams& params);
+		RAVEN_API SoundHandle Play(std::shared_ptr<const PcmClip> clip, const SoundParams& params);
 		void Stop(SoundHandle sound, float fadeSeconds) noexcept;
-		void StopAll(float fadeSeconds) noexcept;
+		RAVEN_API void StopAll(float fadeSeconds) noexcept;
 		bool IsPlaying(SoundHandle sound) const noexcept;
-		void SetVolume(SoundHandle sound, float volume) noexcept;
+		RAVEN_API void SetVolume(SoundHandle sound, float volume) noexcept;
 		void SetPitch(SoundHandle sound, float pitch) noexcept;
 		void SetPosition(SoundHandle sound, Vec3 position) noexcept;
 		void SetBusVolume(AudioBus bus, float volume) noexcept;
@@ -46,7 +52,7 @@ namespace Raven
 
 		// Once per frame: collects finished voices, advances virtual time, updates gains and buses,
 		// and moves sounds between real and virtual.
-		void Update(double seconds) noexcept;
+		RAVEN_API void Update(double seconds) noexcept;
 
 		struct Counts
 		{
@@ -54,7 +60,7 @@ namespace Raven
 			std::size_t Virtual = 0;
 			std::size_t Stopping = 0;
 		};
-		Counts GetCounts() const noexcept;
+		RAVEN_API Counts GetCounts() const noexcept;
 
 	private:
 		enum class State : std::uint8_t { Virtual, Real, Stopping };
@@ -92,6 +98,7 @@ namespace Raven
 		void Release(Sound& sound, std::uint32_t fadeFrames, bool keep) noexcept;
 		bool Send(const AudioMixer::Command& command) noexcept;
 		void Collect() noexcept;
+		void RetryStops() noexcept;
 		void EraseStopped() noexcept;
 		void UpdateBuses(double seconds) noexcept;
 		float BusGain(AudioBus bus) const noexcept;
@@ -102,6 +109,15 @@ namespace Raven
 		std::vector<Sound> m_Sounds;
 		// The audio voice each slot runs, or zero once its release arrived.
 		std::array<std::uint64_t, AudioMixer::MaxVoices> m_Slots{};
+		// The clip each slot's voice reads, held until that release arrives.
+		std::array<std::shared_ptr<const PcmClip>, AudioMixer::MaxVoices> m_SlotClips{};
+		// A Stop the command queue dropped, per slot, resent each Update until it goes through.
+		struct PendingStop
+		{
+			std::uint64_t Voice = 0;
+			std::uint32_t RampFrames = 0;
+		};
+		std::array<PendingStop, AudioMixer::MaxVoices> m_PendingStops{};
 		std::uint64_t m_NextSerial = 0;
 		std::uint64_t m_NextVoice = 1;
 		std::uint64_t m_NextOrder = 0;

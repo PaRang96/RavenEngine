@@ -678,7 +678,7 @@ That is 0.05–0.15 ms per step, the cost of one locked queue shared with the UI
 - **`AudioMixer`:** the mixer core, with no device or thread of its own.
   - Fixed 256-frame blocks.
   - A lock-free command queue from the main thread.
-  - A release queue back, so the main thread frees a clip only after the audio thread has let go of it.
+  - A release queue back, so the main thread frees a clip only after the audio thread has let go of it. The voice slot holds the clip until then (review amendment, 2026-11-26).
 - **`AudioOutput`:** the device lifecycle on a control thread.
   - It opens the default device and reopens it 250 ms after a loss.
   - With no device, it renders silence and retries every 2 s.
@@ -762,7 +762,7 @@ No tracked test was added. Tests link RavenCore, which does not export the priva
   - loops;
   - per-bus buffers whose gains ramp across a block;
   - a safety clamp on the output.
-  - Commands carry a slot and a voice serial; stale commands are ignored. Each slot publishes its position once per block. A slot returns to the main thread only through the release queue, so a clip is never freed while the audio thread reads it.
+  - Commands carry a slot and a voice serial; stale commands are ignored. Each slot publishes its position once per block. A slot returns to the main thread only through the release queue. *Review amendment (2026-11-26, AA2-MEDIA-01):* the slot, not the sound, owns the clip from the Start until that release, because a sound can be erased while its voice still fades (a virtualized loop stopped, stolen or left behind by a scene change). Before this, such a loop's clip could be freed while the audio thread read it. A Stop the full command queue drops is retried per slot until it is sent. `AudioVoicesTests` guards both, CPU-only.
 - **`AudioVoices` (main thread)** runs once per frame from `GameSession::Render`, with the drawing camera as the listener. It owns every sound:
   - it applies the concurrency rules when a sound starts;
   - it advances the time of virtual sounds;

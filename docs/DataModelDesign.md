@@ -170,6 +170,16 @@ The host frame itself has no boundary. `Application.cpp:111-146` calls `PrepareF
 
 **Effect on goals:** goal 3 (recovery). It costs nothing per frame, because nothing throws in the normal case.
 
+### Review amendment: who catches what (2026-11-26, AA2-RT-01)
+
+The 2026-11-26 architecture assessment found the Render stage outside every boundary: an authored negative ambient or a zero light direction (reachable through dump/apply) ended the session. The rule above is kept and made exact:
+- **Tiers are decided by who catches.** A system's exception suspends that system. A host stage boundary (Prepare, Gameplay, PostUpdate, Extract, Render) recovers data errors and lets `std::bad_alloc` and the `std::logic_error` family end the process.
+- **`DataError`** (`Private/Core/DataError.hpp`, a `std::runtime_error`) carries data and capacity errors that legitimately escape to a stage. Capacity exhaustion is a data error. Existing `std::logic_error`-family throws of data conditions are converted when their code is next touched, not in a sweep.
+- **Render recovers `DataError` only.** It is raised while the frame is gathered, before the swapchain image is acquired. Device loss and failures after acquisition are engine invariants and stay fatal, because a retry would leave the acquired image and its semaphore unconsumed.
+- **Render validates at gather instead of throwing:** invalid scene lighting draws with the default and is reported once; a sprite with a non-finite world or tint is skipped; a draw whose camera transform overflows is skipped, both reported once per change.
+- **User data is saved on every exit**, also while a fatal error unwinds. That is deliberate: Save keeps a `.bak`, so at worst one file is replaced by its backup.
+- **`RAVEN_ASSERT`** has no use and is deleted with the dead public APIs (AA2-CORE-04). Hot-path invariants keep explicit checks.
+
 ---
 
 ## FD-08 — The field table

@@ -2,6 +2,7 @@
 
 #include "Audio/AudioDevice.hpp"
 #include "Raven/Audio/Sound.hpp"
+#include "Raven/Core/Api.hpp"
 
 #include <array>
 #include <atomic>
@@ -107,7 +108,7 @@ namespace Raven
 		}
 
 		// Audio thread: fills frames * MixerChannels samples, for any frame count.
-		void Render(float* out, std::uint32_t frames) noexcept;
+		RAVEN_API void Render(float* out, std::uint32_t frames) noexcept;
 		static void RenderCallback(void* mixer, float* out, std::uint32_t frames) noexcept;
 
 	private:

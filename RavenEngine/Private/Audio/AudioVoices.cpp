@@ -211,6 +211,7 @@ namespace Raven
 	void AudioVoices::Update(double seconds) noexcept
 	{
 		Collect();
+		RetryStops();
 		seconds = std::clamp(std::isfinite(seconds) ? seconds : 0.0, 0.0, 1.0);
 		for (auto& sound : m_Sounds)
 		{
@@ -387,6 +388,8 @@ namespace Raven
 		if (!Send(command))
 			return false;
 		m_Slots[*slot] = m_NextVoice;
+		m_SlotClips[*slot] = sound.Clip;
+		m_PendingStops[*slot] = {};
 		sound.Slot = *slot;
 		sound.Voice = m_NextVoice++;
 		sound.Mode = State::Real;
@@ -410,8 +413,10 @@ namespace Raven
 		command.Slot = sound.Slot;
 		command.Serial = sound.Voice;
 		command.RampFrames = std::max(fadeFrames, DeclickFrames);
-		// If the queue is full the voice plays on to its end, and its release still arrives.
-		Send(command);
+		// A Stop the full queue drops is retried for this slot until it is sent (RetryStops); the
+		// slot keeps the clip either way, so the sound may be erased meanwhile.
+		if (!Send(command))
+			m_PendingStops[sound.Slot] = { sound.Voice, command.RampFrames };
 		sound.Position = m_Mixer.GetPosition(sound.Slot) + static_cast<double>(command.RampFrames) * sound.Rate;
 		if (keep && sound.Params.Loop)
 		{
@@ -441,7 +446,12 @@ namespace Raven
 		while (m_Mixer.TakeRelease(release))
 		{
 			if (release.Slot < m_Slots.size() && m_Slots[release.Slot] == release.Serial)
+			{
+				// The audio thread is done with the slot: only now may its clip be freed.
 				m_Slots[release.Slot] = 0;
+				m_SlotClips[release.Slot].reset();
+				m_PendingStops[release.Slot] = {};
+			}
 			for (auto& sound : m_Sounds)
 				if (sound.Voice == release.Serial)
 				{
@@ -451,6 +461,29 @@ namespace Raven
 				}
 		}
 		EraseStopped();
+	}
+
+	void AudioVoices::RetryStops() noexcept
+	{
+		for (std::uint32_t slot = 0; slot < AudioMixer::MaxVoices; ++slot)
+		{
+			auto& pending = m_PendingStops[slot];
+			if (pending.Voice == 0)
+				continue;
+			if (m_Slots[slot] != pending.Voice)
+			{
+				pending = {};
+				continue;
+			}
+			AudioMixer::Command command;
+			command.Type = AudioMixer::CommandType::Stop;
+			command.Slot = slot;
+			command.Serial = pending.Voice;
+			command.RampFrames = pending.RampFrames;
+			if (!Send(command))
+				return;
+			pending = {};
+		}
 	}
 
 	void AudioVoices::EraseStopped() noexcept

@@ -1,5 +1,6 @@
 #include "Renderer/RenderWorldState.hpp"
 
+#include "Renderer/DrawChecks.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
@@ -17,15 +18,6 @@ namespace Raven
 	{
 		using ECS::Entity;
 		using Pool = ECS::Detail::PoolView;
-
-		bool IsDrawable(const Mat4& model) noexcept
-		{
-			for (const auto& column : model.Columns)
-				for (const float value : column)
-					if (!std::isfinite(value))
-						return false;
-			return model(3, 0) == 0.0f && model(3, 1) == 0.0f && model(3, 2) == 0.0f && model(3, 3) == 1.0f;
-		}
 
 		std::uint32_t IndexOf(Entity entity) noexcept
 		{

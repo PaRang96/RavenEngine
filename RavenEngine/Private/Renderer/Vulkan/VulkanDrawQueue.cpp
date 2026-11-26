@@ -2,17 +2,23 @@
 
 #include "Renderer/Visibility.hpp"
 #include "Renderer/Vulkan/VulkanTexturedMesh.hpp"
+#include "Raven/Core/Log.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace Raven
 {
 	namespace
 	{
-		Mat4 PrepareTransform(const Mat4& viewProjection, const Mat4& model, Vec4 tint)
+		// Gathering skips non-finite models and tints, so one here is an engine bug. A finite model
+		// whose product with the camera overflows is data (a huge scale, say): the draw is skipped.
+		std::optional<Mat4> PrepareTransform(const Mat4& viewProjection, const Mat4& model, Vec4 tint)
 		{
 			if (!std::isfinite(tint.X) || !std::isfinite(tint.Y) || !std::isfinite(tint.Z) || !std::isfinite(tint.W))
 				throw std::invalid_argument("Draw tint must be finite");
@@ -20,7 +26,7 @@ namespace Raven
 			for (const auto& column : transform.Columns)
 				for (const float value : column)
 					if (!std::isfinite(value))
-						throw std::invalid_argument("Draw transform exceeds the supported numeric range");
+						return std::nullopt;
 			return transform;
 		}
 
@@ -89,12 +95,15 @@ namespace Raven
 		const ViewFrustum frustum(viewProjection);
 		queue.OpaqueTexture.reserve(opaqueDraws.size());
 		queue.Transparent.reserve(transparentDraws.size());
+		std::size_t skipped = 0;
 		for (const auto& draw : opaqueDraws)
 		{
 			const auto bounds = TransformBounds(draw.Mesh.GetLocalBounds(), draw.Model);
 			const auto transform = PrepareTransform(viewProjection, draw.Model, draw.Tint);
-			if (frustum.Intersects(bounds))
-				queue.OpaqueTexture.push_back({ &draw, transform });
+			if (!transform)
+				++skipped;
+			else if (frustum.Intersects(bounds))
+				queue.OpaqueTexture.push_back({ &draw, *transform });
 		}
 		for (std::size_t index = 0; index < transparentDraws.size(); ++index)
 		{
@@ -102,14 +111,24 @@ namespace Raven
 			const auto& draw = submission.Draw;
 			const auto bounds = TransformBounds(draw.Mesh.GetLocalBounds(), draw.Model);
 			const auto transform = PrepareTransform(viewProjection, draw.Model, draw.Tint);
-			if (!frustum.Intersects(bounds))
+			if (transform && !frustum.Intersects(bounds))
 				continue;
 			const Vec4 center = view * Vec4{ bounds.Center.X, bounds.Center.Y, bounds.Center.Z, 1.0f };
-			if (!std::isfinite(center.Z))
-				throw std::invalid_argument("Transparent draw depth must be finite");
-			queue.Transparent.push_back({ &draw, transform, -center.Z,
+			if (!transform || !std::isfinite(center.Z))
+			{
+				++skipped;
+				continue;
+			}
+			queue.Transparent.push_back({ &draw, *transform, -center.Z,
 				submission.SortLayer, submission.SortOrder, index });
 		}
+		// Reported once per run of frames with skipped draws; one renderer thread owns the queue.
+		static bool reported = false;
+		if (skipped == 0)
+			reported = false;
+		else if (!std::exchange(reported, true))
+			Log(LogLevel::Warning, std::format("{} textured draw(s) skipped: the camera transform of their model "
+				"exceeds the supported numeric range", skipped));
 		std::sort(queue.Transparent.begin(), queue.Transparent.end(), [](const auto& left, const auto& right)
 		{
 			if (left.SortLayer != right.SortLayer)

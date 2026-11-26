@@ -131,6 +131,9 @@ namespace Raven
 		std::vector<PickHit> m_Picks;
 		std::vector<PickHit> m_PendingPicks;
 		std::string m_CameraProblem;
+		// The last reported lighting problem, and the sprite count skipped in the last gather.
+		std::string m_LightingProblem;
+		std::size_t m_SkippedSprites = 0;
 		bool m_Playing = true;
 		double m_TracePhase = 0.0;
 		UserDataStore* m_UserData = nullptr;
