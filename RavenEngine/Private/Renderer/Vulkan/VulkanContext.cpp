@@ -422,18 +422,27 @@ namespace Raven
 				CheckShaderInterface(words, DebugLineVertexInterface());
 				break;
 			case ShaderProgram::DebugLineFragment:
-				// Its only input is the color the vertex stage writes; pipeline creation checks the match.
+				// Its only input is the color the vertex stage writes. Not checked: pipeline creation does
+				// not validate stage interfaces, and validation layers only log a mismatch.
 				break;
 			case ShaderProgram::OverlayVertex:
 				CheckShaderInterface(words, OverlayVertexInterface());
 				break;
 			case ShaderProgram::OverlayFragment:
-				// It reads what the vertex stage writes and the bindless array; pipeline creation checks both.
+				// It reads what the vertex stage writes and the bindless array. Not checked: pipeline
+				// creation does not validate stage interfaces, and validation layers only log a mismatch.
 				break;
-			default:
+			case ShaderProgram::LitFragment:
+			case ShaderProgram::UnlitFragment:
+			case ShaderProgram::NormalsFragment:
+			case ShaderProgram::WireframeFragment:
 				// Every lit view's fragment shader uses the material interface.
 				CheckFragmentShaderInterface(words, FragmentShaderKind::Lit);
 				break;
+			default:
+				// A new program needs its own check and group here and in ApplyShaderReloads. This runs on
+				// the reload worker, which reports the failed import; nothing is published.
+				throw std::logic_error("unclassified shader program");
 			}
 		}
 	}
@@ -468,8 +477,12 @@ namespace Raven
 			else if (candidate.Program == ShaderProgram::OverlayVertex ||
 				candidate.Program == ShaderProgram::OverlayFragment)
 				overlay.push_back(std::move(candidate));
-			else
+			else if (candidate.Program == ShaderProgram::TexturedVertex ||
+				candidate.Program == ShaderProgram::TexturedFragment)
 				textured.push_back(std::move(candidate));
+			else
+				// CheckProgram rejects unclassified programs first; never misroute one into a group.
+				Log(LogLevel::Error, "Shader reload dropped: the program has no pipeline group");
 		}
 		const auto publish = [&](const char* group, std::vector<ShaderLibrary::Candidate>& candidates,
 			const std::function<void()>& replace)
