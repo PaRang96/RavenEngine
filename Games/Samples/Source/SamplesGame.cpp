@@ -36,10 +36,14 @@ extern "C" RAVEN_GAME_API void RavenRegisterSystems(Raven::SystemTable& systems)
 	const InputBinding pause[]{ key(Key::Space) };
 	const InputBinding order[]{ key(Key::O), key(Key::F1) };
 	const InputBinding swap[]{ key(Key::G) };
+	const InputBinding restart[]{ key(Key::R) };
+	const InputBinding next[]{ key(Key::Enter) };
 	systems.InputContext({ .Name = PlayContext });
 	systems.Action({ PlayContext, PauseAction, ActionKind::Button, pause });
 	systems.Action({ PlayContext, OrderAction, ActionKind::Button, order });
 	systems.Action({ PlayContext, SwapAction, ActionKind::Button, swap });
+	systems.Action({ PlayContext, RestartAction, ActionKind::Button, restart });
+	systems.Action({ PlayContext, ContinueAction, ActionKind::Button, next });
 
 	systems.Add({ "Patrol", SystemPhase::FixedUpdate, 0, &PatrolSystem });
 	systems.Add({ "FreeFly", SystemPhase::Update, 0, &FreeFlySystem });

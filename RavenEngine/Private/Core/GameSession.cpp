@@ -183,7 +183,19 @@ namespace Raven
 
 	bool GameSession::Advance(bool restart, bool next)
 	{
-		if (!m_Session->Update(restart, next))
+		bool replaced = false;
+		// A developer key wins this frame; a game request then waits for the next one.
+		if (restart || next || !m_SceneRequest)
+			replaced = m_Session->Update(restart, next);
+		else
+		{
+			const auto request = *std::exchange(m_SceneRequest, std::nullopt);
+			using Kind = SceneRequest::Kind;
+			replaced = request.Type == Kind::Scene ? m_Session->Load(request.Scene) :
+				m_Session->Update(request.Type == Kind::Restart, request.Type == Kind::Next);
+			m_Transition = replaced ? SceneTransition::Idle : SceneTransition::Failed;
+		}
+		if (!replaced)
 			return false;
 		m_Commands.Reset(m_Session->GetActive());
 		m_Picks.clear();
@@ -246,6 +258,29 @@ namespace Raven
 		if (paused != m_SimulationPaused)
 			Log(LogLevel::Info, paused ? "Simulation paused by the game" : "Simulation resumed by the game");
 		m_SimulationPaused = paused;
+	}
+
+	void GameSession::RequestScene(AssetRef<SceneAsset> scene) noexcept
+	{
+		m_SceneRequest = SceneRequest{ SceneRequest::Kind::Scene, scene.Id };
+		m_Transition = SceneTransition::Loading;
+	}
+
+	void GameSession::RequestNextScene() noexcept
+	{
+		m_SceneRequest = SceneRequest{ SceneRequest::Kind::Next, {} };
+		m_Transition = SceneTransition::Loading;
+	}
+
+	void GameSession::RequestRestart() noexcept
+	{
+		m_SceneRequest = SceneRequest{ SceneRequest::Kind::Restart, {} };
+		m_Transition = SceneTransition::Loading;
+	}
+
+	SceneTransition GameSession::GetSceneTransition() const noexcept
+	{
+		return m_Transition;
 	}
 
 	UserDataStore& GameSession::GetUserData()

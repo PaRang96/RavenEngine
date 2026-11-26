@@ -19,14 +19,20 @@ namespace Samples
 
 	// Mapped actions (FD-29), so a developer key never takes them silently. Space pauses the orbit
 	// animation or, in free flight, the puzzle; O or F1 toggles the transparent order; G swaps the
-	// mesh sources of the controlled mesh and the beacon (F6 is the developer's preview key).
+	// mesh sources of the controlled mesh and the beacon (F6 is the developer's preview key). R
+	// restarts the scene (in the orbit demo: resets the camera), and Enter continues to the next
+	// scene once a goal is completed, also in a packaged player.
 	inline constexpr std::string_view PlayContext = "Samples.Play";
 	inline constexpr std::string_view PauseAction = "Pause";
 	inline constexpr std::string_view OrderAction = "ToggleOrder";
 	inline constexpr std::string_view SwapAction = "SwapMeshes";
+	inline constexpr std::string_view RestartAction = "Restart";
+	inline constexpr std::string_view ContinueAction = "Continue";
 	inline constexpr ActionId Pause{ PauseAction };
 	inline constexpr ActionId ToggleOrder{ OrderAction };
 	inline constexpr ActionId SwapMeshes{ SwapAction };
+	inline constexpr ActionId Restart{ RestartAction };
+	inline constexpr ActionId Continue{ ContinueAction };
 
 	// The first drawable frame after a pause carries a zero delta; long stalls are capped.
 	inline float Delta(const SystemContext& context)

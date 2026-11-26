@@ -66,8 +66,8 @@ namespace Raven
 		RAVEN_API CameraView GetCameraView(ECS::Entity entity, float aspect) const;
 		RAVEN_API const AssetLease& UseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
 		// Non-throwing form for game-written references: a data error (nil or unregistered ID,
-		// wrong kind, missing file) returns null and logs once per asset. Decode and GPU failures
-		// still throw.
+		// wrong kind, missing file, a decode or upload failure) returns null and logs once per asset.
+		// A skipped asset stays skipped until the scene reloads.
 		RAVEN_API const AssetLease* TryUseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
 		RAVEN_API const AssetLease& GetAsset(AssetId id) const;
 		// True for a live entity this scene owns.

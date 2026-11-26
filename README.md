@@ -6,7 +6,7 @@ Launch either Windows development build with no arguments to play Perspective in
 
 Track the remaining work and its completion criteria in the [RavenEngine roadmap](ROADMAP.md) and [TODO list](TODO.md).
 
-On Windows, a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. Courtyard is playable with fixed-step movement, an authored wall, triggers, and outcome audio. General collision and physics work is deferred. See the [roadmap](ROADMAP.md#deferred-collision-and-physics).
+On Windows, a host-owned GameInstance retains its Registry and copied component values while a separate game DLL is replaced. Source watching and background game builds preserve the active code on build or compatibility failure. The Arena sample game (`--game Arena`) shows the game services: input mapping, Jolt physics, character movers, UI, audio and the profile store. 3D is the only target: the 2D Courtyard sample was removed on 2026-11-26 ([planning decision 18](ROADMAP.md#planning-decisions-2026-11-24)).
 
 ECS and hot reload are joint goals. Perspective and Orthographic use ECS cameras and shared renderer resources. The Windows game DLL updates the Orthographic sprite's Transform directly and supports an opt-in Perspective free-fly camera. Both samples use host-owned Scene/SceneSession services with a file-backed project catalog, data-driven F4 order, shared asset leases and safe resource retirement. The 3D codec also supports hierarchy, full world transforms and atomic authored save/load; F4 twice opens the shared-asset Assemblies demo. See [the live scene workflow](docs/SceneWorkflow.md) and [TODO.md](TODO.md).
 
@@ -50,8 +50,6 @@ Developer utilities include `Paths::GetContentPath()`, `GetShaderPath()`, execut
 
 The four-argument `DrawFrame()` adds straight-alpha draws with explicit layer/order and automatic camera-depth sorting. A private preparation stage performs per-instance frustum selection before Vulkan command recording. The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
 
-Run with `--game Courtyard` for the 2D sample. `CameraComponent::OrthographicHeight` sets the full visible height in world units, and width follows the drawable aspect ratio. The shared frame path handles both camera types with the same depth, transparency, and frustum rules. Arrows pan, wheel/PageUp/PageDown zoom, Home resets the active camera, F1 toggles transparent order and F2 switches cameras. F3 restarts the current level from disk and F4 switches between Courtyard and the original layout. In Courtyard, use WASD to go around the wall, avoid the gold courier, and reach the green beacon. A distinct sound marks each outcome. F3 restarts the attempt. See [game roots](docs/EngineModules.md#game-roots-m6a).
-
 Run with `--game Arena` for the M6C sample game: steer the craft with WASD or the arrows, jump with Space, turn the camera with Q/E and pause with Esc. Collect the cyan energy cells and avoid the red drones; the best score is kept in `out/User/Arena`. Ctrl+F5 and Ctrl+F9 quick-save and quick-load the world.
 
 `Images::Load()` decodes PNG/JPEG files into owned RGBA8 CPU pixels for texture creation. The pinned decoder is compiled privately into RavenCore; builds need no manual image-library download or additional decoder DLL. Its license is staged in `Licenses` beside the executable. The sample loads two catalog PNGs and displays them alongside the imported Blender cube, sphere, and ground slab. See [ImageLoading.md](docs/ImageLoading.md) for usage, format/size limits, and validation.
@@ -71,7 +69,7 @@ cmake --preset x64-debug
 cmake --build out/build/x64-debug
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --orbit
-.\out\build\x64-debug\RavenEngine\RavenEngine.exe --game Courtyard
+.\out\build\x64-debug\RavenEngine\RavenEngine.exe --game Arena
 .\out\build\x64-debug\RavenEngine\RavenEngine.exe --no-watch
 ```
 
@@ -84,7 +82,7 @@ Build the [Windows x64 player folder](docs/PlayerBuild.md) with `python scripts/
 
 Profile the development-only [Windows 3D benchmark](docs/Benchmark3D.md) with `python scripts/Benchmark-Windows3D.py measure current`.
 
-Game code lives in its game root, outside the engine (`Games/Samples/Source`, `Games/Courtyard/Source`, `Games/Arena/Source`). In the default development launch, edit a game source or component header: the module rebuilds in the background and reloads, and component values migrate by field name. F5 explicitly reloads the built module. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/<Name>/BuildGame.cmake`; a full engine build can try to overwrite loaded engine files. In the Samples game, use WASD and Q/E to move, right-drag to look, the wheel for FOV, and left-click to pick. Edit `FreeFlySpeed` to test camera movement reload.
+Game code lives in its game root, outside the engine (`Games/Samples/Source`, `Games/Arena/Source`). In the default development launch, edit a game source or component header: the module rebuilds in the background and reloads, and component values migrate by field name. F5 explicitly reloads the built module. Build it while running with `cmake -P out/build/x64-debug/RavenEngine/GameBuild/<Name>/BuildGame.cmake`; a full engine build can try to overwrite loaded engine files. In the Samples game, use WASD and Q/E to move, right-drag to look, the wheel for FOV, and left-click to pick. Edit `FreeFlySpeed` to test camera movement reload.
 
 This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Engine public-header or build-contract changes are rejected until the host is rebuilt and restarted. Module-owned persistent objects and untrusted plugins are outside this example. Game-only builds reuse the compiler/SDK environment captured during host configuration; runtime watching does not require a developer shell. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
 

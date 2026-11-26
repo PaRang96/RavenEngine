@@ -136,6 +136,29 @@ namespace Raven
 		m_Impl->Publish(m_Impl->Prepare(m_Impl->Description, m_Impl->Project.GetCatalog()));
 	}
 
+	bool SceneSession::Load(AssetId scene)
+	{
+		try
+		{
+			const auto all = m_Impl->Project.GetScenes();
+			const std::vector<SceneDescription> scenes(all.begin(), all.end());
+			const auto found = std::find_if(scenes.begin(), scenes.end(), [scene](const auto& description)
+			{
+				return description.Id == scene;
+			});
+			if (found == scenes.end())
+				throw std::runtime_error("the project has no scene " + scene.ToString());
+			m_Impl->PendingScene.reset();
+			m_Impl->Publish(m_Impl->Prepare(*found, m_Impl->Project.GetCatalog()));
+			return true;
+		}
+		catch (const std::exception& error)
+		{
+			Log(LogLevel::Warning, "Cannot load the requested scene; keeping the active world: " + std::string(error.what()));
+			return false;
+		}
+	}
+
 	void SceneSession::RestoreSnapshot(std::span<const std::byte> bytes)
 	{
 		auto world = m_Impl->Build(bytes, m_Impl->Path, m_Impl->Project.GetCatalog());

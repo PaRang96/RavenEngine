@@ -65,8 +65,9 @@ namespace Raven
 		virtual std::vector<std::string> GetKeys(std::string_view file) const = 0;
 		// Text or binary for the next save of `file`. Binary is the default.
 		virtual void SetFormat(std::string_view file, UserDataFormat format) = 0;
-		// Writes `file` if it changed. False, with one log line, when the write failed; the data
-		// stays in memory and the next save tries again.
+		// Saves `file` if it changed. In the engine, the write happens after the frame, so a fixed
+		// step never waits on the disk; tools and tests write at once. False, with one log line, when
+		// a write failed; the data stays in memory and the next save tries again.
 		virtual bool Save(std::string_view file) = 0;
 
 	protected:

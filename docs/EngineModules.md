@@ -25,7 +25,7 @@ Games/<Name>/
 ```
 
 - **Samples** holds the 3D samples (Perspective, Gallery, Assemblies, Puzzle, Collection, Physics) and the benchmark scenes. It flies freely by default and runs the orbit demo with `--orbit`. `SamplesTool create-puzzle|create-collection|create-physics|create-benchmark` regenerates the tool-made scenes.
-- **Courtyard** holds the 2D Courtyard and Orthographic levels: WASD, arrows/wheel/PageUp/PageDown/Home for the camera, F1 order, F2 camera.
+- **Courtyard** (the 2D sample) was removed on 2026-11-26 with the 2D-only `Collision2D` helpers: no 2D work for now (ROADMAP planning decision 18). The Courtyard sections below are history.
 - **Arena** is the M6C sample game (FD-46): WASD or arrows steer the craft, Space jumps, Q/E turn the camera, Esc or P pauses. Collect the cyan cells and avoid the red drones. `--swarm` fills the arena with drones for measurements. `ArenaTool create-arena` regenerates its scene.
 - The engine host owns the developer keys:
   - F3 restart scene, F4 next scene, F5 reload the module, F7 render view, F8 pause;

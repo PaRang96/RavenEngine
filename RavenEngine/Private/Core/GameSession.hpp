@@ -59,6 +59,8 @@ namespace Raven
 		bool Prepare(const DeveloperRequests& requests, const FrameTime& time);
 		// Restarts the scene, opens the next one, or applies pending scene and project edits.
 		bool Advance(bool restart = false, bool next = false);
+		// A game scene-flow request is pending: the frame's remaining fixed steps are skipped.
+		bool HasSceneRequest() const noexcept { return m_SceneRequest.has_value(); }
 		SceneSession& GetSession() noexcept { return *m_Session; }
 		SceneCommands& GetCommands() noexcept { return m_Commands; }
 		GameServices& GetServices() noexcept { return *this; }
@@ -113,6 +115,10 @@ namespace Raven
 		void SetTracePhase(double value) noexcept override { m_TracePhase = value; }
 		UserDataStore& GetUserData() override;
 		void SetSimulationPaused(bool paused) noexcept override;
+		void RequestScene(AssetRef<SceneAsset> scene) noexcept override;
+		void RequestNextScene() noexcept override;
+		void RequestRestart() noexcept override;
+		SceneTransition GetSceneTransition() const noexcept override;
 
 		void GatherSprites();
 		OverlayFrame BuildOverlay();
@@ -159,6 +165,14 @@ namespace Raven
 			std::size_t Entities = 0;
 		};
 		std::optional<Snapshot> m_QuickSave;
+		// The game's scene-flow request, applied by the next Prepare (the last request wins).
+		struct SceneRequest
+		{
+			enum class Kind : std::uint8_t { Scene, Next, Restart } Type = Kind::Restart;
+			AssetId Scene;
+		};
+		std::optional<SceneRequest> m_SceneRequest;
+		SceneTransition m_Transition = SceneTransition::Idle;
 		bool m_SimulationPaused = false;
 		bool m_MeshReloadAwaitingPresent = false;
 		bool m_TextureReloadAwaitingPresent = false;

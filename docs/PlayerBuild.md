@@ -6,7 +6,7 @@ From a Visual Studio x64 developer shell with Python 3, CMake, Ninja, and the Vu
 python scripts/BuildPlayer.py --preset x64-release --profile public-preview
 ```
 
-The command builds and publishes `out/player/windows-x64/public-preview/`. Copy the entire folder and open `RavenEngine.exe`. The executable opens Puzzle with staged content and development watching disabled. F4 switches to Collection. F3 restarts the active level. The folder's `README.txt` lists native runtime prerequisites. The game DLL loads in place, so the folder may be read-only; player data goes to the OS per-user folder (review amendment, 2026-11-26, AA2-HR-05).
+The command builds and publishes `out/player/windows-x64/public-preview/`. Copy the entire folder and open `RavenEngine.exe`. The executable opens Puzzle with staged content and development watching disabled. Once a goal is completed, Enter continues to the next level (Collection); R restarts the active level. Both are the game's own scene requests (`GameServices::RequestNextScene` and `RequestRestart`). F3 and F4 are developer keys and do nothing in a player. The folder's `README.txt` lists native runtime prerequisites. The game DLL loads in place, so the folder may be read-only; player data goes to the OS per-user folder (review amendment, 2026-11-26, AA2-HR-05).
 
 ## Select levels and assets
 
@@ -22,4 +22,4 @@ Windows x64 Release is the verified player backend. The first profile packages t
 
 ## Verification
 
-The public preview was copied to a path with spaces and launched from a separate working directory with the developer tool paths removed. Puzzle and Collection each completed and restarted, and F4 cycled through the two selected levels. An isolated build also added a private level with its own mesh, opened it in development, and explicitly included it once. Rebuilding the public profile removed the private level and its mesh from both the folder and the manifest. An unknown scene UUID failed staging and preserved the previous player's files. These checks ran on the development Windows machine. A separate clean-machine run is still a release check.
+The public preview was copied to a path with spaces and launched from a separate working directory with the developer tool paths removed. Puzzle and Collection each completed and restarted, and F4 cycled through the two selected levels. (That record, 2026-11-21, predates FD-29's developer context: since then F3 and F4 do nothing in a player, and the levels are reached through the game's scene requests instead.) An isolated build also added a private level with its own mesh, opened it in development, and explicitly included it once. Rebuilding the public profile removed the private level and its mesh from both the folder and the manifest. An unknown scene UUID failed staging and preserved the previous player's files. These checks ran on the development Windows machine. A separate clean-machine run is still a release check.

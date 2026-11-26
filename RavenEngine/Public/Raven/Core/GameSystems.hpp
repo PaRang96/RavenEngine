@@ -42,10 +42,31 @@ namespace Raven
 		Update,
 	};
 
+	// Where game-driven scene flow stands (GameServices::RequestScene and the rest).
+	enum class SceneTransition : std::uint8_t
+	{
+		// No request is pending, and the last one succeeded.
+		Idle,
+		// A request waits for the next frame (with asynchronous loading, M6B B6: its scene loads).
+		Loading,
+		// The last request failed: the scene that was playing keeps playing, and the log says why.
+		Failed,
+	};
+
 	// Engine services a system may call during its update. Implemented by the engine.
 	class GameServices
 	{
 	public:
+		// Scene flow: menus, levels and retries (docs/GameServicesDesign.md, review amendments). A
+		// request is applied between frames, before the next frame's fixed steps; the last request
+		// wins. Once one is pending, the frame's remaining fixed steps are skipped, so no tick runs on
+		// a scene the game has already left. Nothing carries over into the new scene yet.
+		virtual void RequestScene(AssetRef<SceneAsset> scene) noexcept = 0;
+		// The next scene in the project's scene order; after the last scene, the first.
+		virtual void RequestNextScene() noexcept = 0;
+		// The current scene again, as authored.
+		virtual void RequestRestart() noexcept = 0;
+		virtual SceneTransition GetSceneTransition() const noexcept = 0;
 		// Sounds (docs/GameServicesDesign.md, C8). A bad reference is logged once and returns an empty
 		// handle. Calls with a handle whose sound ended do nothing, so handles may be kept in components.
 		virtual SoundHandle PlaySound(AssetRef<AudioAsset> sound, const SoundParams& params) = 0;

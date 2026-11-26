@@ -20,6 +20,8 @@ namespace Raven
 	// another machine. A record emitted in a frame reaches that frame's first fixed step, or the next
 	// one when the frame has none. Records still waiting when the game module is replaced are
 	// dropped (at most one tick of input). AI does not emit records: it acts inside the fixed step.
+	// Continuous intent (steering, aim) must therefore be latched in a component by the fixed step,
+	// or read from Actions: a frame's later catch-up steps see no record (Arena's CraftInputComponent).
 	class InputStream
 	{
 	public:

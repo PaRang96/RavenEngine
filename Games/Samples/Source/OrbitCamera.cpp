@@ -1,4 +1,5 @@
-// The orbit demo's camera (`--orbit`): arrows orbit the target, the wheel zooms, Home or R resets.
+// The orbit demo's camera (`--orbit`): arrows orbit the target, the wheel zooms, Home or R (the
+// Restart action) resets.
 
 #include "SampleSystems.hpp"
 
@@ -21,7 +22,7 @@ namespace Samples
 		if (!orbit || !scene.Read(entity, transform))
 			return;
 		const float delta = Delta(context);
-		const bool reset = input.WasKeyPressed(Key::R) || input.WasKeyPressed(Key::Home);
+		const bool reset = context.Actions.WasPressed(Restart) || input.WasKeyPressed(Key::Home);
 		const float yawStep = KeyStep(input, Key::Right, 0.1f, delta) - KeyStep(input, Key::Left, 0.1f, delta);
 		const float pitchStep = KeyStep(input, Key::Up, 0.1f, delta) - KeyStep(input, Key::Down, 0.1f, delta);
 		if (!reset && yawStep == 0.0f && pitchStep == 0.0f && input.ScrollY == 0.0f)

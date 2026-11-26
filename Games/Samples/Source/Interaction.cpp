@@ -68,14 +68,17 @@ namespace Samples
 		if (!attempt.Announced)
 		{
 			if (hasPickups)
-				Log(LogLevel::Info, "Collection: left-click the gold pickups, then fly to the cyan exit. F3 restarts.");
+				Log(LogLevel::Info, "Collection: left-click the gold pickups, then fly to the cyan exit. R restarts.");
 			else if (scene.Count<SwitchComponent>() != 0)
-				Log(LogLevel::Info, "Puzzle: left-click both orange switches, wait for the gate to open, then fly to the cyan goal. F3 restarts.");
+				Log(LogLevel::Info, "Puzzle: left-click both orange switches, wait for the gate to open, then fly to the cyan goal. R restarts.");
 			attempt.Announced = true;
 		}
 		const bool readyToExit = attempt.Completed || !hasPickups || UpdatePickups(scene, context.Picks);
 		if (context.Actions.WasPressed(Pause))
 			attempt.Paused = !attempt.Paused;
+		// Scene flow (GameServices): applied between frames, so this update still finishes.
+		if (attempt.Completed && context.Actions.WasPressed(Continue))
+			context.Services.RequestNextScene();
 		if (!attempt.Completed)
 			for (const auto& pick : context.Picks)
 			{
@@ -149,7 +152,7 @@ namespace Samples
 		if (attempt.Completed && !attempt.CompletionNotified)
 		{
 			attempt.CompletionNotified = true;
-			Log(LogLevel::Info, "Goal completed. F3 restarts.");
+			Log(LogLevel::Info, "Goal completed. Enter continues to the next scene; R restarts.");
 			scene.View<const DemoComponent>().Each([&](ECS::Entity, const DemoComponent& demo)
 			{
 				if (demo.WinSound.IsValid())
@@ -161,8 +164,12 @@ namespace Samples
 
 	void InteractionSystem(SystemContext& context)
 	{
-		if (FreeFlight(context))
-			UpdateInteraction(context, ActiveCamera(context.World), Delta(context));
+		if (!FreeFlight(context))
+			return;
+		// R restarts any scene, also one without a puzzle (the orbit demo resets its camera instead).
+		if (context.Actions.WasPressed(Restart))
+			context.Services.RequestRestart();
+		UpdateInteraction(context, ActiveCamera(context.World), Delta(context));
 	}
 
 	// Benchmarks read the first rotor's phase from the frame trace (scripts/Benchmark-Windows3D.py).

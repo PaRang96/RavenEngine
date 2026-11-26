@@ -606,8 +606,12 @@ namespace Raven
 						{
 							gameplay.BeginFrame(input, router.GetGameActions(), frameTime.DeltaSeconds);
 							const bool stepped = gameplay.HasStep();
-							while (gameplay.HasStep())
+							// No tick runs on a scene the game has asked to leave: a scene request
+							// drops the frame's remaining steps, and the next Prepare applies it.
+							while (gameplay.HasStep() && !session.HasSceneRequest())
 								runStep();
+							if (session.HasSceneRequest())
+								gameplay.Reset();
 							if (stepped)
 								interpolator.AfterSteps(session.GetScene());
 						}
