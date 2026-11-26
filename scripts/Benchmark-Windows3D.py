@@ -184,7 +184,7 @@ def measure(report, seconds, repeats):
 def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
     source = report / "source"
     source.mkdir()
-    for folder in ("RavenEngine", "Games", "ThirdParty", "cmake", "scripts", "docs", "BuildProfiles"):
+    for folder in ("RavenEngine", "Games", "Content", "ThirdParty", "cmake", "scripts", "docs", "BuildProfiles"):
         shutil.copytree(ROOT / folder, source / folder)
     for name in ("CMakeLists.txt", "CMakePresets.json"):
         shutil.copy2(ROOT / name, source / name)

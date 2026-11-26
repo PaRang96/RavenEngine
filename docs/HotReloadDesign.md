@@ -295,7 +295,7 @@ Where the implementation differs from, or adds to, the decisions above:
 
 - **DLL timing (H5) starts when the engine sees the change, not at the file's write time.** On the test laptop's D: drive, file timestamps read 1.5 s ahead of the system clock, so the external probe measures save-to-active instead. Detailed timing is opt-in through `RAVEN_RELOAD_TRACE` (owner, 2026-11-23). It adds one line per reload, plus one per build in `AutoBuild.log`.
 - **The DLL loop fixes that landed:**
-  - The game target uses a standard-library PCH that includes `<format>`. A one-file compile fell from 1.75 s to 1.0 s. Adding the engine's public headers to the PCH measured no further gain, so they stay out.
+  - The game target uses a standard-library PCH that includes `<format>`. A one-file compile fell from 1.75 s to 1.0 s. Adding the engine's public headers to the PCH measured no further gain then. M6C's input, UI, sound and physics headers changed that, and the game-facing engine headers joined the PCH on 2026-11-25 ([GameServicesDesign.md, C10](GameServicesDesign.md#c10--determinism-check-and-the-exit-check-2026-11-25)).
   - The child project's configure (about 250 ms) is skipped when the only changed inputs are game `.cpp` files written after the last completed build. Configuration stamps each source's content into its compile command, which is what rebuilds an edit that keeps its timestamp, so any other change still configures. An equal-timestamp edit was checked: it configured and reloaded.
   - The 500 ms source poll and the 350 ms debounce are gone. The reload service settles a change in about 120 ms, and the build starts at once.
   - `BuildGame.cmake` now declares `cmake_minimum_required`, because script mode otherwise rejects `IN_LIST`.

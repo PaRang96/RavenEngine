@@ -68,7 +68,7 @@ Jolt's capacities are fixed when the host starts. The project file sets them wit
   - Jolt reports a contact as removed when a body falls asleep. Such pairs stay touching until both bodies are awake and their bounds have separated.
 - **Failures:** Jolt's asserts (Debug) and trace output go to the engine log. A Jolt library built with different settings than RavenCore is caught at startup.
 - **Threads:** the job system uses up to eight worker threads (hardware threads minus one).
-- **New scene:** a new scene (F3, F4, Shift+F8 or a scene reload) rebuilds the world from the components.
+- **New scene:** a new scene (F3, F4, Shift+F8 or a scene reload) rebuilds the world from the components. Jolt's world itself is rebuilt too, so body IDs, broad-phase trees and contact caches start fresh and a restarted scene simulates exactly like a first start (determinism level 1, checked by `DeterminismCheck`).
 
 ## Movers
 

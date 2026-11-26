@@ -4,7 +4,7 @@ Status:
 - **Decided (2026-11-24),** with two parts approved only provisionally. The owner settled each decision one at a time; the record is in [Owner decisions](#owner-decisions-2026-11-24).
   - **FD-47 (movement and control) is provisional.** It is revisited after the measurements listed in [Measurements that gate provisional parts](#measurements-that-gate-provisional-parts).
   - **FD-31 (text and UI) is approved for the early deliverable only.** Full approval waits for [UIDesign.md](UIDesign.md).
-- **In implementation on Windows.** The step order is in [Step order](#step-order); finished steps are recorded in [Implementation record](#implementation-record); the exit is in [M6C exit checklist](#m6c-exit-checklist).
+- **Implemented on Windows (2026-11-25), pending the owner's review.** The step order is in [Step order](#step-order); finished steps are recorded in [Implementation record](#implementation-record); the exit is in [M6C exit checklist](#m6c-exit-checklist), with its [results](#m6c-exit-checklist-results-2026-11-25).
 
 This note records the M6C decisions FD-29 and FD-31 to FD-34 from [FutureDecisions.md](FutureDecisions.md#7-m6c--game-facing-services), plus three decisions the discussion added: the sample game (FD-46), movement and control (FD-47) and the determinism level (FD-48). Every "Today" statement was checked against the code at `5f4df75` on 2026-11-24 and 2026-11-25.
 
@@ -262,8 +262,8 @@ Each is measured on the laptop, in Release unless stated, and recorded in this n
 | 2 | Debug-build physics speed with Jolt optimized inside `x64-debug` | FD-32 iteration set |
 | 3 | Character backend cost per character with the arena drones, and at 100 and 500 characters | FD-47 |
 | 4 | Pick query time at 50k renderables, and pick-layer shape build time per mesh | FD-34 picking |
-| 5 | Game-code edit save-to-active time with Jolt and the UI stack present | M5 targets |
-| 6 | 50k animated steady-state CPU p95 compared with the M6A record (3.24–3.42 ms) | No regression from entities without physics or UI |
+| 5 | Game-code edit save-to-active time with Jolt and the UI stack present | M5 targets. *Measured 2026-11-25: Arena 1.47–1.50 s Debug and 1.40 s Release (medians), after the game PCH change and the Arena split ([C10](#c10--determinism-check-and-the-exit-check-2026-11-25)).* |
+| 6 | 50k animated steady-state CPU p95 compared with the M6A record (3.24–3.42 ms) | No regression from entities without physics or UI. *Measured 2026-11-25: 3.26–3.52 ms, inside a same-day M6A A/B (3.22–3.78 ms) ([C10](#c10--determinism-check-and-the-exit-check-2026-11-25)).* |
 | 7 | HUD and pause-menu CPU time per frame | FD-31, UIDesign.md budgets. *Measured 2026-11-25: 0.117 and 0.167 ms p95 ([C7](#c7--the-2d-and-ui-early-deliverable-2026-11-25)).* |
 
 ---
@@ -945,6 +945,66 @@ Decision A4 (delegated): games play sound events, not raw buffers.
 - the mouse on the menus (posted mouse input needs the foreground);
 - a gamepad;
 - playing by hand and judging the sound mix by ear.
+
+### C10 — Determinism check and the exit check (2026-11-25)
+
+**Built:**
+- **The determinism check (FD-48), a tracked GPU test.** `RavenEngine --game Arena --determinism-check [ticks]` (600 by default) runs the staged game with a fixed seed, no watching and no user data. A scripted key lane (steer, turn, jump) drives the real frame loop one fixed tick per frame. After every tick the scene is hashed (`CaptureScene().Encode()`, FNV-1a). After the last tick the scene restarts, plays the same lane again, and every tick's hash is compared.
+  - On the first difference the host writes both scenes (`DeterminismFirstRun.ravenscene` and `DeterminismSecondRun.ravenscene`) beside the executable, for `RavenSceneTool dump`, and exits with an error naming the tick.
+  - CTest runs it as `DeterminismCheck` (label `gpu`, about 23 s in Debug).
+- **Physics restarts like a first start.** The check found that a restarted Arena diverged from tick 2, while three fresh processes matched. Clearing the physics world removed the bodies but kept Jolt's body-ID sequence, broad-phase trees and contact caches. `PhysicsWorld::Clear` now destroys Jolt's world and builds a new one; the job-system workers outlive it. Approved by the owner on 2026-11-25.
+- **Reload time (measurement 5):** the game PCH now also holds the game-facing engine headers: `GameSystems.hpp`, `Log.hpp`, `SceneCommands.hpp` and every header in `Raven/Components`. The H5 finding that they gave no gain predates M6C's input, UI, sound and physics headers.
+- **Arena is split by object** (owner, 2026-11-25): `ArenaSystems.hpp/.cpp` for the shared helpers, then `Craft.cpp`, `Drones.cpp`, `Cells.cpp`, `Platforms.cpp`, `Run.cpp`, `Camera.cpp` and `Screens.cpp` (pause, menus, HUD). `ArenaGame.cpp` keeps only the contract, the components, the input mapping and the system order; the F6 preview entries moved to `ArenaUi.cpp`. The determinism hash after 600 ticks is the same before and after the split (`09c983c4ab39958e`), so behavior is unchanged.
+- **Benchmark script:** `Benchmark-Windows3D.py` snapshots now copy the top-level `Content` folder (the engine fonts since C7). Without it the snapshot build failed.
+
+**Measurement 5: a one-line game-code edit, save to active** (an external probe edits a log string five times per run, the laptop, Jolt and the UI stack present):
+
+| Case | Debug (target ≤ 1.5 s) | Release (target ≤ 2.0 s) |
+| --- | --- | --- |
+| Arena before C10 (one 718-line file) | 2.71–2.89 s, median 2.81 s | 3.34–3.80 s, median 3.57 s |
+| Arena with the new PCH | median 2.00 s | median 2.47 s |
+| **Arena with the PCH, split by object** (edit in `Screens.cpp`, two launches) | **1.46–1.57 s, medians 1.47 and 1.50 s** | **1.37–1.46 s, median 1.40 s** |
+| Samples before C10 (`Interaction.cpp`) | 1.94–2.05 s, median 1.95 s | 2.17–2.26 s, median 2.21 s |
+| **Samples with the new PCH** | **1.41–1.46 s, median 1.44 s** | **1.60–1.76 s, median 1.71 s** |
+
+- Almost all the time is the game build. Before C10, compiling `ArenaGame.cpp` alone took 2.3–2.4 s, with or without the engine running. Activation, load and copy take about 50 ms.
+- The first edit after a host rebuild takes 4–7 s, while the game's PCH is built. Later edits and later launches run at the speeds above.
+- Debug meets ≤ 1.5 s at the median, like M5 did (1.3–1.6 s); single edits reach 1.57 s.
+
+**Measurement 6: 50k animated steady state** (`Benchmark-Windows3D.py scale --meshes 50000 --case auto-fifo`, Release, 165 Hz FIFO). A same-day A/B against a clean checkout of the M6A commit (`5f4df75`), three runs per set:
+
+| Set | FPS | CPU preparation p95 | World pass p50 | Render-world sync p50 |
+| --- | --- | --- | --- | --- |
+| M6A, first set | 165.0–165.4 | 3.78, 3.61, 3.31 ms | 1.37–1.44 ms | 0.94–1.02 ms |
+| **M6C** | **165.0–165.1** | **3.52, 3.32, 3.26 ms** | **1.35–1.45 ms** | **0.90–0.98 ms** |
+| M6A, second set | 165.0 | 3.40, 3.22, 3.31 ms | 1.35–1.43 ms | 0.90–0.98 ms |
+
+- **No regression:** M6C falls inside M6A's own spread on the same day. Every M6C frame took under 5 ms of CPU.
+- The first run of a set is often the slowest, in both builds. It explains the 3.5–3.8 ms p95 values; two earlier M6C sets measured 3.30–3.64 ms the same way.
+
+**Checked:**
+- **Tests:** all eight pass in Debug, including `DeterminismCheck`. The determinism check also passed by itself before and after the Arena split.
+- **Exit item 5, live** (Debug, posted keys, captures; the owner's `out/User/Arena` backed up and restored):
+  - Forward was rebound from W to Space, and the saved file held Space (code 44).
+  - After a restart the key-binding screen showed Space, and the best score (9) was unchanged.
+  - With the bindings file and its backup both damaged, both were moved aside as `.damaged-<UTC time>` and Forward showed W again. The log has one warning per damaged file, so two here.
+- **Exit item 7, statically:** no public header includes a vendored library, and every library under `ThirdParty` carries its license file.
+- **CI-equivalent builds:** a fresh checkout plus the uncommitted changes, configured with CMake 4.3.1 (Visual Studio's) and warnings as errors. The Debug and Release builds pass, and so do the 7 CPU tests in each.
+  - The first attempt ran from a 120-character scratch folder and failed in the game modules' compiler checks (`C1083` with an empty file name, and a corrupted manifest `RC2136`). Their paths reached about 230 characters, near Windows' 260-character limit. The same tree passed from `D:\RavenEngine\out\ci4`. Deep checkout folders can hit this; CI's checkout path is short.
+
+**Not checked:** an audio device change by hand, and a debugger breakpoint across an automatic rebuild. Both stay manual owner items.
+
+### M6C exit checklist results (2026-11-25)
+
+| # | Item | Result |
+| --- | --- | --- |
+| 1 | The arena game runs on engine APIs only | **Pass.** Every part is in the C9 records: the craft through the input stream and the character backend, drone AI writing movers, sensor cells, runtime spawning, the run as session state, the best score in the profile store, the pause menu consuming gameplay input, the key-binding screen with listening and saved bindings, and overlapping sounds. The owner played it on 2026-11-25. |
+| 2 | 3D samples keep working; Courtyard keeps building | **Pass.** The Samples reload probe ran the default launch; Courtyard builds in both configurations. Its 2D run was not requested. |
+| 3 | Developer keys in the developer context; a game binding on F5 no longer reloads | **Pass.** `InputMappingTests` binds F5 in a game context: the developer context reloads and the game never sees F5. |
+| 4 | The determinism check passes; the quick-save restores and play continues | **Pass.** `DeterminismCheck` (600 ticks); the quick-save in the C9 first part (tick 245, 67 entities). |
+| 5 | Bindings and the best score survive a restart; a damaged settings file falls back | **Pass,** live above. A damaged file and its backup give one line each. |
+| 6 | Every measurement recorded; game-code edits within the M5 targets; no 50k regression | **Pass.** Measurements 1–7 are recorded. Measurement 5 meets both targets at the median after C10's two changes; measurement 6 shows no regression against M6A. |
+| 7 | Vendored with licenses, outside the public headers; CI passes with warnings as errors | **Pass locally.** CI-equivalent Debug and Release builds with CMake 4.3.1 and warnings as errors, plus the CPU tests, on a fresh checkout. GitHub CI runs on the next push. |
 
 ## Owner decisions (2026-11-24)
 
