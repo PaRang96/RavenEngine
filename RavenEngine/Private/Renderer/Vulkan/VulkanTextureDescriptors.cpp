@@ -1,4 +1,5 @@
 #include "Renderer/Vulkan/VulkanTextureDescriptors.hpp"
+#include "Core/DataError.hpp"
 
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 
@@ -145,7 +146,8 @@ namespace Raven
 	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(VulkanTexture& texture)
 	{
 		if (m_FreeElements.empty() && m_NextElement == BindlessCapacity)
-			throw std::length_error("The bindless texture array is full");
+			// Content can fill it, so it is a data error: the texture falls back to white (FD-06).
+			throw DataError("The bindless texture array is full");
 		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE ||
 			texture.GetSampler() == VK_NULL_HANDLE)
 			throw std::invalid_argument("Texture descriptors require a texture from the same device");

@@ -1,4 +1,5 @@
 #include "Renderer/Vulkan/VulkanMesh.hpp"
+#include "Core/DataError.hpp"
 
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
@@ -125,7 +126,8 @@ namespace Raven
 			if (const auto first = TakeFirstFit(pool, count))
 				return *first;
 			if (count > pool.MaxElements - pool.Capacity)
-				throw std::length_error("Mesh pool cannot grow to fit the mesh");
+				// Content can exceed it, so it is a data error: the mesh draws nothing (FD-06).
+				throw DataError("Mesh pool cannot grow to fit the mesh");
 			const auto capacity = static_cast<std::uint32_t>(std::min<std::uint64_t>(pool.MaxElements,
 				std::max<std::uint64_t>(std::uint64_t{ pool.Capacity } * 2, std::uint64_t{ pool.Capacity } + count)));
 			auto buffer = CreatePoolBuffer(device, physicalDevice, pool, capacity);

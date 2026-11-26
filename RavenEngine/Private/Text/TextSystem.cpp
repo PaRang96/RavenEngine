@@ -633,6 +633,8 @@ namespace Raven::Text
 		std::vector<PendingUpload> Uploads;
 		std::vector<OverlayTextureUpload> UploadViews;
 		std::size_t Listed = 0;
+		// A failed glyph placement is logged once per run.
+		bool ReportedPlaceFailure = false;
 		std::uint64_t Frame = 1;
 	};
 
@@ -747,7 +749,21 @@ namespace Raven::Text
 			else if (glyph.Empty)
 				entry.Status = GlyphEntry::State::Empty;
 			else
-				entry.Status = impl.Place(glyph, entry) ? GlyphEntry::State::Ready : GlyphEntry::State::Failed;
+			{
+				// A new atlas page can fail (a full bindless table, no memory). Only that glyph is
+				// lost, drawn as nothing; the frame and the other glyphs go on (AA2-MEDIA-03).
+				try
+				{
+					entry.Status = impl.Place(glyph, entry) ? GlyphEntry::State::Ready : GlyphEntry::State::Failed;
+				}
+				catch (const std::exception& error)
+				{
+					entry.Status = GlyphEntry::State::Failed;
+					if (!std::exchange(impl.ReportedPlaceFailure, true))
+						Log(LogLevel::Warning, std::string("Text: a glyph could not be placed in the atlas and is not drawn: ") +
+							error.what());
+				}
+			}
 		}
 		impl.UploadViews.clear();
 		for (const auto& upload : impl.Uploads)
