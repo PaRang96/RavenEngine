@@ -1,5 +1,5 @@
 # This script configures/builds only the standalone child, never the live host.
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 set(root [==[@PROJECT_SOURCE_DIR@]==])
 set(game_root [==[@RAVEN_GAME_SOURCE_DIR@]==])
 set(build_directory [==[@RAVEN_GAME_BUILD_DIRECTORY@]==])

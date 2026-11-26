@@ -7,7 +7,7 @@
 #
 # Run it from a developer environment where CMake finds a C++ compiler.
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 
 if(NOT DEFINED SOURCE)
     message(FATAL_ERROR "Pass -DSOURCE=<the icu folder of an ICU4C source release>")

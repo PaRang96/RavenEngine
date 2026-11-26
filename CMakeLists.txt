@@ -1,12 +1,11 @@
-cmake_minimum_required(VERSION 3.24)
+# One floor for every machine and CI (ROADMAP planning decision 20): it fixes CMake's policies, so a
+# newer CMake builds Raven exactly as 3.28 does. 3.28 is what Ubuntu 24.04 LTS ships.
+cmake_minimum_required(VERSION 3.28)
 
-# Enable Edit and Continue debug information for MSVC when supported.
-if(POLICY CMP0141)
-    cmake_policy(SET CMP0141 NEW)
-    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
-        "$<IF:$<CXX_COMPILER_ID:MSVC>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>"
-    )
-endif()
+# Edit and Continue debug information for MSVC (policy CMP0141, which the 3.28 floor sets).
+set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
+    "$<IF:$<CXX_COMPILER_ID:MSVC>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>"
+)
 
 project(RavenEngine VERSION 0.1.0 LANGUAGES C CXX)
 

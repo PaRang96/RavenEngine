@@ -42,6 +42,10 @@ jobs:
           cache: true
           stripdown: true
 
+      # The floor is 3.28 (planning decision 20); the log shows which CMake the runner has.
+      - name: CMake version
+        run: cmake --version
+
       - name: Configure
         run: cmake --preset linux-debug
 

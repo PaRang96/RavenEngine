@@ -4,7 +4,7 @@
 #
 #   cmake -DSOURCE=<folder holding stb_image.h and LICENSE> -P scripts/UpdateStb.cmake
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 if(NOT DEFINED SOURCE)
     message(FATAL_ERROR "Pass -DSOURCE=<folder holding stb_image.h and LICENSE>")
 endif()

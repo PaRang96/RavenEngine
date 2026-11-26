@@ -30,13 +30,7 @@ function(raven_add_game name)
     raven_apply_warnings(${name})
     # Debug info, so breakpoints bind in game code. /Zi rather than /ZI: the module is replaced by
     # reloading, not by Edit and Continue.
-    if(POLICY CMP0141)
-        set_property(TARGET ${name} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT
-            "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
-    else()
-        # CMake 3.24 takes the format from the flags, which the host may pass without /Zi.
-        target_compile_options(${name} PRIVATE $<$<CONFIG:Debug,RelWithDebInfo>:/Zi> $<$<CONFIG:Debug,RelWithDebInfo>:/FS>)
-    endif()
+    set_property(TARGET ${name} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
     # <format> dominates a one-file game edit; this PCH cut its compile from 1.75 to 1.0 s
     # (docs/HotReloadDesign.md, H5). Since M6C the game-facing engine headers (systems, input
     # mapping, UI, sound, physics) cost a one-file edit more than <format> did, so they are

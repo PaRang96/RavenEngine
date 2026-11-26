@@ -4,7 +4,7 @@
 #
 #   cmake -DSOURCE=<extracted JoltPhysics-x.y.z folder> -P scripts/UpdateJolt.cmake
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 
 if(NOT DEFINED SOURCE)
     message(FATAL_ERROR "Pass -DSOURCE=<extracted JoltPhysics release folder>")

@@ -1,7 +1,7 @@
 # Builds ICU's own icupkg tool from a full ICU source release, for scripts/UpdateIcu.cmake only. It filters
 # ICU's prebuilt data package down to the items in cmake/RavenIcuData.txt. Not part of the engine build.
 #   cmake -S cmake/IcuTools -B <build> -DICU_SOURCE=<folder holding icu/source>
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 project(RavenIcuTools CXX)
 
 if(NOT DEFINED ICU_SOURCE)

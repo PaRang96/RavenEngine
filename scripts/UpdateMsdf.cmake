@@ -7,7 +7,7 @@
 # Neither library states its version in the kept files, so the versions given here are recorded in
 # each copy's MANIFEST.txt, which cmake/RavenMsdf.cmake checks its pins against.
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 if(NOT DEFINED MSDFGEN OR NOT DEFINED ATLAS OR NOT DEFINED MSDFGEN_VERSION OR NOT DEFINED ATLAS_VERSION)
     message(FATAL_ERROR "Pass -DMSDFGEN=<msdfgen release> -DMSDFGEN_VERSION=<version> -DATLAS=<msdf-atlas-gen release> "
         "-DATLAS_VERSION=<version>")

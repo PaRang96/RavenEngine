@@ -4,7 +4,7 @@
 #
 #   cmake -DSOURCE=<the extracted the v<version> tag archive of github.com/facebook/yoga> -P scripts/UpdateYoga.cmake
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 if(NOT DEFINED SOURCE)
     message(FATAL_ERROR "Pass -DSOURCE=<the extracted Yoga release>")
 endif()

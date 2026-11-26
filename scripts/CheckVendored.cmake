@@ -4,7 +4,7 @@
 #
 #   cmake -P scripts/CheckVendored.cmake
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 include("${CMAKE_CURRENT_LIST_DIR}/VendorCopy.cmake")
 
 file(GLOB folders LIST_DIRECTORIES true RELATIVE "${RAVEN_VENDOR_REPOSITORY}/ThirdParty"

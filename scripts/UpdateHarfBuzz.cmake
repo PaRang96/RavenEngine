@@ -4,7 +4,7 @@
 #
 #   cmake -DSOURCE=<the extracted harfbuzz-<version>.tar.xz from github.com/harfbuzz/harfbuzz/releases> -P scripts/UpdateHarfBuzz.cmake
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 if(NOT DEFINED SOURCE)
     message(FATAL_ERROR "Pass -DSOURCE=<the extracted HarfBuzz release>")
 endif()
