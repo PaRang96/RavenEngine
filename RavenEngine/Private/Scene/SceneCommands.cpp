@@ -3,6 +3,7 @@
 #include "Raven/Core/Log.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
+#include "Scene/HostOwnedInfo.hpp"
 
 #include <cstring>
 #include <set>
@@ -36,6 +37,18 @@ namespace Raven
 		m_Commands.push_back({ Kind::SetParent, child.Id, parent.Id });
 	}
 
+	namespace
+	{
+		// The templates reject these at compile time; type-erased callers fail at record time, a
+		// system error the stage boundary catches (FD-06 tier 2).
+		void RejectHostOwned(const ECS::ComponentInfo& info)
+		{
+			if (IsHostOwned(info))
+				throw std::invalid_argument(std::string(info.Name) +
+					" is host-owned and changes through Scene, for example SetParent");
+		}
+	}
+
 	std::size_t SceneCommands::FindType(const ECS::ComponentInfo& info)
 	{
 		for (std::size_t index = 0; index < m_Types.size(); ++index)
@@ -49,6 +62,7 @@ namespace Raven
 	{
 		if (!value || info.Size == 0)
 			throw std::invalid_argument("A component command needs a value");
+		RejectHostOwned(info);
 		const auto type = FindType(info);
 		const auto offset = m_Values.size();
 		const auto* bytes = static_cast<const std::byte*>(value);
@@ -58,6 +72,7 @@ namespace Raven
 
 	void SceneCommands::RemoveComponent(ECS::EntityRef entity, const ECS::ComponentInfo& info)
 	{
+		RejectHostOwned(info);
 		m_Commands.push_back({ Kind::Remove, entity.Id, FindType(info) });
 	}
 
@@ -143,6 +158,11 @@ namespace Raven
 			case Kind::Remove:
 			{
 				const auto& type = types[command.Other];
+				if (!registry.FindSchema(type.Id))
+				{
+					report(type.Name + " is not a registered component; declare it with systems.Component<T>()");
+					break;
+				}
 				const ECS::ComponentInfo info{ type.Id, type.Name, type.Size, type.Alignment, type.LayoutHash };
 				const bool applied = command.Type == Kind::Add
 					? registry.AddComponent(entity, info, values.data() + command.Data)

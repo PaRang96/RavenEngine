@@ -626,9 +626,12 @@ namespace Raven
 						game->RunPreview(static_cast<std::size_t>(preview.Entry), gameUi);
 					session.ApplyCommands();
 				});
-				// A failed step is not retried: its remaining steps are dropped with it.
+				// A failed step is not retried: its remaining steps and recorded commands are dropped with it.
 				if (!played)
+				{
 					gameplay.Reset();
+					session.DropCommands();
+				}
 				gameplayTime.End();
 				if (metrics)
 				{

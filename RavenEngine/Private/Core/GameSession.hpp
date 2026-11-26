@@ -72,6 +72,9 @@ namespace Raven
 			const FrameTime& time);
 		// Applies deferred structural changes; called after each fixed step and after Update.
 		void ApplyCommands();
+		// After a failed Gameplay stage: drops what the failed systems recorded, so the buffer is
+		// empty between frames (FD-14) and nothing reaches the next frame or a module activation.
+		void DropCommands() noexcept;
 		// True when the frame was presented. Left-button presses in `input` (the game's view, after
 		// input contexts) are picked against the presented frame.
 		bool Render(VulkanContext& renderer, RenderWorld& world, const InputState& input,

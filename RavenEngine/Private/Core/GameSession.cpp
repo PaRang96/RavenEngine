@@ -365,6 +365,21 @@ namespace Raven
 		m_Commands.Apply();
 	}
 
+	void GameSession::DropCommands() noexcept
+	{
+		const auto pending = m_Commands.GetPendingCount();
+		m_Commands.Reset(m_Session->GetActive());
+		if (pending != 0)
+			try
+			{
+				Log(LogLevel::Warning, std::format("Dropped {} scene command(s) recorded before the gameplay stage failed",
+					pending));
+			}
+			catch (...)
+			{
+			}
+	}
+
 	SoundHandle GameSession::PlaySound(AssetRef<AudioAsset> sound, const SoundParams& params)
 	{
 		// The scene leased its sounds at load, through the store that resolves paths against the

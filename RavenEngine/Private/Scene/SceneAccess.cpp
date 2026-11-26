@@ -1,5 +1,6 @@
 #include "Raven/Scene/Scene.hpp"
 #include "Raven/Components/TransformComponent.hpp"
+#include "Scene/HostOwnedInfo.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -7,16 +8,6 @@
 
 namespace Raven
 {
-	namespace
-	{
-		// The generic forms of the compile-time HostOwned checks (docs/DataModelDesign.md, FD-07).
-		bool IsHostOwned(const ECS::ComponentInfo& info) noexcept
-		{
-			return info.Id == ECS::ComponentTraits<ECS::WorldTransformComponent>::Info.Id ||
-				info.Id == ECS::ComponentTraits<ECS::ParentComponent>::Info.Id;
-		}
-	}
-
 	ECS::Entity SceneAccess::Find(std::string_view id) const
 	{
 		return m_Scene ? m_Scene->FindEntity(std::string(id)) : ECS::Entity{};

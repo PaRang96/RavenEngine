@@ -238,11 +238,13 @@ namespace Raven::UI
 			else
 				input.Keys[code.Value].Pressed = input.Keys[code.Value].Down = false;
 		};
+		// This runs before the next BeginFrame, so last frame's elements are still in m_NextOrder:
+		// the same set, and the same layout, that BeginFrame's hover and focus will use.
 		if (input.HasCursorPosition && m_Scale > 0.0f)
 		{
 			const float x = static_cast<float>(input.CursorX) / m_Scale;
 			const float y = static_cast<float>(input.CursorY) / m_Scale;
-			for (const auto id : m_Order)
+			for (const auto id : m_NextOrder)
 			{
 				const auto found = m_Cache.find(id);
 				if (found != m_Cache.end() && x >= found->second.X && y >= found->second.Y &&
@@ -254,7 +256,7 @@ namespace Raven::UI
 				}
 			}
 		}
-		if (m_Focused != 0)
+		if (m_Focused != 0 && std::find(m_NextOrder.begin(), m_NextOrder.end(), m_Focused) != m_NextOrder.end())
 			for (const Key key : { Key::Tab, Key::Enter, Key::Space, Key::NumpadEnter, Key::Up, Key::Down, Key::Left, Key::Right })
 				strip(InputCode::FromKey(key));
 	}

@@ -474,6 +474,10 @@ Structural changes during a view are rejected (`Create` throws), and no sample s
 - **IDs at record time:** `Commands.Create()` returns an `EntityRef` with a new persistent ID (FD-09). It can be stored in components at once, and it resolves after the flush. This needs no handle reservation inside the Registry. Later commands in the same buffer may address the new entity by that ID.
 - **Through Scene:** destroy, reparent and add/remove all go through `Scene`, so the hierarchy index (FD-07) and the render-world journal see every change.
 - **Bad commands:** a command on an entity that is already gone is a data error (FD-06): it is skipped and logged once.
+- *Review amendment (2026-11-26, AA2-ECS-02 steps 3-6):*
+  - **The buffer is empty between frames.** When the Gameplay stage fails, the commands its systems had recorded are dropped with a count in the log, so none reaches the next frame or a module activation.
+  - **Type-erased adds and removes keep the templates' rules.** `AddComponent` and `RemoveComponent` with a host-owned `ComponentInfo` throw `std::invalid_argument` at record time, which the stage boundary catches (FD-06 tier 2). An add of a type with no registered schema is skipped with the hint to declare it with `systems.Component<T>()`, and `Registry::AddComponent` refuses such a type, so no pool exists that saves, dumps and migration cannot see.
+  - **A stale layout is logged.** An access whose layout no longer matches its pool, such as a command recorded before a reload changed the type, is logged once per type and layout, and fails.
 
 ---
 

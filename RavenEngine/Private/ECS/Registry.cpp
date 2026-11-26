@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <format>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -248,6 +250,27 @@ namespace Raven::ECS
 		// Field tables by component ID, copied out of the declaring module (FD-08).
 		std::unordered_map<std::uint64_t, ComponentSchema> Schemas;
 
+		// (Id, LayoutHash) pairs already reported as not matching their pool; any thread may look up.
+		mutable std::mutex MismatchLock;
+		mutable std::set<std::pair<std::uint64_t, std::uint64_t>> ReportedMismatches;
+
+		// A stale layout, such as a command recorded before a migration, reaches a pool of another
+		// layout: logged once per (Id, LayoutHash), and the access fails.
+		void ReportMismatch(const ComponentPool& pool, const ComponentInfo& info) const noexcept
+		{
+			try
+			{
+				const std::scoped_lock lock(MismatchLock);
+				if (ReportedMismatches.emplace(info.Id, info.LayoutHash).second)
+					Log(LogLevel::Warning, std::format("Component {} (layout {:016x}) does not match its stored layout "
+						"{:016x}; the access fails. Was it recorded before a reload changed the type?", info.Name,
+						info.LayoutHash, pool.LayoutHash));
+			}
+			catch (...)
+			{
+			}
+		}
+
 		// LayoutHash includes the type name, so an ID collision between different names
 		// also fails here; AddComponent checks the name itself before creating a pool.
 		const ComponentPool* FindPool(const ComponentInfo& info) const noexcept
@@ -256,7 +279,10 @@ namespace Raven::ECS
 			if (found == Components.end())
 				return nullptr;
 			const auto& pool = found->second;
-			return pool.Size == info.Size && pool.LayoutHash == info.LayoutHash ? &pool : nullptr;
+			if (pool.Size == info.Size && pool.LayoutHash == info.LayoutHash)
+				return &pool;
+			ReportMismatch(pool, info);
+			return nullptr;
 		}
 
 		// Mutable lookups reuse the const ones; this object itself is never const.
@@ -675,6 +701,10 @@ namespace Raven::ECS
 		if (!IsAlive(entity) || info.Name.empty() || info.Size == 0 || !value ||
 			RejectWhileIterating(m_Impl->Iterating, "Add"))
 			return false;
+		// Every pool has a schema, so saves, dumps and migration see its values (FD-08): an
+		// unregistered type is refused instead of getting a pool nothing else knows of.
+		if (!FindSchema(info.Id))
+			return false;
 		auto [entry, created] = m_Impl->Components.try_emplace(info.Id);
 		auto& pool = entry->second;
 		if (created)
@@ -689,6 +719,7 @@ namespace Raven::ECS
 		}
 		else if (pool.Name != info.Name || pool.Size != info.Size || pool.LayoutHash != info.LayoutHash)
 		{
+			m_Impl->ReportMismatch(pool, info);
 			return false;
 		}
 		if (pool.Find(entity.m_Index) != Detail::PoolView::NoIndex)
