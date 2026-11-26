@@ -18,21 +18,33 @@ namespace Raven::Physics
 		std::mutex JoltMutex;
 		int JoltUsers = 0;
 
-		void TraceToLog(const char* format, ...)
+		void TraceToLog(const char* format, ...) noexcept
 		{
 			char buffer[1024];
 			va_list arguments;
 			va_start(arguments, format);
 			std::vsnprintf(buffer, sizeof(buffer), format, arguments);
 			va_end(arguments);
-			Log(LogLevel::Info, std::string("Jolt: ") + buffer);
+			try
+			{
+				Log(LogLevel::Info, std::string("Jolt: ") + buffer);
+			}
+			catch (...)
+			{
+			}
 		}
 
 #ifdef JPH_ENABLE_ASSERTS
-		bool AssertToLog(const char* expression, const char* message, const char* file, JPH::uint line)
+		bool AssertToLog(const char* expression, const char* message, const char* file, JPH::uint line) noexcept
 		{
-			Log(LogLevel::Error, std::format("Jolt assert failed: {} {} ({}:{})", expression, message ? message : "",
-				file, line));
+			try
+			{
+				Log(LogLevel::Error, std::format("Jolt assert failed: {} {} ({}:{})", expression, message ? message : "",
+					file, line));
+			}
+			catch (...)
+			{
+			}
 			// Continue: every value is validated before it reaches Jolt, so a failed assert is logged
 			// instead of stopping the host.
 			return false;

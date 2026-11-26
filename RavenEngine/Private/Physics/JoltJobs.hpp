@@ -3,6 +3,12 @@
 // Jolt's jobs on the engine's shared workers (docs/JobSystemDesign.md). Jolt stays unmodified: this
 // implements its public JobSystemWithBarrier interface, the extension point Jolt documents for
 // engines with their own job systems.
+//
+// Jolt is built without exceptions, and these jobs may run inline on the host thread. So every Raven
+// path that a Jolt frame can reach (listeners, the debug renderer, trace and assert hooks, the
+// character grid, body filters) is noexcept: a failure there stops the process the same way on a
+// worker and on the host thread, instead of unwinding through Jolt and leaving its locks held
+// (review amendment, AA2-RT-04).
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Core/FixedSizeFreeList.h>

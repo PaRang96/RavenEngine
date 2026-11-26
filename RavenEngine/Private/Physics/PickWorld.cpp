@@ -146,6 +146,8 @@ namespace Raven
 		std::uint32_t Capacity = 0;
 
 		Scene* Source = nullptr;
+		// The scene mirrored: its address alone could be reused by the next scene.
+		std::uint32_t SceneId = 0;
 		ECS::Registry* Registry = nullptr;
 		// Lifecycle subscriptions: static mesh, world transform.
 		std::array<std::uint32_t, 2> Subscriptions{};
@@ -445,10 +447,11 @@ namespace Raven
 		const auto syncStart = Clock::now();
 		auto& world = *m_Impl;
 		bool rebuild = false;
-		if (world.Source != &scene || world.Registry != &registry)
+		if (world.Source != &scene || world.Registry != &registry || world.SceneId != scene.GetSceneId())
 		{
 			Clear();
 			world.Source = &scene;
+			world.SceneId = scene.GetSceneId();
 			world.Registry = &registry;
 			world.Subscriptions = { registry.SubscribeLifecycle<ECS::StaticMeshComponent>(),
 				registry.SubscribeLifecycle<ECS::WorldTransformComponent>() };
@@ -476,6 +479,9 @@ namespace Raven
 		}
 		const auto since = world.Since;
 		world.Since = registry.AdvanceChangeTick();
+		// A failure part-way through the sync leaves the mirror out of step with the components (the
+		// lifecycle batches are already read), so it is rebuilt from them next time (AA2-RT-04).
+		try
 		{
 			PickWorldSync sync(world, scene, registry, meshes);
 			sync.RefreshShapes();
@@ -489,6 +495,11 @@ namespace Raven
 				sync.ApplyTicks(since);
 			}
 			sync.Commit();
+		}
+		catch (...)
+		{
+			Clear();
+			throw;
 		}
 		// Shapes no entity uses any more are released.
 		std::erase_if(world.Shapes, [&](const auto& item)

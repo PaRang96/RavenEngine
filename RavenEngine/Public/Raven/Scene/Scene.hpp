@@ -90,6 +90,8 @@ namespace Raven
 		// Creation order until an entity is destroyed; destruction moves the last entity into the gap.
 		const std::vector<ECS::Entity>& GetEntities() const noexcept { return m_Entities; }
 		SceneAccess GetAccess() noexcept { return SceneAccess(*this); }
+		// Unique among the scenes of one registry: a new scene at a freed one's address differs.
+		std::uint32_t GetSceneId() const noexcept { return m_SceneId; }
 
 		Scene(const Scene&) = delete;
 		Scene& operator=(const Scene&) = delete;

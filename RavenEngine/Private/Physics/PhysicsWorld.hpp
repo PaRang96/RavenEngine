@@ -82,6 +82,8 @@ namespace Raven
 		PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
 	private:
+		// Step without its recovery: a throw leaves the mirror half-synced, and Step clears it.
+		void StepWorld(Scene& scene, ECS::Registry& registry, double seconds);
 		friend class PhysicsWorldSync;
 		struct Impl;
 		// The workers outlive every rebuilt world: the host's, or a pool of this world's own.

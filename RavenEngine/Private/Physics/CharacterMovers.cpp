@@ -112,7 +112,7 @@ namespace Raven::Physics
 
 		void CollideCharacter(const JPH::CharacterVirtual* character, JPH::RMat44Arg centerOfMass,
 			const JPH::CollideShapeSettings& collideSettings, JPH::RVec3Arg baseOffset,
-			JPH::CollideShapeCollector& collector) const override
+			JPH::CollideShapeCollector& collector) const noexcept override
 		{
 			const JPH::Mat44 transform1 = centerOfMass.PostTranslated(-baseOffset).ToMat44();
 			const auto* shape1 = character->GetShape();
@@ -138,7 +138,7 @@ namespace Raven::Physics
 		}
 
 		void CastCharacter(const JPH::CharacterVirtual* character, JPH::RMat44Arg centerOfMass, JPH::Vec3Arg direction,
-			const JPH::ShapeCastSettings& castSettings, JPH::RVec3Arg baseOffset, JPH::CastShapeCollector& collector) const override
+			const JPH::ShapeCastSettings& castSettings, JPH::RVec3Arg baseOffset, JPH::CastShapeCollector& collector) const noexcept override
 		{
 			const JPH::Mat44 transform1 = centerOfMass.PostTranslated(-baseOffset).ToMat44();
 			const JPH::ShapeCast cast(character->GetShape(), JPH::Vec3::sOne(), transform1, direction);
@@ -241,7 +241,7 @@ namespace Raven::Physics
 			m_Inner.clear();
 		}
 
-		bool ShouldCollide(const JPH::BodyID& body) const override
+		bool ShouldCollide(const JPH::BodyID& body) const noexcept override
 		{
 			const auto index = body.GetIndex();
 			return index >= m_Inner.size() || m_Inner[index] == 0;

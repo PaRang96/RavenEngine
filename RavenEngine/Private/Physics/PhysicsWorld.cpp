@@ -216,7 +216,7 @@ namespace Raven
 		{
 		public:
 			void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
-				JPH::ContactSettings&) override
+				JPH::ContactSettings&) noexcept override
 			{
 				RawContact contact;
 				contact.First = first.GetID();
@@ -231,7 +231,7 @@ namespace Raven
 				m_Contacts.push_back(contact);
 			}
 
-			void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
+			void OnContactRemoved(const JPH::SubShapeIDPair& pair) noexcept override
 			{
 				RawContact contact;
 				contact.Kind = ContactEventKind::End;
@@ -257,7 +257,7 @@ namespace Raven
 		public:
 			static constexpr std::size_t MaxVertices = 1u << 21;
 
-			void DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) override
+			void DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) noexcept override
 			{
 				std::lock_guard lock(m_Mutex);
 				auto& lines = *m_Target;
@@ -268,14 +268,14 @@ namespace Raven
 			}
 
 			void DrawTriangle(JPH::RVec3Arg first, JPH::RVec3Arg second, JPH::RVec3Arg third, JPH::ColorArg color,
-				ECastShadow) override
+				ECastShadow) noexcept override
 			{
 				DrawLine(first, second, color);
 				DrawLine(second, third, color);
 				DrawLine(third, first, color);
 			}
 
-			void DrawText3D(JPH::RVec3Arg, const std::string_view&, JPH::ColorArg, float) override {}
+			void DrawText3D(JPH::RVec3Arg, const std::string_view&, JPH::ColorArg, float) noexcept override {}
 
 			void SetTarget(std::vector<DebugLineVertex>& target) noexcept { m_Target = &target; }
 
@@ -439,6 +439,8 @@ namespace Raven
 		std::unordered_map<std::pair<std::uint64_t, std::uint64_t>, std::pair<JPH::BodyID, JPH::BodyID>, PairHash> Dormant;
 		// End events for removed bodies, published with the next step's contacts.
 		std::vector<ContactEvent> PendingEnds;
+		// The scene mirrored: its address alone could be reused by the next scene.
+		std::uint32_t SceneId = 0;
 		JPH::EPhysicsUpdateError ReportedErrors = JPH::EPhysicsUpdateError::None;
 		bool ReportedLimit = false;
 
@@ -1001,13 +1003,29 @@ namespace Raven
 	{
 		if (!(seconds > 0.0) || !std::isfinite(seconds))
 			throw std::invalid_argument("A physics step needs a positive duration");
+		// A failure part-way through leaves the mirror out of step with the components (the lifecycle
+		// batches are already read), so the world is rebuilt from them next step (FD-06; AA2-RT-04).
+		try
+		{
+			StepWorld(scene, registry, seconds);
+		}
+		catch (...)
+		{
+			Clear();
+			throw;
+		}
+	}
+
+	void PhysicsWorld::StepWorld(Scene& scene, ECS::Registry& registry, double seconds)
+	{
 		const auto start = std::chrono::steady_clock::now();
 		bool rebuild = false;
-		if (m_Impl->Source != &scene || m_Impl->Registry != &registry)
+		if (m_Impl->Source != &scene || m_Impl->Registry != &registry || m_Impl->SceneId != scene.GetSceneId())
 		{
 			Clear();
 			auto& world = *m_Impl;
 			world.Source = &scene;
+			world.SceneId = scene.GetSceneId();
 			world.Registry = &registry;
 			world.Subscriptions = {
 				registry.SubscribeLifecycle<ECS::ColliderComponent>(),
