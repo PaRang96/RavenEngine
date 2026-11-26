@@ -3,9 +3,11 @@
 // The arena's screens (docs/GameServicesDesign.md, C9 second part) on the engine UI (docs/UIDesign.md).
 // Each screen is drawn from a plain model, so the game systems and the UI preview entries (F6) draw
 // the same code: systems fill the model from the world, previews from sample data.
+//
+// One file per screen holds its system and its drawing: Hud.cpp, PauseMenu.cpp and Bindings.cpp.
+// This header and ArenaUi.cpp hold what they share: the models, the look and the preview entries.
 
 #include "Raven/Core/GameSystems.hpp"
-#include "Raven/ECS/Component.hpp"
 #include "Raven/UI/Ui.hpp"
 
 #include <cstdint>
@@ -14,20 +16,6 @@
 
 namespace Arena
 {
-	enum class MenuScreen : std::uint8_t { Main, Bindings };
-
-	// The pause menu's local view state on the camera rig entity; never simulation state (FD-47).
-	struct ArenaMenuComponent : Raven::ECS::Component
-	{
-		MenuScreen Screen = MenuScreen::Main;
-		// The binding row waiting for a key, or -1, and the binding within it.
-		std::int32_t Listening = -1;
-		// True on the frame a screen opens, so its first button takes keyboard focus.
-		bool FocusPending = true;
-		std::uint32_t Slot = 0;
-		RAVEN_COMPONENT(Arena::ArenaMenuComponent, Screen, Listening, FocusPending, Slot);
-	};
-
 	struct HudModel
 	{
 		std::uint32_t Score = 0;
@@ -37,6 +25,8 @@ namespace Arena
 		bool Starting = false;
 		bool Over = false;
 		bool NewBest = false;
+		// How the run ended: out of the arena, or caught by a drone.
+		bool FellOut = false;
 	};
 
 	// One row of the key-binding screen: an action direction and its keys.
@@ -55,6 +45,17 @@ namespace Arena
 		std::size_t Row = 0;
 		std::size_t Slot = 0;
 	};
+
+	// The arena's look: dark translucent panels, a cyan accent like the energy cells.
+	inline constexpr Raven::UI::Color PanelColor = Raven::UI::Rgba(0x0B1118D0);
+	inline constexpr Raven::UI::Color AccentColor = Raven::UI::Rgba(0x3FE0FFFF);
+	inline constexpr Raven::UI::Color MutedColor = Raven::UI::Rgba(0xA8B4C0FF);
+	inline constexpr Raven::UI::Color ButtonColor = Raven::UI::Rgba(0x1E2A36FF);
+	Raven::UI::Style TextStyle(float size, Raven::UI::Color color = { 1, 1, 1, 1 });
+	Raven::UI::Style ButtonStyle(float width = Raven::UI::Auto);
+	// Fills the screen and centers its child.
+	Raven::UI::Style CenteredPanel();
+	Raven::UI::Style Card(float width);
 
 	void DrawHud(Raven::UI::Ui& ui, const HudModel& model);
 	MenuResult DrawPauseMenu(Raven::UI::Ui& ui, bool focus);

@@ -40,11 +40,11 @@ namespace Arena
 		const auto& scene = context.World;
 		const auto* rules = scene.Single<ArenaRulesComponent>();
 		const auto* run = scene.Single<ArenaRunComponent>();
-		const auto craft = First<CraftComponent>(scene);
-		if (!rules || !run || craft.IsNull())
+		const auto craft = FindCraft(scene);
+		if (!rules || !run || !craft)
 			return;
 		const float seconds = StepSeconds(context);
-		const Vec3 target = scene.TryGet<const ECS::TransformComponent>(craft)->Position;
+		const Vec3 target = craft->Transform->Position;
 		// A short grace at the start of a run, before drones notice the craft.
 		const bool hunting = run->State == RunState::Playing && run->Time > 2.0f;
 		for (const auto entity : InIdOrder<DroneComponent>(scene))

@@ -2,10 +2,33 @@
 
 #include "ArenaSystems.hpp"
 
+#include "Raven/Core/Log.hpp"
+
 #include <exception>
 
 namespace Arena
 {
+	std::optional<CraftState> FindCraft(const SceneAccess& scene)
+	{
+		// Reported once until a complete craft is found again; a trivial static, so module unload
+		// runs no destructor.
+		static bool reported = false;
+		const auto entity = First<CraftComponent>(scene);
+		if (entity.IsNull())
+			return std::nullopt;
+		CraftState state{ entity, scene.TryGet<const CraftComponent>(entity),
+			scene.TryGet<const ECS::TransformComponent>(entity), scene.TryGet<const ECS::MoverComponent>(entity) };
+		if (!state.Craft || !state.Transform || !state.Mover)
+		{
+			if (!std::exchange(reported, true))
+				Log(LogLevel::Warning, "Arena: the craft needs a TransformComponent and a MoverComponent; the run, "
+					"drones, cells and hits wait until the scene has them");
+			return std::nullopt;
+		}
+		reported = false;
+		return state;
+	}
+
 	UserDataStore* Profiles(SystemContext& context)
 	{
 		try

@@ -38,11 +38,11 @@ namespace Arena
 		const auto& scene = context.World;
 		auto* run = scene.Single<ArenaRunComponent>();
 		const auto* rules = scene.Single<ArenaRulesComponent>();
-		const auto craft = First<CraftComponent>(scene);
-		if (!run || !rules || craft.IsNull() || run->State != RunState::Playing || run->Time <= 0.0f)
+		const auto craft = FindCraft(scene);
+		if (!run || !rules || !craft || run->State != RunState::Playing || run->Time <= 0.0f)
 			return;
-		const auto craftRef = scene.GetRef(craft);
-		const Vec3 craftPosition = scene.TryGet<const ECS::TransformComponent>(craft)->Position;
+		const auto craftRef = scene.GetRef(craft->Entity);
+		const Vec3 craftPosition = craft->Transform->Position;
 		for (const auto& contact : context.Physics.GetContacts())
 		{
 			if (contact.Kind != ContactEventKind::Begin || !contact.Sensor)

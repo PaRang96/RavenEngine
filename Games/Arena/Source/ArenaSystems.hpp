@@ -4,12 +4,18 @@
 // helpers they share. ArenaGame.cpp registers them in phase order.
 //
 // Layers (FD-47): controllers in Control turn the mapped actions into CraftCommand records; fixed
-// steps read them, run the drones and the rules, and write the movers; the camera rig in Update
-// follows the craft.
+// steps read them, run the drones and the rules, and write the movers; the camera rig, the run
+// recorder and the screens in Update read the result.
+//
+// Optional and data-dependent reads go through a checked TryGet or Read (or FindCraft), never
+// `TryGet(...)->`: a scene edited with dump/apply may lack any component, and a system that skips
+// with one log line recovers as soon as the data is fixed (FD-06).
 
 #include "ArenaComponents.hpp"
 
 #include "Raven/Components/MaterialComponent.hpp"
+#include "Raven/Components/PhysicsComponents.hpp"
+#include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameSystems.hpp"
 #include "Raven/Core/UserData.hpp"
@@ -18,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -29,12 +36,19 @@ namespace Arena
 
 	inline constexpr std::string_view PlayContext = "Arena.Play";
 	inline constexpr std::string_view PauseContext = "Arena.Pause";
-	inline constexpr ActionId MoveX{ "MoveX" };
-	inline constexpr ActionId MoveY{ "MoveY" };
-	inline constexpr ActionId Jump{ "Jump" };
-	inline constexpr ActionId Turn{ "Turn" };
-	inline constexpr ActionId Pause{ "Pause" };
-	inline constexpr ActionId Resume{ "Resume" };
+	// Action names, shared by the registration, the systems and the key-binding screen.
+	inline constexpr std::string_view MoveXAction = "MoveX";
+	inline constexpr std::string_view MoveYAction = "MoveY";
+	inline constexpr std::string_view JumpAction = "Jump";
+	inline constexpr std::string_view TurnAction = "Turn";
+	inline constexpr std::string_view PauseAction = "Pause";
+	inline constexpr std::string_view ResumeAction = "Resume";
+	inline constexpr ActionId MoveX{ MoveXAction };
+	inline constexpr ActionId MoveY{ MoveYAction };
+	inline constexpr ActionId Jump{ JumpAction };
+	inline constexpr ActionId Turn{ TurnAction };
+	inline constexpr ActionId Pause{ PauseAction };
+	inline constexpr ActionId Resume{ ResumeAction };
 	inline constexpr std::string_view ProfileFile = "Profile";
 
 	inline float StepSeconds(const SystemContext& context)
@@ -96,8 +110,26 @@ namespace Arena
 		return context.Services.HasOption("swarm");
 	}
 
-	// ArenaSystems.cpp: the profile store, or null in hosts without a user-data folder (tools and
-	// smoke tests), and random floor points.
+	// The one new-best rule, for the run recorder's profile write, its log and the HUD banner.
+	inline bool IsNewBest(const ArenaRunComponent& run)
+	{
+		return run.Score > run.Best;
+	}
+
+	// The craft with the components its systems read.
+	struct CraftState
+	{
+		ECS::Entity Entity;
+		const CraftComponent* Craft = nullptr;
+		const ECS::TransformComponent* Transform = nullptr;
+		const ECS::MoverComponent* Mover = nullptr;
+	};
+
+	// ArenaSystems.cpp: the craft, or nothing when the scene has none. A craft that lacks its
+	// Transform or Mover is reported once and skipped until the data is fixed.
+	std::optional<CraftState> FindCraft(const SceneAccess& scene);
+	// The profile store, or null in hosts without a user-data folder (tools and smoke tests), and
+	// random floor points.
 	UserDataStore* Profiles(SystemContext& context);
 	Vec3 RandomPoint(SystemContext& context, const ArenaRulesComponent& rules, float margin, float z);
 	// A random floor point clear of the world and at least `distance` from `avoid`; the last try
@@ -109,6 +141,19 @@ namespace Arena
 	// Spawning, used by the run flow and the cells.
 	void SpawnDrone(SystemContext& context, const ArenaRulesComponent& rules, Vec3 craft);
 	void SpawnCell(SystemContext& context, const ArenaRulesComponent& rules, Vec3 craft);
+
+	// Run.cpp: the one way a run ends (caught or fallen out), for the fixed steps. The run recorder
+	// writes the profile later, in Update.
+	void EndRun(SystemContext& context, ArenaRunComponent& run, RunEnd end);
+
+	// PauseMenu.cpp: the pause menu's view state on the camera rig, added when first needed (it
+	// exists from the next frame); a screen as it opens; the interface sounds; and pausing.
+	ArenaMenuComponent* Menu(SystemContext& context, bool add = false);
+	ArenaMenuComponent OpenedScreen(MenuScreen screen);
+	void PlayUiSound(SystemContext& context, bool pause);
+	void SetPaused(SystemContext& context, bool paused);
+	// Bindings.cpp: the key-binding screen while it is open.
+	void BindingsScreen(SystemContext& context, ArenaMenuComponent& menu, bool focus);
 
 	// Control: once per frame, before the fixed steps.
 	void PauseSystem(SystemContext& context);
@@ -123,5 +168,6 @@ namespace Arena
 	void HitSystem(SystemContext& context);
 	// Update: once per frame, after the fixed steps.
 	void CameraSystem(SystemContext& context);
+	void RunRecordSystem(SystemContext& context);
 	void HudSystem(SystemContext& context);
 }

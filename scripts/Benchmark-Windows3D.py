@@ -7,11 +7,12 @@ import json
 import math
 from pathlib import Path
 import runpy
-import shutil
 import statistics
 import subprocess
 import tempfile
 import time
+
+from RavenSnapshot import copy_source_tree
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -184,10 +185,7 @@ def measure(report, seconds, repeats):
 def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
     source = report / "source"
     source.mkdir()
-    for folder in ("RavenEngine", "Games", "Content", "ThirdParty", "cmake", "scripts", "docs", "BuildProfiles"):
-        shutil.copytree(ROOT / folder, source / folder)
-    for name in ("CMakeLists.txt", "CMakePresets.json"):
-        shutil.copy2(ROOT / name, source / name)
+    copy_source_tree(ROOT, source)
     if edit:
         edit(source)
     with (report / "build.log").open("wb") as output:

@@ -955,7 +955,18 @@ Decision A4 (delegated): games play sound events, not raw buffers.
 - **Physics restarts like a first start.** The check found that a restarted Arena diverged from tick 2, while three fresh processes matched. Clearing the physics world removed the bodies but kept Jolt's body-ID sequence, broad-phase trees and contact caches. `PhysicsWorld::Clear` now destroys Jolt's world and builds a new one; the job-system workers outlive it. Approved by the owner on 2026-11-25.
 - **Reload time (measurement 5):** the game PCH now also holds the game-facing engine headers: `GameSystems.hpp`, `Log.hpp`, `SceneCommands.hpp` and every header in `Raven/Components`. The H5 finding that they gave no gain predates M6C's input, UI, sound and physics headers.
 - **Arena is split by object** (owner, 2026-11-25): `ArenaSystems.hpp/.cpp` for the shared helpers, then `Craft.cpp`, `Drones.cpp`, `Cells.cpp`, `Platforms.cpp`, `Run.cpp`, `Camera.cpp` and `Screens.cpp` (pause, menus, HUD). `ArenaGame.cpp` keeps only the contract, the components, the input mapping and the system order; the F6 preview entries moved to `ArenaUi.cpp`. The determinism hash after 600 ticks is the same before and after the split (`09c983c4ab39958e`), so behavior is unchanged.
+  - *Review amendment (2026-11-26, planning decision 14):* one file per screen. `Hud.cpp`, `PauseMenu.cpp` and `Bindings.cpp` each hold their screen's system and drawing, and `ArenaUi.hpp/.cpp` keep only the shared models, look and F6 previews. `Screens.cpp` is gone.
 - **Benchmark script:** `Benchmark-Windows3D.py` snapshots now copy the top-level `Content` folder (the engine fonts since C7). Without it the snapshot build failed.
+  - *Review amendment (2026-11-26, CQ-BLD-01):* `Test-Windows3DLive.py` had the same gap. Both scripts now take one folder list from `scripts/RavenSnapshot.py`.
+
+#### Review amendments to Arena (2026-11-26)
+
+From the 2026-11-26 assessments, implemented directly per planning decision 7:
+- **No unchecked component reads** (CQ-GAME-01): systems find the craft through `FindCraft`, which returns nothing, with one warning, when the craft lacks its Transform or Mover. A scene edited with dump/apply no longer ends the host.
+- **Latched steering** (AA2-GP-04): `CraftSystem` latches the latest `CraftCommand` into a `CraftInputComponent` and steers from it on every fixed step, so the craft keeps its speed on catch-up steps and below 60 FPS. A jump stays pending until one step applies it.
+- **The run ends one way** (AA2-GP-05 step 3, CQ-GAME-02, planning decision 13): `EndRun` ends a run when a drone catches the craft or the craft falls below `ArenaRulesComponent::FallOutZ` (−5 m); in swarm mode a fallen craft returns to its spawn. Fixed steps no longer read or write user data: the Update-phase `RunRecordSystem` writes finished runs to the profile and raises the run's best to the profile's between runs. One `IsNewBest` rule (`Score > Best`) serves the log, the profile and the banner, so a tie no longer shows "a new best".
+- **Shared action names** (CQ-GAME-05): one set of constants serves the registration, the systems and the key-binding screen.
+- The determinism hash after 600 ticks is now `2be0f7b328f640eb`. The new components are part of the captured state.
 
 **Measurement 5: a one-line game-code edit, save to active** (an external probe edits a log string five times per run, the laptop, Jolt and the UI stack present):
 

@@ -1,13 +1,7 @@
 // The player's craft: the controller that turns the steering keys into commands, the fixed step
-// that steers the mover, and the drone hit that ends a run.
+// that steers the mover from the latched input, and the drone hit that ends a run.
 
 #include "ArenaSystems.hpp"
-
-#include "Raven/Components/PhysicsComponents.hpp"
-#include "Raven/Components/TransformComponent.hpp"
-#include "Raven/Core/Log.hpp"
-
-#include <format>
 
 namespace Arena
 {
@@ -30,70 +24,65 @@ namespace Arena
 		context.Stream.Emit(command);
 	}
 
-	// Steers the craft from this tick's records: the latest direction, and a jump if any record had one.
+	// Latches this tick's records into the craft's input, then steers from the input. A frame's
+	// records reach only its first fixed step (InputStream.hpp), so steering from the records alone
+	// would stop the craft on catch-up steps and slow it below 60 FPS.
 	void CraftSystem(SystemContext& context)
 	{
 		const auto& scene = context.World;
 		const auto* run = scene.Single<ArenaRunComponent>();
+		bool received = false;
 		Vec3 move{};
 		bool jump = false;
 		context.Stream.ForEach<CraftCommand>([&](const CraftCommand& command, std::uint8_t)
 		{
+			received = true;
 			move = Flat(command.Move);
 			jump = jump || command.Jump;
 		});
-		if (!run || run->State != RunState::Playing)
-		{
-			move = {};
-			jump = false;
-		}
+		const bool playing = run && run->State == RunState::Playing;
 		const auto* rules = scene.Single<ArenaRulesComponent>();
-		scene.View<const CraftComponent, ECS::MoverComponent, const ECS::TransformComponent>().Each(
-			[&](ECS::Entity, const CraftComponent& craft, ECS::MoverComponent& mover, const ECS::TransformComponent& transform)
+		bool latched = false;
+		scene.View<const CraftComponent, CraftInputComponent, ECS::MoverComponent, const ECS::TransformComponent>().Each(
+			[&](ECS::Entity, const CraftComponent& craft, CraftInputComponent& input, ECS::MoverComponent& mover,
+				const ECS::TransformComponent& transform)
 			{
-				mover.DesiredVelocity = move * craft.Speed;
-				if (jump)
+				latched = true;
+				if (received)
 				{
+					input.Move = move;
+					input.Jump = input.Jump || jump;
+				}
+				if (!playing)
+					input = CraftInputComponent{};
+				mover.DesiredVelocity = input.Move * craft.Speed;
+				if (input.Jump)
+				{
+					input.Jump = false;
 					mover.DesiredVelocity.Z = craft.JumpSpeed;
 					if (rules)
 						context.Services.PlaySound(rules->JumpSound, { transform.Position });
 				}
 			});
+		// A craft without its latched input (an older scene) gets one, and steers from the next step.
+		if (!latched)
+			if (const auto craft = First<CraftComponent>(scene); !craft.IsNull() && !scene.TryGet<const CraftInputComponent>(craft))
+				context.Commands.Add(scene.GetRef(craft), CraftInputComponent{});
 	}
 
-	// A drone touching the craft ends the run, and a better score goes into the profile.
+	// A drone touching the craft ends the run.
 	void HitSystem(SystemContext& context)
 	{
 		const auto& scene = context.World;
 		auto* run = scene.Single<ArenaRunComponent>();
-		const auto craft = First<CraftComponent>(scene);
-		if (!run || craft.IsNull() || run->State != RunState::Playing || run->Time <= 0.0f || Swarm(context))
-			return;
-		const auto* mover = scene.TryGet<const ECS::MoverComponent>(craft);
-		if (!mover)
+		const auto craft = FindCraft(scene);
+		if (!run || !craft || run->State != RunState::Playing || run->Time <= 0.0f || Swarm(context))
 			return;
 		PhysicsShape probe;
 		probe.Shape = ECS::ColliderShape::Capsule;
-		probe.Size = { mover->Radius + 0.08f, mover->Radius + 0.08f, mover->HalfHeight };
-		probe.Position = scene.TryGet<const ECS::TransformComponent>(craft)->Position;
-		if (context.Physics.Overlap(probe, 1u << DroneLayer).empty())
-			return;
-		run->State = RunState::Over;
-		run->Timer = 2.5f;
-		if (const auto* rules = scene.Single<ArenaRulesComponent>())
-			context.Services.PlaySound(rules->CaughtSound);
-		auto* profiles = Profiles(context);
-		auto profile = profiles ? profiles->Get<ArenaProfile>(ProfileFile) : ArenaProfile{};
-		++profile.Runs;
-		const bool best = run->Score > profile.BestScore;
-		if (best)
-			profile.BestScore = run->Best = run->Score;
-		if (profiles)
-		{
-			profiles->Set(ProfileFile, profile);
-			profiles->Save(ProfileFile);
-		}
-		Log(LogLevel::Info, best ? std::format("Caught by a drone: score {}, a new best", run->Score) :
-			std::format("Caught by a drone: score {} (best {})", run->Score, profile.BestScore));
+		probe.Size = { craft->Mover->Radius + 0.08f, craft->Mover->Radius + 0.08f, craft->Mover->HalfHeight };
+		probe.Position = craft->Transform->Position;
+		if (!context.Physics.Overlap(probe, 1u << DroneLayer).empty())
+			EndRun(context, *run, RunEnd::Caught);
 	}
 }

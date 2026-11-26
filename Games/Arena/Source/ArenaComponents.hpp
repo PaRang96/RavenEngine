@@ -41,6 +41,16 @@ namespace Arena
 		RAVEN_COMPONENT(Arena::CraftCommand, Move, Jump);
 	};
 
+	// The craft's latched steering intent. A frame's records reach only its first fixed step, so the
+	// craft steers from the latest record on every step, including catch-up steps below 60 FPS; a
+	// jump stays pending until one step applies it. CraftSystem adds it to a craft that lacks it.
+	struct CraftInputComponent : Raven::ECS::Component
+	{
+		Vec3 Move{};
+		bool Jump = false;
+		RAVEN_COMPONENT(Arena::CraftInputComponent, Move, Jump);
+	};
+
 	// A roaming drone: wanders between random waypoints and chases the craft within range.
 	struct DroneComponent : Raven::ECS::Component
 	{
@@ -82,6 +92,9 @@ namespace Arena
 		float DroneInterval = 6.0f;
 		// The `--swarm` launch option: drones for the character-backend measurement, and no game over.
 		std::uint32_t SwarmDrones = 120;
+		// Below this height the craft has left the arena: the run ends, or in swarm mode the craft
+		// returns to its spawn point. Far below the floor (z = 0) and the deepest jump landing.
+		float FallOutZ = -5.0f;
 		Raven::AssetRef<Raven::MeshAsset> CellMesh;
 		Raven::AssetRef<Raven::MeshAsset> DroneMesh;
 		// Sound-event assets (docs/GameServicesDesign.md, C8): designers tune the .ravensound files.
@@ -92,7 +105,7 @@ namespace Arena
 		Raven::AssetRef<Raven::SoundAsset> ClickSound;
 		Raven::AssetRef<Raven::SoundAsset> PauseSound;
 		RAVEN_COMPONENT(Arena::ArenaRulesComponent, HalfSize, Cells, StartDrones, MaxDrones, DroneInterval, SwarmDrones,
-			CellMesh, DroneMesh, PickupSound, JumpSound, CaughtSound, DroneSound, ClickSound, PauseSound);
+			FallOutZ, CellMesh, DroneMesh, PickupSound, JumpSound, CaughtSound, DroneSound, ClickSound, PauseSound);
 	};
 
 	enum class RunState : std::uint8_t
@@ -100,8 +113,14 @@ namespace Arena
 		// The next fixed step clears the arena and starts a run.
 		Starting,
 		Playing,
-		// A drone caught the craft; a new run starts when Timer runs out.
+		// The run ended (RunEnd says how); a new run starts when Timer runs out.
 		Over,
+	};
+
+	enum class RunEnd : std::uint8_t
+	{
+		Caught,
+		FellOut,
 	};
 
 	// The run in progress: session state on the `$arena` entity (FD-34).
@@ -109,14 +128,18 @@ namespace Arena
 	{
 		RunState State = RunState::Starting;
 		std::uint32_t Score = 0;
-		// The profile's best score when the run started, raised when the run beats it.
+		// The best score before this run. Fixed steps carry it from run to run; the Update-phase run
+		// recorder raises it to the profile's best between runs, so fixed steps never read user data.
 		std::uint32_t Best = 0;
 		std::uint32_t Drones = 0;
 		// Seconds since the run started.
 		float Time = 0.0f;
 		float NextDrone = 0.0f;
 		float Timer = 0.0f;
-		RAVEN_COMPONENT(Arena::ArenaRunComponent, State, Score, Best, Drones, Time, NextDrone, Timer);
+		RunEnd End = RunEnd::Caught;
+		// A finished run the run recorder has not written to the profile yet.
+		bool Unrecorded = false;
+		RAVEN_COMPONENT(Arena::ArenaRunComponent, State, Score, Best, Drones, Time, NextDrone, Timer, End, Unrecorded);
 	};
 
 	// The follow camera's rig: local view state, never simulation state (FD-47).
@@ -132,6 +155,20 @@ namespace Arena
 		// How quickly the camera catches up, per second.
 		float Follow = 8.0f;
 		RAVEN_COMPONENT(Arena::FollowCameraComponent, Distance, Height, Pitch, Yaw, TurnSpeed, Follow);
+	};
+
+	enum class MenuScreen : std::uint8_t { Main, Bindings };
+
+	// The pause menu's local view state on the camera rig entity; never simulation state (FD-47).
+	struct ArenaMenuComponent : Raven::ECS::Component
+	{
+		MenuScreen Screen = MenuScreen::Main;
+		// The binding row waiting for a key, or -1, and the binding within it.
+		std::int32_t Listening = -1;
+		// True on the frame a screen opens, so its first button takes keyboard focus.
+		bool FocusPending = true;
+		std::uint32_t Slot = 0;
+		RAVEN_COMPONENT(Arena::ArenaMenuComponent, Screen, Listening, FocusPending, Slot);
 	};
 
 	// The player's profile record in the user-data store (FD-33).

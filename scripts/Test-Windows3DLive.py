@@ -15,6 +15,8 @@ import subprocess
 import time
 import uuid
 
+from RavenSnapshot import copy_source_tree
+
 
 USER = ctypes.WinDLL("user32", use_last_error=True)
 KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -508,10 +510,7 @@ def main():
     source = report / "source"
     source.mkdir(parents=True)
     print(f"Default-launch evidence is under {report}", flush=True)
-    for folder in ("RavenEngine", "Games", "ThirdParty", "cmake", "scripts"):
-        shutil.copytree(repo / folder, source / folder)
-    for name in ("CMakeLists.txt", "CMakePresets.json"):
-        shutil.copy2(repo / name, source / name)
+    copy_source_tree(repo, source)
     with (report / "build.log").open("wb") as output:
         try:
             subprocess.run(["cmake", "--preset", preset], cwd=source, stdout=output,
