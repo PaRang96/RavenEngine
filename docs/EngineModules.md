@@ -79,7 +79,7 @@ Games/Samples and Games/Arena follow all of this today: neither uses `thread_loc
 | `cmake/RavenGameSources.cmake` | A game root's `Source/` files, shared by compilation and content-based rebuild checks |
 | `cmake/GameContract.cmake` | The engine contract inputs and their hash |
 
-While the host runs, build a game only through `cmake -P out/build/<preset>/RavenEngine/GameBuild/<Name>/BuildGame.cmake`; full engine builds can try to overwrite loaded files. The host offers a build when its `BuildInputs.sha256` stamp changes, which a build writes last after verifying its outputs, so a manual build is picked up only once complete. F5 does nothing while a build runs (the build activates when done), and it also clears a failed build, so the next build is offered (review amendment, 2026-11-26, AA2-HR-03).
+While the host runs, build a game only through `cmake -P out/build/<preset>/RavenEngine/GameBuild/<Name>/BuildGame.cmake`; full engine builds can try to overwrite loaded files. The host offers a build when its `BuildInputs.sha256` stamp changes, which a build writes last after verifying its outputs, so a manual build is picked up only once complete. F5 does nothing while a build runs (the build activates when done). A failed build never blocks later offers: the next build that passes verification is offered (review amendment, 2026-11-26, AA2-HR-03). The worker's states and transitions are written down beside `GameModule::Impl::WatchState`.
 
 ### Where to make a build change
 

@@ -178,7 +178,7 @@ int main(int argc, char* argv[])
 			config.ContentRoot = executableDirectory / "Games" / game / "Content";
 		if (!std::filesystem::is_regular_file(config.ContentRoot / "Project.ravenproject"))
 			throw std::invalid_argument("Unknown game '" + game + "': no Project.ravenproject in " + config.ContentRoot.string());
-		// Path concatenation converts the wide suffix on every OS; native() is narrow off Windows.
+		// Path concatenation reads the UTF-8 suffix on every OS.
 		if (GameBuild::Enabled)
 			config.GameModulePath = executableDirectory / (std::filesystem::path(game) += GameBuild::ModuleSuffix);
 		config.AutoBuildGame = develop;

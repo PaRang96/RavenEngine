@@ -252,8 +252,6 @@ namespace Raven
 		bool AutoBuild = false;
 		FileStamp AttemptedFile{};
 		std::atomic<bool> Building{ false };
-		// Set by F5: the worker forgets a failed build, so the next build stamp is offered again.
-		std::atomic<bool> ResetBuildFailure{ false };
 		std::mutex EventMutex;
 		std::optional<WatchEvent> Pending;
 		std::atomic<bool> HasEvent{ false };
@@ -294,6 +292,41 @@ namespace Raven
 		}
 
 		bool Activate(std::optional<FileStamp> expected = {}, std::uint64_t revision = 0, const BuildTrace& trace = {});
+
+		// The build worker's state (CQ-CORE-02). These are independent facts, not one exclusive state:
+		// a build can run while a rebuild is already pending. The transitions:
+		//   - A new source signature sets RebuildPending and discards a candidate already offered
+		//     (ObserveSource).
+		//   - With no build running, RebuildPending and a known signature, a build starts and clears
+		//     RebuildPending (StartBuild).
+		//   - A finished build re-reads the signature (OnBuildFinished). It is superseded when
+		//     RebuildPending was set or the sources differ from the ones it built; RebuildPending then
+		//     stays set, so the next build starts. Otherwise exit code 0 offers the module, and a
+		//     failure is reported and waits for the next source change.
+		//   - A new build stamp, from a manual build that passed verification, is offered when no build
+		//     runs and none is pending (OfferStamp). F5 activates directly and needs none of this.
+		struct WatchState
+		{
+			using BuildProcess = std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)>;
+			std::filesystem::path Directory;
+			BuildProcess Build{ nullptr, &Platform::DestroyBuildProcess };
+			// The build stamp's subscription, paused while a build links.
+			ReloadSubscription* Output = nullptr;
+			bool RebuildPending = false;
+			std::optional<std::uint64_t> ObservedSource;
+			// The signature the running or last build started from.
+			std::uint64_t BuiltSource = 0;
+			FileStamp PublishedFile{};
+			std::uint64_t PublishedRevision = 0;
+			BuildTrace Trace;
+			std::string LastError;
+		};
+		void ReportBuild(WatchState& state, const std::string& error);
+		void ObserveSource(WatchState& state, std::uint64_t signature);
+		void Offer(WatchState& state, FileStamp file, bool successfulBuild = false);
+		void OnBuildFinished(WatchState& state, int exitCode);
+		void StartBuild(WatchState& state);
+		void OfferStamp(WatchState& state);
 		void Watch(std::stop_token stop, FileStamp initial);
 		void RunPhase(SystemPhase phase, SystemContext& context);
 	};
@@ -539,60 +572,99 @@ namespace Raven
 		}
 	}
 
+	void GameModule::Impl::ReportBuild(WatchState& state, const std::string& error)
+	{
+		if (state.LastError != error)
+		{
+			state.LastError = error;
+			Publish({ {}, error });
+		}
+	}
+
+	void GameModule::Impl::ObserveSource(WatchState& state, std::uint64_t signature)
+	{
+		if (state.ObservedSource == signature)
+			return;
+		// The first observation is startup, not an edit.
+		state.Trace = {};
+		if (state.ObservedSource)
+			state.Trace.Observed = ReloadTrace::Now();
+		state.ObservedSource = signature;
+		++SourceRevision;
+		state.RebuildPending = true;
+		DiscardCandidate();
+	}
+
+	void GameModule::Impl::Offer(WatchState& state, FileStamp file, bool successfulBuild)
+	{
+		const auto revision = SourceRevision.load();
+		if (state.PublishedFile != file || state.PublishedRevision != revision)
+		{
+			state.PublishedFile = file;
+			state.PublishedRevision = revision;
+			state.LastError.clear();
+			state.Trace.Offered = ReloadTrace::Now();
+			Publish({ file, {}, revision, state.Trace });
+			state.Trace = {};
+		}
+		else if (successfulBuild && !state.LastError.empty())
+		{
+			state.LastError.clear();
+			Publish({});
+		}
+	}
+
+	void GameModule::Impl::OnBuildFinished(WatchState& state, int exitCode)
+	{
+		state.Build.reset();
+		Building.store(false);
+		state.Output->SetPaused(false);
+		state.Trace.BuildFinished = ReloadTrace::Now();
+		if (exitCode != 0)
+			ReportBuild(state, "Game build failed; keeping active code. See " + (state.Directory / "AutoBuild.log").string());
+		// Recheck the build's inputs directly; the service may not have settled an edit yet.
+		const bool superseded = state.RebuildPending;
+		state.RebuildPending = true;
+		const auto signature = SourceSignature(Watched);
+		ObserveSource(state, signature);
+		if (!superseded && signature == state.BuiltSource)
+		{
+			if (exitCode == 0)
+				Offer(state, Stamp(Path), true);
+			state.RebuildPending = false;
+		}
+	}
+
+	void GameModule::Impl::StartBuild(WatchState& state)
+	{
+		state.Build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
+			{ "-P", PathToUtf8(state.Directory / "BuildGame.cmake") }, state.Directory / "AutoBuild.log"));
+		// The linker needs the DLL unopened, so the service must not read it meanwhile.
+		// Linking starts long after this, past any read already in progress.
+		state.Output->SetPaused(true);
+		Building.store(true);
+		state.Trace.BuildStarted = ReloadTrace::Now();
+		state.BuiltSource = *state.ObservedSource;
+		state.RebuildPending = false;
+		DiscardCandidate();
+		Log(LogLevel::Info, "Building game module in background");
+	}
+
+	void GameModule::Impl::OfferStamp(WatchState& state)
+	{
+		// A new stamp is a build that passed verification, so an earlier failure no longer applies.
+		if (!state.Build && !state.RebuildPending)
+			Offer(state, Stamp(Path));
+	}
+
 	void GameModule::Impl::Watch(std::stop_token stop, FileStamp initial)
 	{
 		using namespace std::chrono_literals;
-		using BuildProcess = std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)>;
-		BuildProcess build{ nullptr, &Platform::DestroyBuildProcess };
-		const auto directory = BuildDirectory;
-		auto publishedFile = initial;
-		std::uint64_t publishedRevision = 0;
-		std::optional<std::uint64_t> observedSource;
-		std::uint64_t builtSource = 0;
-		BuildTrace trace;
-		bool buildQueued = AutoBuild;
-		bool buildFailed = false;
-		std::string lastError;
-		const auto report = [&](const std::string& error)
-		{
-			if (lastError != error)
-			{
-				lastError = error;
-				Publish({ {}, error });
-			}
-		};
-		const auto observeSource = [&](std::uint64_t signature)
-		{
-			if (observedSource != signature)
-			{
-				// The first observation is startup, not an edit.
-				trace = {};
-				if (observedSource)
-					trace.Observed = ReloadTrace::Now();
-				observedSource = signature;
-				++SourceRevision;
-				buildQueued = true;
-				DiscardCandidate();
-			}
-		};
-		const auto offer = [&](FileStamp file, bool successfulBuild = false)
-		{
-			const auto revision = SourceRevision.load();
-			if (publishedFile != file || publishedRevision != revision)
-			{
-				publishedFile = file;
-				publishedRevision = revision;
-				lastError.clear();
-				trace.Offered = ReloadTrace::Now();
-				Publish({ file, {}, revision, trace });
-				trace = {};
-			}
-			else if (successfulBuild && !lastError.empty())
-			{
-				lastError.clear();
-				Publish({});
-			}
-		};
+		// Declared first, so the build process outlives the subscriptions below, as before.
+		WatchState state;
+		state.Directory = BuildDirectory;
+		state.PublishedFile = initial;
+		state.RebuildPending = AutoBuild;
 
 		// The shared reload service settles source and DLL changes (docs/HotReloadDesign.md, H1).
 		// This worker only starts and polls the build process.
@@ -618,8 +690,9 @@ namespace Raven
 		// The build's input stamp, not the DLL: every build that passes verification writes it last
 		// (BuildGame.cmake.in), so a manual build is offered only once its DLL and PDB are complete,
 		// and the service never opens the DLL while the linker writes it (AA2-HR-03).
-		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ directory / "BuildInputs.sha256" } }, output,
+		auto outputWatch = ReloadService::Subscribe({ ReloadInput{ state.Directory / "BuildInputs.sha256" } }, output,
 			{ "game build stamp", ImporterVersion::GameSources });
+		state.Output = outputWatch.get();
 		bool checkSources = AutoBuild;
 		bool checkOutput = false;
 
@@ -627,75 +700,30 @@ namespace Raven
 		{
 			try
 			{
-				// F5 retries the current build output, so a failed build no longer blocks offers.
-				if (ResetBuildFailure.exchange(false))
-					buildFailed = false;
 				int exitCode = 0;
-				if (build && Platform::PollBuildProcess(*build, exitCode))
-				{
-					build.reset();
-					Building.store(false);
-					outputWatch->SetPaused(false);
-					trace.BuildFinished = ReloadTrace::Now();
-					if (exitCode != 0)
-					{
-						buildFailed = true;
-						report("Game build failed; keeping active code. See " + (directory / "AutoBuild.log").string());
-					}
-					// Recheck the build's inputs directly; the service may not have settled an edit yet.
-					const bool superseded = buildQueued;
-					buildQueued = true;
-					const auto signature = SourceSignature(Watched);
-					observeSource(signature);
-					if (!superseded && signature == builtSource)
-					{
-						if (exitCode == 0)
-						{
-							offer(Stamp(Path), true);
-							buildFailed = false;
-						}
-						buildQueued = false;
-					}
-				}
+				if (state.Build && Platform::PollBuildProcess(*state.Build, exitCode))
+					OnBuildFinished(state, exitCode);
 				if (checkSources)
 				{
 					checkSources = false;
-					observeSource(SourceSignature(Watched));
+					ObserveSource(state, SourceSignature(Watched));
 				}
 				// The service already waited for the sources to settle, so the build starts at once.
-				if (!build && buildQueued && observedSource)
-				{
-					build.reset(Platform::StartBuildProcess(GameBuild::Cmake,
-						{ "-P", PathToUtf8(directory / "BuildGame.cmake") }, directory / "AutoBuild.log"));
-					// The linker needs the DLL unopened, so the service must not read it meanwhile.
-					// Linking starts long after this, past any read already in progress.
-					outputWatch->SetPaused(true);
-					Building.store(true);
-					trace.BuildStarted = ReloadTrace::Now();
-					builtSource = *observedSource;
-					buildQueued = false;
-					DiscardCandidate();
-					Log(LogLevel::Info, "Building game module in background");
-				}
+				if (!state.Build && state.RebuildPending && state.ObservedSource)
+					StartBuild(state);
 				if (checkOutput)
 				{
 					checkOutput = false;
-					// A new stamp is a build that passed verification, so an earlier failure no
-					// longer applies.
-					if (!build && !buildQueued)
-					{
-						buildFailed = false;
-						offer(Stamp(Path));
-					}
+					OfferStamp(state);
 				}
 			}
 			catch (const std::exception& error)
 			{
-				report(error.what());
+				ReportBuild(state, error.what());
 			}
 			std::unique_lock lock(wakeMutex);
 			const auto settled = [&] { return sourcesSettled || outputSettled; };
-			if (build)
+			if (state.Build)
 				wakeup.wait_for(lock, stop, 40ms, settled);
 			else
 				wakeup.wait(lock, stop, settled);
@@ -740,7 +768,6 @@ namespace Raven
 			Log(LogLevel::Info, "Game build in progress; the new module activates when it finishes");
 			return false;
 		}
-		m_Impl->ResetBuildFailure.store(true);
 		return m_Impl->Activate();
 	}
 
