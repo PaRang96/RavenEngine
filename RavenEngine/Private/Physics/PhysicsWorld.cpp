@@ -328,10 +328,9 @@ namespace Raven
 			std::string Problem;
 		};
 
-		Impl(const PhysicsLimits& limits, JobSystem* workers)
+		Impl(const PhysicsLimits& limits, JobSystem& workers)
 			: Limits(limits), Temporary(16u << 20),
-			  OwnWorkers(workers ? nullptr : std::make_unique<JobSystem>(std::min<std::uint32_t>(JobSystem::DefaultWorkerCount(), 8))),
-			  Jobs(workers ? *workers : *OwnWorkers, JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers)
+			  Jobs(workers, JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers)
 		{
 			System.Init(limits.Bodies, 0, limits.BodyPairs, limits.ContactConstraints, Trees, ObjectTrees, Pairs);
 			// Z-up world (FD-32).
@@ -405,8 +404,6 @@ namespace Raven
 		ObjectVsTree ObjectTrees;
 		ObjectPairs Pairs;
 		JPH::TempAllocatorImplWithMallocFallback Temporary;
-		// The host's shared workers, or a pool of the world's own when none is given (tests, tools).
-		std::unique_ptr<JobSystem> OwnWorkers;
 		Physics::JoltJobs Jobs;
 		JPH::PhysicsSystem System;
 		ContactRecorder Contacts;
@@ -970,11 +967,13 @@ namespace Raven
 	};
 
 	PhysicsWorld::PhysicsWorld(const PhysicsLimits& limits, JobSystem* workers)
+		: m_OwnWorkers(workers ? nullptr : std::make_unique<JobSystem>(std::min<std::uint32_t>(JobSystem::DefaultWorkerCount(), 8))),
+		  m_Workers(workers ? workers : m_OwnWorkers.get())
 	{
 		AcquireJolt();
 		try
 		{
-			m_Impl = std::make_unique<Impl>(limits, workers);
+			m_Impl = std::make_unique<Impl>(limits, *m_Workers);
 		}
 		catch (...)
 		{
@@ -989,15 +988,15 @@ namespace Raven
 		ReleaseJolt();
 	}
 
-	void PhysicsWorld::Clear() noexcept
+	void PhysicsWorld::Clear()
 	{
-		m_Impl->RemoveAll();
-		m_Impl->PendingEnds.clear();
-		m_Impl->Stats = {};
+		// Removing bodies alone leaves Jolt's ID sequence and broad-phase trees as the last scene left
+		// them, and the next scene then simulates differently from a first start. The old world goes
+		// first (it removes its bodies and subscriptions), then a new one is built.
+		const auto limits = m_Impl->Limits;
+		m_Impl.reset();
 		m_Contacts.clear();
-#ifdef JPH_DEBUG_RENDERER
-		m_Impl->ContactLines.clear();
-#endif
+		m_Impl = std::make_unique<Impl>(limits, *m_Workers);
 	}
 
 	void PhysicsWorld::Step(Scene& scene, ECS::Registry& registry, double seconds)
@@ -1005,11 +1004,11 @@ namespace Raven
 		if (!(seconds > 0.0) || !std::isfinite(seconds))
 			throw std::invalid_argument("A physics step needs a positive duration");
 		const auto start = std::chrono::steady_clock::now();
-		auto& world = *m_Impl;
 		bool rebuild = false;
-		if (world.Source != &scene || world.Registry != &registry)
+		if (m_Impl->Source != &scene || m_Impl->Registry != &registry)
 		{
 			Clear();
+			auto& world = *m_Impl;
 			world.Source = &scene;
 			world.Registry = &registry;
 			world.Subscriptions = {
@@ -1019,6 +1018,7 @@ namespace Raven
 				registry.SubscribeLifecycle<ECS::MoverComponent>() };
 			rebuild = true;
 		}
+		auto& world = *m_Impl;
 		std::array<ECS::LifecycleBatch, 4> batches{};
 		for (std::size_t index = 0; index < batches.size(); ++index)
 		{

@@ -138,6 +138,15 @@ int main(int argc, char* argv[])
 					throw std::invalid_argument("--seed expects a whole number");
 				config.SimulationSeed = static_cast<std::uint64_t>(ParseInteger(argv[index], "--seed"));
 			}
+			// The determinism check (FD-48): `--determinism-check [ticks]`, 600 ticks by default.
+			else if (option == "--determinism-check")
+			{
+				config.DeterminismTicks = 600;
+				if (index + 1 < argc && std::string_view(argv[index + 1]).find_first_not_of("0123456789") == std::string_view::npos)
+					config.DeterminismTicks = static_cast<std::uint32_t>(ParseInteger(argv[++index], "--determinism-check"));
+				if (config.DeterminismTicks == 0)
+					throw std::invalid_argument("--determinism-check expects at least one tick");
+			}
 			// Anything else is the game's: `--orbit` becomes the option "orbit".
 			else if (option.starts_with("--") && option.size() > 2)
 				config.GameOptions.emplace_back(option.substr(2));
@@ -172,6 +181,15 @@ int main(int argc, char* argv[])
 		else
 			config.UserDataRoot = executableDirectory / "User" / game;
 		config.UserDataRoot = config.UserDataRoot.lexically_normal();
+		// The determinism check runs the staged game unchanged, with a fixed seed and no user data, so
+		// nothing outside the scene and its input differs between its two runs.
+		if (config.DeterminismTicks != 0)
+		{
+			config.AutoBuildGame = config.WatchGameModule = config.WatchContent = config.WatchShaders = false;
+			config.UserDataRoot.clear();
+			if (!config.SimulationSeed)
+				config.SimulationSeed = 1;
+		}
 		config.Renderer = presentation.Renderer;
 		config.MaxFrameRate = presentation.MaxFrameRate;
 

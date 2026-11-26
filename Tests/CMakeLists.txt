@@ -56,3 +56,13 @@ unset(raven_test_relative)
 unset(raven_test_label)
 unset(raven_benchmark_source)
 unset(raven_benchmark_name)
+
+# The determinism check (docs/GameServicesDesign.md, FD-48): the host plays the arena twice with the same
+# seed and a scripted input lane and compares the simulation after every tick. It needs a window and a
+# Vulkan device, so it is labeled "gpu" and runs locally.
+if(TARGET RavenEngine AND TARGET ArenaGame)
+    add_test(NAME DeterminismCheck
+        COMMAND RavenEngine --game Arena --determinism-check 600
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:RavenEngine>")
+    set_tests_properties(DeterminismCheck PROPERTIES LABELS gpu TIMEOUT 120)
+endif()

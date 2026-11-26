@@ -48,8 +48,11 @@ namespace Raven
 		RAVEN_API explicit PhysicsWorld(const PhysicsLimits& limits, JobSystem* workers = nullptr);
 		RAVEN_API ~PhysicsWorld();
 
-		// Forgets the scene: every body is removed, and the next step rebuilds from the components.
-		RAVEN_API void Clear() noexcept;
+		// Forgets the scene and rebuilds Jolt's world from scratch: body IDs, broad-phase trees, contact
+		// caches and characters start as in a new world, so every scene start simulates exactly like the
+		// first (determinism level 1, docs/GameServicesDesign.md FD-48). The next step adds the scene's
+		// bodies again from the components.
+		RAVEN_API void Clear();
 		// One fixed step of `seconds`, after the game's fixed-step systems and their commands.
 		RAVEN_API void Step(Scene& scene, ECS::Registry& registry, double seconds);
 		// Contacts are visible only to fixed-step systems.
@@ -81,6 +84,9 @@ namespace Raven
 	private:
 		friend class PhysicsWorldSync;
 		struct Impl;
+		// The workers outlive every rebuilt world: the host's, or a pool of this world's own.
+		std::unique_ptr<JobSystem> m_OwnWorkers;
+		JobSystem* m_Workers = nullptr;
 		std::unique_ptr<Impl> m_Impl;
 		std::vector<ContactEvent> m_Contacts;
 		bool m_FixedPhase = false;

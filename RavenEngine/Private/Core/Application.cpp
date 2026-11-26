@@ -17,10 +17,12 @@
 #include "Scene/TransformInterpolator.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/GameModule.hpp"
+#include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/Paths.hpp"
 #include "Raven/Renderer/RenderWorld.hpp"
 #include "Raven/Scene/Scene.hpp"
+#include "Raven/Scene/SceneFile.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -30,6 +32,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -143,6 +146,117 @@ namespace Raven
 
 		// On-screen diagnostics: warnings and errors of the last ten seconds, such as failed reloads,
 		// and the preview's state, drawn by the developer UI context over the game's.
+		// The determinism check (docs/GameServicesDesign.md, FD-48): a scripted key lane drives the real
+		// frame loop one fixed tick per frame; the scene is hashed after every tick, restarted with the
+		// same seed, played again and compared.
+		class DeterminismCheck
+		{
+		public:
+			explicit DeterminismCheck(std::uint32_t ticks) : m_Ticks(ticks) {}
+
+			bool IsActive() const noexcept { return m_Ticks != 0; }
+			bool IsFinished() const noexcept { return m_Pass == Pass::Done; }
+
+			// The scripted input of the next frame: steering, jumps and camera turns as key holds. It follows
+			// the ticks played in this run, not frames, so loading frames never shift it; nothing is held
+			// before a run's first tick.
+			const InputState& NextInput()
+			{
+				const auto frame = m_TicksThisRun;
+				const auto held = [frame](Key key) -> bool
+				{
+					if (frame == 0)
+						return false;
+					switch (key)
+					{
+					case Key::W: return frame % 240 < 150;
+					case Key::A: return frame % 180 >= 60 && frame % 180 < 100;
+					case Key::D: return frame % 300 >= 200 && frame % 300 < 260;
+					case Key::Space: return frame % 90 < 4;
+					case Key::Q: return frame % 400 >= 320 && frame % 400 < 350;
+					default: return false;
+					}
+				};
+				m_Input.Events.clear();
+				for (const Key key : { Key::W, Key::A, Key::D, Key::Space, Key::Q })
+				{
+					auto& state = m_Input.Keys[static_cast<std::size_t>(key)];
+					const bool down = held(key);
+					state.Pressed = down && !state.Down;
+					state.Released = !down && state.Down;
+					state.Down = down;
+					if (state.Pressed || state.Released)
+						m_Input.Events.push_back({ InputCode::FromKey(key),
+							state.Pressed ? InputTransition::Pressed : InputTransition::Released });
+				}
+				return m_Input;
+			}
+
+			// After each fixed step: records or compares the scene's hash.
+			void AfterStep(const Scene& scene)
+			{
+				if (m_Pass == Pass::Done)
+					return;
+				++m_TicksThisRun;
+				const auto bytes = CaptureScene(scene).Encode();
+				std::uint64_t hash = 14695981039346656037ull;
+				for (const auto value : bytes)
+					hash = (hash ^ static_cast<std::uint8_t>(value)) * 1099511628211ull;
+				if (m_Pass == Pass::Record)
+				{
+					m_Hashes.push_back(hash);
+					m_Snapshots.push_back(bytes);
+					if (m_Hashes.size() == m_Ticks)
+					{
+						m_Pass = Pass::Compare;
+						m_Restart = true;
+						Log(LogLevel::Info, std::format("Determinism check: recorded {} ticks (tick 2 hash {:016x}, last {:016x}); "
+							"restarting the scene", m_Ticks, m_Hashes[std::min<std::size_t>(2, m_Hashes.size() - 1)], hash));
+					}
+					return;
+				}
+				if (hash != m_Hashes[m_Compared] && !m_Diverged)
+				{
+					// Both snapshots, for `RavenSceneTool dump`, beside the executable.
+					m_Diverged = m_Compared;
+					const auto directory = Paths::GetExecutableDirectory();
+					Files::WriteAtomic(directory / "DeterminismFirstRun.ravenscene", m_Snapshots[m_Compared]);
+					Files::WriteAtomic(directory / "DeterminismSecondRun.ravenscene", bytes);
+				}
+				if (++m_Compared == m_Ticks)
+					m_Pass = Pass::Done;
+			}
+
+			// True once, when the second run should start from the scene file again.
+			bool TakeRestart() noexcept { return std::exchange(m_Restart, false); }
+			void OnRestart() noexcept { m_TicksThisRun = 0; }
+
+			// After the loop: throws unless both runs matched at every tick.
+			void Report() const
+			{
+				if (m_Pass != Pass::Done)
+					throw std::runtime_error(std::format("Determinism check did not finish: the window closed after {} of {} ticks",
+						m_Hashes.size() + m_Compared, std::size_t{ m_Ticks } * 2));
+				if (m_Diverged)
+					throw std::runtime_error(std::format("Determinism check failed: the runs first differ after tick {} of {}; "
+						"both scenes are saved as DeterminismFirstRun/SecondRun.ravenscene beside the executable", *m_Diverged, m_Ticks));
+				Log(LogLevel::Info, std::format("Determinism check passed: {} ticks matched, final hash {:016x}", m_Ticks,
+					m_Hashes.back()));
+			}
+
+		private:
+			enum class Pass : std::uint8_t { Record, Compare, Done };
+			std::uint32_t m_Ticks = 0;
+			Pass m_Pass = Pass::Record;
+			std::vector<std::uint64_t> m_Hashes;
+			std::vector<std::vector<std::byte>> m_Snapshots;
+			std::size_t m_Compared = 0;
+			std::optional<std::size_t> m_Diverged;
+			bool m_Restart = false;
+			std::uint64_t m_TicksThisRun = 0;
+			InputState m_Input;
+		};
+
 		void DrawDeveloperOverlay(UI::Ui& ui, const UiPreview& preview, const std::vector<std::string>& entries)
 		{
 			const auto problems = GetRecentProblems(std::chrono::seconds(10));
@@ -269,7 +383,8 @@ namespace Raven
 		if (!config.FrameTracePath.empty())
 			samples.reserve(32768);
 
-		while (!window->ShouldClose())
+		DeterminismCheck determinism(config.DeterminismTicks);
+		while (!window->ShouldClose() && !determinism.IsFinished())
 		{
 			const auto frameStart = TraceClock::now();
 			ActiveFrameMetrics telemetry(samples.size() < samples.capacity(), frameStart);
@@ -284,7 +399,7 @@ namespace Raven
 			// While the game listens for a key to bind, every key goes to the listener: the UI neither
 			// withholds nor sees the keyboard, so Tab, Enter, Space and the arrows can be bound too.
 			const bool listening = router.IsListening();
-			const InputState& raw = window->GetInputState();
+			const InputState& raw = determinism.IsActive() ? determinism.NextInput() : window->GetInputState();
 			InputState routed = raw;
 			if (!listening)
 				gameUi.FilterInput(routed);
@@ -306,7 +421,10 @@ namespace Raven
 			const bool drawable = window->GetFramebufferState().IsDrawable();
 			if (drawable)
 			{
-				const FrameTime frameTime = clock.Tick();
+				FrameTime frameTime = clock.Tick();
+				// The check plays exactly one fixed tick per frame, whatever the frame took.
+				if (determinism.IsActive())
+					frameTime.DeltaSeconds = gameplay.GetStepSeconds();
 				bool replaced = false;
 				// The UI preview mode: F6 steps through the game's entries and back to playing.
 				const auto previewEntries = game ? game->GetPreviewNames() : std::vector<std::string>{};
@@ -338,7 +456,7 @@ namespace Raven
 					developerUi.BeginFrame(raw, static_cast<float>(framebuffer.Width), static_cast<float>(framebuffer.Height), dpi);
 				}
 				const DeveloperRequests requests{
-					router.WasDeveloperPressed(DeveloperInput::RestartScene),
+					router.WasDeveloperPressed(DeveloperInput::RestartScene) || determinism.TakeRestart(),
 					router.WasDeveloperPressed(DeveloperInput::NextScene),
 					router.WasDeveloperPressed(DeveloperInput::CycleRenderView),
 					router.WasDeveloperPressed(DeveloperInput::TogglePlay),
@@ -394,6 +512,8 @@ namespace Raven
 						physics.Step(session.GetScene(), instance.GetRegistry(), gameplay.GetStepSeconds());
 					}
 					gameplay.ConsumeStep();
+					if (determinism.IsActive())
+						determinism.AfterStep(session.GetScene());
 				};
 				const bool played = boundary.Run(StageBoundary::Gameplay, [&]
 				{
@@ -408,6 +528,7 @@ namespace Raven
 						interpolator.Snap();
 						if (replaced)
 						{
+							determinism.OnRestart();
 							clock.ResetDelta();
 							gameplay.RestartTicks(restoredTick.value_or(0));
 							interpolator.Clear();
@@ -616,5 +737,7 @@ namespace Raven
 			Log(LogLevel::Info, "Reload service: " + std::to_string(ReloadService::GetRecords().size()) +
 				" watched consumers on " + std::to_string(ReloadService::GetThreadCount()) + " threads");
 		}
+		if (determinism.IsActive())
+			determinism.Report();
 	}
 }

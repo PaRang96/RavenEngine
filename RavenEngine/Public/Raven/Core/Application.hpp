@@ -43,6 +43,11 @@ namespace Raven
 		// Frame-rate cap for drawable frames; 0 means none, because FIFO presentation already
 		// paces to the display. Mailbox and Immediate run uncapped unless this is set.
 		double MaxFrameRate = 0.0;
+		// The determinism check (docs/GameServicesDesign.md, FD-48): when nonzero, the host plays this
+		// many fixed ticks of a scripted input lane, one tick per frame, restarts the scene with the same
+		// seed, plays them again and compares a hash of the simulation after every tick. Run throws on
+		// a mismatch, naming the first diverging tick.
+		std::uint32_t DeterminismTicks = 0;
 	};
 
 	class Application
