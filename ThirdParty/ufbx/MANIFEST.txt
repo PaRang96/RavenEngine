@@ -1,0 +1,5 @@
+raven-vendor-manifest 1
+version 0.23.1
+5db259b50e3a49019073b6ad69f9514d60638e8a LICENSE
+f8b25bbdf81768e5f0736da0d7867454a79ecda6 ufbx.c
+3d572e0ae751846aa90f1179aa9fa390701bdc15 ufbx.h

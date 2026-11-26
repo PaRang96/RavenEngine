@@ -18,15 +18,18 @@ target_include_directories(RavenCore PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/Generated"
     "${CMAKE_CURRENT_BINARY_DIR}/Generated/$<CONFIG>"
 )
-target_include_directories(RavenCore SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/ThirdParty/stb")
 
 target_compile_features(RavenCore PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
-add_library(RavenFbx STATIC "${PROJECT_SOURCE_DIR}/ThirdParty/ufbx/ufbx.c")
-set_target_properties(RavenFbx PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(RavenFbx SYSTEM PUBLIC "${PROJECT_SOURCE_DIR}/ThirdParty/ufbx")
+# Only RAVEN_API symbols leave RavenCore (AA2-PLAT-04); Windows already behaves this way.
+set_target_properties(RavenCore PROPERTIES CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+include("${PROJECT_SOURCE_DIR}/cmake/RavenUfbx.cmake")
+raven_add_ufbx()
+include("${PROJECT_SOURCE_DIR}/cmake/RavenStb.cmake")
+raven_add_stb()
 include("${PROJECT_SOURCE_DIR}/cmake/RavenJolt.cmake")
 raven_add_jolt()
-target_link_libraries(RavenCore PRIVATE Vulkan::Vulkan RavenFbx Jolt)
+target_link_libraries(RavenCore PRIVATE Vulkan::Vulkan RavenFbx RavenStb Jolt)
 include("${PROJECT_SOURCE_DIR}/cmake/RavenAudio.cmake")
 raven_add_audio(RavenCore)
 include("${PROJECT_SOURCE_DIR}/cmake/RavenVorbis.cmake")

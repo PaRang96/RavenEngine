@@ -16,8 +16,10 @@ Upstream files:
 
 ## Engine integration
 
-This dependency is a private system include of RavenCore. `Private/Assets/Image.cpp` defines `STB_IMAGE_IMPLEMENTATION` exactly once, with `STBI_ONLY_PNG`, `STBI_ONLY_JPEG`, `STBI_NO_STDIO`, `STBI_NO_LINEAR`, and `STB_IMAGE_STATIC`. Raven reads bytes through its file utilities and decodes from memory, keeping native path handling outside the decoder. Public engine headers expose Raven types rather than stb types. See [the image-loading contract](../../docs/ImageLoading.md) for limits, ownership, and validation.
+This dependency is a private system include of RavenCore, through the `RavenStb` interface target of [`cmake/RavenStb.cmake`](../../cmake/RavenStb.cmake), which also checks the version pin against the header. `Private/Assets/Image.cpp` defines `STB_IMAGE_IMPLEMENTATION` exactly once, with `STBI_ONLY_PNG`, `STBI_ONLY_JPEG`, `STBI_NO_STDIO`, `STBI_NO_LINEAR`, and `STB_IMAGE_STATIC`. Raven reads bytes through its file utilities and decodes from memory, keeping native path handling outside the decoder. Public engine headers expose Raven types rather than stb types. See [the image-loading contract](../../docs/ImageLoading.md) for limits, ownership, and validation.
 
 The same decoder source is intended for Windows, macOS, and Linux. Platform builds need no separate decoder DLL or manual download once these files are included in the checkout. Windows Debug/Release integration is verified; other platform builds remain their contributors' work. CMake stages `LICENSE` as `Licenses/stb-LICENSE.txt` beside the application; include that directory in distributed packages.
 
-For an update, select a specific upstream commit, replace the two upstream files together, update the version/commit/hashes here, and validate the engine's image-loading behavior.
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`).
+
+For an update, select a specific upstream commit, download its two files into a new, empty folder outside the repository, and run `cmake -DSOURCE=<that folder> -P scripts/UpdateStb.cmake`. Then set `RAVEN_STB_IMAGE_VERSION` in `cmake/RavenStb.cmake`, update the version, commit and hashes here, and validate the engine's image-loading behavior.

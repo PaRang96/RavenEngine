@@ -12,7 +12,7 @@ The [LICENSE](LICENSE) offers public domain (Unlicense) or MIT-0. CMake stages i
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenAudio.cmake`](../../cmake/RavenAudio.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenAudio.cmake`](../../cmake/RavenAudio.cmake):
 
 - **Library:** a static `RavenMiniaudio`, built from `miniaudio.c` and linked privately into RavenCore. Game DLLs and public headers never see it.
 - **Compiled out:** the high-level engine, node graph, resource manager, encoders and generators. Raven owns the mixer ([UIAudioLibraries.md](../../docs/UIAudioLibraries.md#hiding-the-device-layer-owner-question-2026-11-25)). The WAV, FLAC and MP3 decoders stay in for clip loading (decision A6).

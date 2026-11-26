@@ -8,7 +8,7 @@ Unmodified files from **msdf-atlas-gen 1.4**: the `v1.4` tag archive of `https:/
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenMsdf.cmake`](../../cmake/RavenMsdf.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenMsdf.cmake`](../../cmake/RavenMsdf.cmake):
 
 - **Library:** a static `RavenMsdfAtlasGen` from its glyph geometry, glyph generators, padding, workload and rectangle packer.
 - **Left out:** its command-line tool, and image and Artery font export (`MSDF_ATLAS_NO_ARTERY_FONT`).
@@ -19,6 +19,6 @@ Nothing in this folder except this README is changed by hand, so an update is a 
 ## Updating to a new release
 
 1. Download and extract the new release into an empty folder.
-2. Run `cmake -DMSDFGEN=<extracted msdfgen> -DATLAS=<extracted msdf-atlas-gen> -P scripts/UpdateMsdf.cmake`.
+2. Run `cmake -DMSDFGEN=<extracted msdfgen> -DMSDFGEN_VERSION=<version> -DATLAS=<extracted msdf-atlas-gen> -DATLAS_VERSION=<version> -P scripts/UpdateMsdf.cmake`.
 3. Set the version in `cmake/RavenMsdf.cmake` and record the release, archive hash and date above.
 4. Build in Debug and Release, then check text drawing and the UI preview.

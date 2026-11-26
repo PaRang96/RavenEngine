@@ -72,6 +72,8 @@ function(raven_add_jolt)
         # Program-database debug information: Edit and Continue (/ZI) conflicts with the optimized Debug flags.
         MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>"
         POSITION_INDEPENDENT_CODE ON
+        # Linked into RavenCore without exporting anything (AA2-PLAT-04); no effect on Windows.
+        C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
         FOLDER ThirdParty)
     # Jolt's headers are third-party code to RavenCore: no project warnings from them.
     get_target_property(include_directories Jolt INTERFACE_INCLUDE_DIRECTORIES)

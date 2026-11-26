@@ -8,7 +8,7 @@ Unmodified files from **HarfBuzz 15.2.0**: `harfbuzz-15.2.0.tar.xz` (20,761,992 
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenHarfBuzz.cmake`](../../cmake/RavenHarfBuzz.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenHarfBuzz.cmake`](../../cmake/RavenHarfBuzz.cmake):
 
 - **Library:** a static `RavenHarfBuzz` from HarfBuzz's single-file build, `src/harfbuzz.cc`.
 - **Fonts** are read through HarfBuzz's own OpenType functions, so no FreeType integration is compiled. It stays thread-safe, for shaping on workers.

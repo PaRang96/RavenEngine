@@ -1,0 +1,51 @@
+# Checks that every vendored library under ThirdParty/ is the copy its update script made: each
+# folder's files match its MANIFEST.txt (scripts/VendorCopy.cmake), with no file changed, missing or
+# added. A check, not a test: CI runs it as one step.
+#
+#   cmake -P scripts/CheckVendored.cmake
+
+cmake_minimum_required(VERSION 3.24)
+include("${CMAKE_CURRENT_LIST_DIR}/VendorCopy.cmake")
+
+file(GLOB folders LIST_DIRECTORIES true RELATIVE "${RAVEN_VENDOR_REPOSITORY}/ThirdParty"
+    "${RAVEN_VENDOR_REPOSITORY}/ThirdParty/*")
+set(problems "")
+set(checked 0)
+foreach(folder IN LISTS folders)
+    if(NOT IS_DIRECTORY "${RAVEN_VENDOR_REPOSITORY}/ThirdParty/${folder}")
+        continue()
+    endif()
+    set(manifest "${RAVEN_VENDOR_REPOSITORY}/ThirdParty/${folder}/MANIFEST.txt")
+    if(NOT EXISTS "${manifest}")
+        list(APPEND problems "ThirdParty/${folder} has no MANIFEST.txt; vendor it with its update script")
+        continue()
+    endif()
+    file(STRINGS "${manifest}" expected REGEX "^[0-9a-f]+ ")
+    raven_vendor_hashes(${folder} actual)
+    if(NOT expected STREQUAL actual)
+        set(changed "")
+        foreach(line IN LISTS actual)
+            if(NOT line IN_LIST expected)
+                string(REGEX REPLACE "^[0-9a-f]+ " "" path "${line}")
+                list(APPEND changed "${path}")
+            endif()
+        endforeach()
+        foreach(line IN LISTS expected)
+            if(NOT line IN_LIST actual)
+                string(REGEX REPLACE "^[0-9a-f]+ " "" path "${line}")
+                if(NOT path IN_LIST changed)
+                    list(APPEND changed "${path} (missing)")
+                endif()
+            endif()
+        endforeach()
+        list(JOIN changed ", " changed)
+        list(APPEND problems "ThirdParty/${folder} differs from its manifest: ${changed}")
+    endif()
+    math(EXPR checked "${checked} + 1")
+endforeach()
+if(problems)
+    list(JOIN problems "\n  " text)
+    message(FATAL_ERROR "Vendored libraries must stay unmodified (AGENTS.md); update them only with their "
+        "scripts under scripts/:\n  ${text}")
+endif()
+message(STATUS "Vendored libraries: ${checked} folders match their manifests")

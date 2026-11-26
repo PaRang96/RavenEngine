@@ -5,6 +5,7 @@
 # lives in this file; only Private/Text/ and Private/UI/ include the library.
 include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/RavenThirdParty.cmake")
+include("${PROJECT_SOURCE_DIR}/scripts/VendorCopy.cmake")
 
 set(RAVEN_MSDFGEN_VERSION 1.13.1)
 set(RAVEN_MSDF_ATLAS_GEN_VERSION 1.4)
@@ -13,6 +14,12 @@ set(RAVEN_MSDF_ATLAS_GEN_ROOT "${PROJECT_SOURCE_DIR}/ThirdParty/msdf-atlas-gen")
 
 # Builds RavenMsdfgen and RavenMsdfAtlasGen.
 function(raven_add_msdf)
+    # Neither copy states its version, so the pins are checked against the versions their manifests
+    # recorded (scripts/UpdateMsdf.cmake).
+    raven_vendor_manifest_version(msdfgen msdfgen_version)
+    raven_check_version(msdfgen ${RAVEN_MSDFGEN_VERSION} "${msdfgen_version}")
+    raven_vendor_manifest_version(msdf-atlas-gen atlas_version)
+    raven_check_version(msdf-atlas-gen ${RAVEN_MSDF_ATLAS_GEN_VERSION} "${atlas_version}")
     # msdfgen: the core and its FreeType font import. Its PNG, SVG and Skia extras stay out, and its
     # generated config header is replaced by the same macros given here.
     set(msdfgen_definitions MSDFGEN_PUBLIC= MSDFGEN_EXT_PUBLIC= MSDFGEN_USE_CPP11

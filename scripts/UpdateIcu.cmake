@@ -99,5 +99,7 @@ file(COPY "${work}/icudt${major}l.dat" DESTINATION "${target}/data")
 file(REMOVE_RECURSE "${work}")
 
 message(STATUS "Copied ICU4C ${version} into ${target}, with ${count} data items")
+include("${CMAKE_CURRENT_LIST_DIR}/VendorCopy.cmake")
+raven_vendor_manifest(icu4c VERSION ${version})
 message(STATUS "Next: set RAVEN_ICU_VERSION to ${version} in cmake/RavenIcu.cmake, update the data file name in "
     "Private/Text if the major version changed, and record the release in ThirdParty/icu4c/README.md")

@@ -11,7 +11,7 @@ The [LICENSE](LICENSE) offers MIT or public domain (Unlicense). CMake stages it 
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenVorbis.cmake`](../../cmake/RavenVorbis.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenVorbis.cmake`](../../cmake/RavenVorbis.cmake):
 
 - **Library:** a static `RavenStbVorbis`, built from `stb_vorbis.c` as C and linked privately into RavenCore. Game DLLs and public headers never see it.
 - **Compiled out:** the `FILE*` functions (`STB_VORBIS_NO_STDIO`); Raven reads files itself.

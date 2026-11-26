@@ -8,7 +8,7 @@ Unmodified files from **Yoga 3.2.1**: the `v3.2.1` tag archive of `https://githu
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenYoga.cmake`](../../cmake/RavenYoga.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenYoga.cmake`](../../cmake/RavenYoga.cmake):
 
 - **Library:** a static `RavenYoga` from every source under `yoga/`, in C++20.
 - **Warnings:** Raven's warning level does not apply to third-party code, and sources compile as UTF-8.

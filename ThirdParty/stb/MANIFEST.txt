@@ -1,0 +1,4 @@
+raven-vendor-manifest 1
+version 2.30
+a77ae91f3ec0abb0028c9d9bd8d34d880b454d38 LICENSE
+9eedabedc45b3e6fd88fae6f14a160b4d53272ec stb_image.h

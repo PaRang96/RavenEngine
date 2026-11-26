@@ -8,7 +8,7 @@ Unmodified files from **FreeType 2.15.0**: `freetype-2.15.0.tar.xz` (2,716,928 b
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenFreeType.cmake`](../../cmake/RavenFreeType.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenFreeType.cmake`](../../cmake/RavenFreeType.cmake):
 
 - **Library:** a static `RavenFreeType` from FreeType's own source list, with its unmodified module list (`ftmodule.h`) and options (`ftoption.h`).
 - **No system libraries:** compressed fonts use FreeType's bundled zlib.

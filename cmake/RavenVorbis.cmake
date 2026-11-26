@@ -4,6 +4,7 @@
 # unmodified copy of an upstream file, replaced only by scripts/UpdateStbVorbis.cmake. Every Raven
 # setting lives in this file.
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/RavenThirdParty.cmake")
 
 set(RAVEN_STB_VORBIS_VERSION 1.25)
 set(RAVEN_STB_VORBIS_ROOT "${PROJECT_SOURCE_DIR}/ThirdParty/stb_vorbis")
@@ -20,13 +21,11 @@ function(raven_add_vorbis target)
 
     add_library(RavenStbVorbis STATIC "${RAVEN_STB_VORBIS_ROOT}/stb_vorbis.c")
     set_source_files_properties("${RAVEN_STB_VORBIS_ROOT}/stb_vorbis.c" PROPERTIES LANGUAGE C)
-    set_target_properties(RavenStbVorbis PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER ThirdParty)
+    raven_third_party(RavenStbVorbis)
     target_include_directories(RavenStbVorbis SYSTEM PUBLIC "${RAVEN_STB_VORBIS_ROOT}")
     # PUBLIC: the declarations RavenCore sees must match the compiled implementation. Raven reads files
     # itself, so the FILE* functions are compiled out.
     target_compile_definitions(RavenStbVorbis PUBLIC STB_VORBIS_NO_STDIO)
-    # Raven's warning level does not apply to third-party code.
-    target_compile_options(RavenStbVorbis PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
     if(UNIX)
         target_link_libraries(RavenStbVorbis PRIVATE m)
     endif()

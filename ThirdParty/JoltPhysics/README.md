@@ -12,11 +12,11 @@ Only the parts Raven builds from, byte-identical to the release:
 | `Build/CMakeLists.txt` | Jolt's build file, which turns its options into compiler flags and includes `Jolt.cmake`. |
 | `LICENSE` | The upstream license. |
 
-The samples, tests, viewer, assets and documentation are left out. This README is the only Raven file in the folder.
+The samples, tests, viewer, assets and documentation are left out. This README and `MANIFEST.txt` are the only Raven files in the folder.
 
 ## Rule: never edit these files
 
-Nothing under this folder except this README is changed by hand, so an update is a clean replacement and its diff shows only upstream changes. Every Raven setting lives outside it, in [`cmake/RavenJolt.cmake`](../../cmake/RavenJolt.cmake):
+Nothing under this folder except this README is changed by hand, so an update is a clean replacement and its diff shows only upstream changes. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives outside it, in [`cmake/RavenJolt.cmake`](../../cmake/RavenJolt.cmake):
 
 - **Library type:** static, linked privately into RavenCore. Game DLLs never include or link Jolt; its headers are system includes of RavenCore.
 - **Build settings:**
@@ -39,7 +39,7 @@ Two facts follow from Jolt's build file under Ninja:
 ## Updating to a new release
 
 1. Download the release archive from the Jolt releases page into a new, empty folder outside the repository and extract it. Note the archive's SHA-256 and the tag commit; `unzip -z` prints the commit for GitHub archives.
-2. Replace the copy: `cmake -DSOURCE=<extracted JoltPhysics-x.y.z folder> -P scripts/UpdateJolt.cmake`. It removes everything here except this README and copies the three parts above.
+2. Replace the copy: `cmake -DSOURCE=<extracted JoltPhysics-x.y.z folder> -P scripts/UpdateJolt.cmake`. It removes everything here except this README, copies the three parts above and writes `MANIFEST.txt`.
 3. Set `RAVEN_JOLT_VERSION` in `cmake/RavenJolt.cmake` to the new version. Configure fails while the copy and the pin disagree.
 4. Read the release notes for option or API changes. Adjust `cmake/RavenJolt.cmake` for renamed options, and `Private/Physics/` for API changes; nothing outside those two places includes Jolt.
 5. Update the version, commit, date and hash in this README.

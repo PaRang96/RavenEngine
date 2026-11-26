@@ -1,0 +1,5 @@
+raven-vendor-manifest 1
+version 0.11.26
+2f9423addfe68aa01449ba885d56d832f04b5e8e LICENSE
+afcddad04c8d20a79cecdd130264dc4934596c2f miniaudio.c
+b8f61372d97c88b54b97227a5d1d60902726b8e4 miniaudio.h

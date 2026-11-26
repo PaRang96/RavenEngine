@@ -15,7 +15,7 @@ Files from **ICU4C 79.1**: `icu4c-79.1-sources.tgz` (28,162,455 bytes) from `htt
 
 ## Rule: never edit these files
 
-Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Every Raven setting lives in [`cmake/RavenIcu.cmake`](../../cmake/RavenIcu.cmake):
+Nothing in this folder except this README is changed by hand, so an update is a clean replacement. Its `MANIFEST.txt`, written only by the update script, records every file, and CI checks the copy against it (`scripts/CheckVendored.cmake`). Every Raven setting lives in [`cmake/RavenIcu.cmake`](../../cmake/RavenIcu.cmake):
 
 - **Library:** a static `RavenIcu` from `source/common/` and the stub data entry point. ICU's `i18n` library (plural rules, number formatting) joins when string tables arrive (decision U5).
 - **Compiled out (`UCONFIG_NO_*`):** file access, converters, services, IDNA, collation, formatting, transliteration and regular expressions. Raven loads the data file itself and hands it to ICU with `udata_setCommonData`.

@@ -9,6 +9,7 @@
 # ThirdParty/miniaudio is an unmodified copy of an upstream release, replaced only by
 # scripts/UpdateMiniaudio.cmake. Every Raven setting lives in this file.
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/RavenThirdParty.cmake")
 
 set(RAVEN_MINIAUDIO_VERSION 0.11.26)
 set(RAVEN_MINIAUDIO_ROOT "${PROJECT_SOURCE_DIR}/ThirdParty/miniaudio")
@@ -36,7 +37,7 @@ function(raven_add_audio target)
     endif()
 
     add_library(RavenMiniaudio STATIC "${RAVEN_MINIAUDIO_ROOT}/miniaudio.c")
-    set_target_properties(RavenMiniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER ThirdParty)
+    raven_third_party(RavenMiniaudio)
     target_include_directories(RavenMiniaudio SYSTEM PUBLIC "${RAVEN_MINIAUDIO_ROOT}")
     # PUBLIC: the declarations RavenCore sees must match the compiled implementation.
     target_compile_definitions(RavenMiniaudio PUBLIC
