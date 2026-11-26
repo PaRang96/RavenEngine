@@ -39,4 +39,11 @@ namespace Raven::Platform
 		if (library)
 			FreeLibrary(static_cast<HMODULE>(library));
 	}
+
+	bool ImageContains(void* library, const void* address) noexcept
+	{
+		HMODULE module = nullptr;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			static_cast<LPCWSTR>(address), &module) && module == static_cast<HMODULE>(library);
+	}
 }

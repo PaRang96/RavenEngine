@@ -53,6 +53,15 @@ Games/<Name>/
   - a field that changes type is refused, and the last good module stays.
 - **Engine public headers:** an edit still needs a host rebuild and restart, and the running host says so.
 
+**Module contract** (review amendment, AA2-HR-02; a cross-platform rule, though only Windows loads modules today). A game module may be loaded, replaced and unloaded many times in one process, so:
+- **Two exports only:** `RavenGetGameContract` and `RavenRegisterSystems`. Nothing else in the host looks a symbol up.
+- **No `thread_local`:** on macOS a thread-local variable keeps a dylib from unloading.
+- **No statics with non-trivial destructors:** they would run at unload, against state the host owns.
+- **No state carried across generations:** everything that must survive a reload is a component value in the host's registry.
+- **The module's own `ComponentInfo`:** each `systems.Component<T>()` passes the module's `ComponentTraits<T>::Info`, and activation rejects one that lies outside the module being loaded (`Platform::ImageContains`). On ELF, GCC's unique symbols would bind a new module's inline statics to the first generation's copy, so the host would read old layouts as new; hidden visibility for game modules (Phase 3) and `-fno-gnu-unique` with the M4 loader prevent that, and the check catches it if they are missing.
+
+Games/Samples and Games/Arena follow all of this today: neither uses `thread_local`, and their only static is Arena's trivially destructible "logged once" flag in `FindCraft`, which simply starts again with each generation.
+
 ## CMake layout
 
 | File | Responsibility |

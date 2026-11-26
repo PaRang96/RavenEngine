@@ -308,8 +308,21 @@ namespace Raven
 		m_Previews.push_back(preview);
 	}
 
+	namespace
+	{
+		// The image whose RavenRegisterSystems is running, so its component declarations can be
+		// checked against it; null outside an activation (tests build tables directly).
+		thread_local void* RegisteringImage = nullptr;
+	}
+
 	void SystemTable::AddComponent(const ECS::ComponentInfo& info, std::span<const std::byte> defaults)
 	{
+		// The module's ComponentTraits<T>::Info must be its own. Where a loader binds inline statics
+		// across images (GCC's unique symbols on ELF), it could be an earlier generation's, and the
+		// host would then read old layouts as the new ones (AA2-HR-02).
+		if (RegisteringImage && !Platform::ImageContains(RegisteringImage, &info))
+			throw std::logic_error("Component " + std::string(info.Name) + " declares a ComponentInfo from another "
+				"loaded image; build the game with hidden visibility (docs/EngineModules.md, module contract)");
 		m_Components.push_back(ECS::MakeComponentSchema(info, defaults));
 	}
 
@@ -450,6 +463,11 @@ namespace Raven
 			// `candidate` unloads it, and the exception's what() and destructor live in its image.
 			try
 			{
+				struct Registering
+				{
+					explicit Registering(void* image) noexcept { RegisteringImage = image; }
+					~Registering() { RegisteringImage = nullptr; }
+				} registering(candidate->Library);
 				registerSystems(table);
 			}
 			catch (const std::exception& error)
