@@ -3,6 +3,7 @@
 
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
+#include "Raven/Scene/SceneFile.hpp"
 #include "Support/Check.hpp"
 
 #include <algorithm>
@@ -40,6 +41,46 @@ namespace RavenTests
 			RAVEN_COMPONENT_ALIASES("RavenTests::Health", "Value=Points");
 		};
 	}
+
+	// One ordinary rename from either declaration order of the old fields (FD-16).
+	struct ScoreFirst : Raven::ECS::Component
+	{
+		float Value = 0.0f;
+		float Other = 0.0f;
+		RAVEN_COMPONENT(RavenTests::ScoreFirst, Value, Other);
+	};
+
+	struct ScoreLast : Raven::ECS::Component
+	{
+		float Other = 0.0f;
+		float Value = 0.0f;
+		RAVEN_COMPONENT(RavenTests::ScoreLast, Other, Value);
+	};
+
+	struct Score : Raven::ECS::Component
+	{
+		float Points = 0.0f;
+		float Other = 0.0f;
+		RAVEN_COMPONENT(RavenTests::Score, Points, Other);
+		RAVEN_COMPONENT_ALIASES("RavenTests::ScoreFirst", "RavenTests::ScoreLast", "Value=Points");
+	};
+
+	// Alias tables that could be read two ways, rejected at registration.
+	struct Chain : Raven::ECS::Component
+	{
+		float Health = 0.0f;
+		float MaxHealth = 0.0f;
+		RAVEN_COMPONENT(RavenTests::Chain, Health, MaxHealth);
+		RAVEN_COMPONENT_ALIASES("Current=Health", "Health=MaxHealth");
+	};
+
+	struct Claimed : Raven::ECS::Component
+	{
+		float First = 0.0f;
+		float Second = 0.0f;
+		RAVEN_COMPONENT(RavenTests::Claimed, First, Second);
+		RAVEN_COMPONENT_ALIASES("Old=First", "Old=Second");
+	};
 }
 
 namespace
@@ -149,6 +190,49 @@ namespace
 		RAVEN_CHECK(!registry.Has<Health>(first));
 		// The migrated layout is now the registered one.
 		RAVEN_CHECK(registry.CheckMigration(std::span(&next, 1)).empty() && registry.Migrate(std::span(&next, 1)).empty());
+	}
+
+	template<typename T>
+	Raven::ECS::ComponentSchema SchemaOf()
+	{
+		std::array<std::byte, sizeof(T)> defaults;
+		RAVEN_CHECK(Raven::ECS::Detail::CaptureDefaults<T>(defaults.data()));
+		return Raven::ECS::MakeComponentSchema(Raven::ECS::ComponentTraits<T>::Info, defaults);
+	}
+
+	// Live migration and record loading follow one rule, whatever the old declaration order, and
+	// ambiguous alias tables never register (CQ-DATA-02).
+	template<typename Old>
+	void RenameFrom()
+	{
+		Old old;
+		old.Value = 3.0f;
+		old.Other = 4.0f;
+		const auto next = SchemaOf<RavenTests::Score>();
+		Registry registry;
+		const auto entity = registry.Create();
+		RAVEN_CHECK(registry.Add(entity, old));
+		RAVEN_CHECK(registry.Migrate(std::span(&next, 1)).size() == 1);
+		RavenTests::Score migrated;
+		RAVEN_CHECK(registry.Read(entity, migrated) && migrated.Points == 3.0f && migrated.Other == 4.0f);
+
+		const auto record = Raven::CaptureRecord(SchemaOf<Old>(), &old, 1);
+		RavenTests::Score loaded;
+		RAVEN_CHECK(Raven::ApplyRecord(record, next, 1, &loaded) && loaded.Points == 3.0f && loaded.Other == 4.0f);
+	}
+
+	void AmbiguousAliases()
+	{
+		RenameFrom<RavenTests::ScoreFirst>();
+		RenameFrom<RavenTests::ScoreLast>();
+		RAVEN_CHECK_THROWS(SchemaOf<RavenTests::Chain>());
+		RAVEN_CHECK_THROWS(SchemaOf<RavenTests::Claimed>());
+		// One new type cannot take over two registered types.
+		Registry registry;
+		RAVEN_CHECK(registry.Add(registry.Create(), RavenTests::ScoreFirst{}));
+		RAVEN_CHECK(registry.Add(registry.Create(), RavenTests::ScoreLast{}));
+		const auto next = SchemaOf<RavenTests::Score>();
+		RAVEN_CHECK(!registry.CheckMigration(std::span(&next, 1)).empty());
 	}
 
 	bool Contains(const std::vector<Entity>& entities, Entity entity)
@@ -479,5 +563,6 @@ int main()
 		LifecycleJournal();
 		FieldTables();
 		Migration();
+		AmbiguousAliases();
 	});
 }

@@ -6,6 +6,7 @@
 #include "Raven/Core/Log.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
+#include "ECS/FieldMatching.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -792,27 +793,44 @@ namespace Raven
 	namespace
 	{
 		// Each registered field takes the stored field of the same name or an old name, with the same
-		// type; any other field keeps its default (FD-16). Returns the stored index per field, or -1.
+		// type (FieldMatching.hpp); any other field keeps its default (FD-16). Returns the stored
+		// index per field, or -1.
 		template<typename Report>
 		std::vector<std::ptrdiff_t> MatchFields(const SceneFile::Component& component, const ECS::ComponentSchema& schema,
 			const Report& report)
 		{
-			std::vector<std::ptrdiff_t> source(schema.Fields.size(), -1);
-			for (std::size_t index = 0; index < component.Fields.size(); ++index)
+			auto source = ECS::MatchSources(std::span<const SceneFile::Field>(component.Fields), schema,
+				[](const SceneFile::Field& field) -> const std::string& { return field.Name; });
+			std::vector<bool> used(component.Fields.size(), false);
+			std::vector<std::string> missing;
+			for (std::size_t index = 0; index < source.size(); ++index)
 			{
-				const auto& stored = component.Fields[index];
-				const auto* field = schema.FindField(stored.Name);
-				if (!field)
+				const auto& field = schema.Fields[index];
+				if (source[index] < 0)
 				{
-					report(component.Type + "::" + stored.Name + " is no longer a field; its value is not loaded");
+					missing.push_back(field.Name);
 					continue;
 				}
-				if (stored.Kind == field->Kind && stored.Flags == field->Flags && stored.Extent == field->Extent &&
-					stored.Tag == field->Tag && stored.Size == field->Size)
-					source[static_cast<std::size_t>(field - schema.Fields.data())] = static_cast<std::ptrdiff_t>(index);
-				else
-					report(component.Type + "::" + field->Name + " changed type; it takes its default value");
+				const auto stored = static_cast<std::size_t>(source[index]);
+				used[stored] = true;
+				if (!ECS::SameFieldType(component.Fields[stored], field))
+				{
+					report(component.Type + "::" + field.Name + " changed type; it takes its default value");
+					source[index] = -1;
+				}
 			}
+			bool dropped = false;
+			for (std::size_t index = 0; index < component.Fields.size(); ++index)
+				if (!used[index])
+				{
+					report(component.Type + "::" + component.Fields[index].Name + " is no longer a field; its value is not loaded");
+					dropped = true;
+				}
+			// A new field taking its default is the normal path; beside a dropped stored field it is
+			// probably a rename without an alias, so both are named.
+			if (dropped)
+				for (const auto& name : missing)
+					report(component.Type + "::" + name + " is not in the stored data; it takes its default value");
 			return source;
 		}
 	}

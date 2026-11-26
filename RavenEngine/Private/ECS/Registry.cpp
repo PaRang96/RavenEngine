@@ -1,6 +1,7 @@
 #include "Raven/ECS/Registry.hpp"
 
 #include "Raven/Core/Log.hpp"
+#include "ECS/FieldMatching.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -476,12 +477,34 @@ namespace Raven::ECS
 			}
 			const auto old = alias.substr(0, separator);
 			const auto current = alias.substr(separator + 1);
-			const auto field = std::find_if(schema.Fields.begin(), schema.Fields.end(),
-				[&](const FieldSchema& candidate) { return candidate.Name == current; });
+			const auto named = [&](std::string_view name)
+			{
+				return std::find_if(schema.Fields.begin(), schema.Fields.end(),
+					[&](const FieldSchema& candidate) { return candidate.Name == name; });
+			};
+			const auto field = named(current);
 			if (old.empty() || field == schema.Fields.end())
 				throw std::logic_error("Component alias '" + std::string(alias) + "' names no field of " +
 					std::string(info.Name));
+			// A chain, swap or self-alias (an old name that is still a current name), or one old name
+			// claimed by two fields, could be read two ways, depending on whether stored data has the
+			// old layout or the new one (FD-16).
+			if (named(old) != schema.Fields.end())
+				throw std::logic_error("Component alias '" + std::string(alias) + "' of " + std::string(info.Name) +
+					" uses a current field name as an old name; do such renames in two steps: rename, reload, "
+					"then rename again");
+			for (const auto& other : schema.Fields)
+				if (std::find(other.OldNames.begin(), other.OldNames.end(), old) != other.OldNames.end())
+					throw std::logic_error("Component " + std::string(info.Name) + " gives the old name '" +
+						std::string(old) + "' to two fields");
 			field->OldNames.emplace_back(old);
+		}
+		for (std::size_t index = 0; index < schema.OldNames.size(); ++index)
+		{
+			const auto earlier = schema.OldNames.begin() + static_cast<std::ptrdiff_t>(index);
+			if (schema.OldNames[index] == schema.Name ||
+				std::find(schema.OldNames.begin(), earlier, schema.OldNames[index]) != earlier)
+				throw std::logic_error("Component " + schema.Name + " repeats an old type name or names itself");
 		}
 		return schema;
 	}
@@ -519,8 +542,7 @@ namespace Raven::ECS
 
 	bool IsSameFieldType(const FieldSchema& left, const FieldSchema& right) noexcept
 	{
-		return left.Kind == right.Kind && left.Flags == right.Flags && left.Extent == right.Extent &&
-			left.Tag == right.Tag && left.Size == right.Size;
+		return SameFieldType(left, right);
 	}
 
 	namespace
@@ -538,19 +560,15 @@ namespace Raven::ECS
 			return nullptr;
 		}
 
-		// For each new field, the old field it takes its value from.
+		// For each new field, the old field it takes its value from (FieldMatching.hpp).
 		std::vector<const FieldSchema*> MapFields(const ComponentSchema& from, const ComponentSchema& to)
 		{
+			const auto matched = MatchSources(std::span<const FieldSchema>(from.Fields), to,
+				[](const FieldSchema& field) -> const std::string& { return field.Name; });
 			std::vector<const FieldSchema*> sources;
-			for (const auto& field : to.Fields)
-			{
-				const FieldSchema* source = nullptr;
-				for (const auto& old : from.Fields)
-					if (old.Name == field.Name ||
-						std::find(field.OldNames.begin(), field.OldNames.end(), old.Name) != field.OldNames.end())
-						source = &old;
-				sources.push_back(source);
-			}
+			sources.reserve(matched.size());
+			for (const auto index : matched)
+				sources.push_back(index < 0 ? nullptr : &from.Fields[static_cast<std::size_t>(index)]);
 			return sources;
 		}
 	}
@@ -558,6 +576,23 @@ namespace Raven::ECS
 	std::string Registry::CheckMigration(std::span<const ComponentSchema> schemas) const
 	{
 		const auto& registered = m_Impl->Schemas;
+		// An old type name must lead to one type, in both directions (FD-16).
+		for (std::size_t index = 0; index < schemas.size(); ++index)
+		{
+			const auto& next = schemas[index];
+			for (std::size_t other = index + 1; other < schemas.size(); ++other)
+				for (const auto& old : next.OldNames)
+					if (std::find(schemas[other].OldNames.begin(), schemas[other].OldNames.end(), old) !=
+						schemas[other].OldNames.end())
+						return "Components " + next.Name + " and " + schemas[other].Name +
+							" both claim the old type name " + old;
+			std::size_t predecessors = 0;
+			for (const auto& [id, schema] : registered)
+				if (id != next.Id && std::find(next.OldNames.begin(), next.OldNames.end(), schema.Name) != next.OldNames.end())
+					++predecessors;
+			if (predecessors > 1)
+				return "Component " + next.Name + " names several registered types as old names; rename one type at a time";
+		}
 		for (const auto& next : schemas)
 		{
 			const auto* current = FindPredecessor(registered, next);

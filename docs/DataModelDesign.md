@@ -384,6 +384,10 @@ This happens when a game DLL fails to load, or a component was removed from the 
 - The file loader and live migration both match the current names first, then the aliases.
 - `RavenSceneTool upgrade` rewrites scenes with the current names and reports which aliases are still used. An alias can then be deleted safely.
 - M6-7 uses this mechanism for the namespace move. That is its first real use, so it is checked before any game depends on it.
+- *Review amendment (2026-11-26, CQ-DATA-02):*
+  - **One matcher.** Live migration, scene loading and user-data records share one function (`Private/ECS/FieldMatching.hpp`): each current field takes the stored field of its own name first, then one of its old names, with an identical type. Before, migration let the last matching old field win and loading the last matching stored field, so a rename chain could give different values on the two paths, depending on declaration order.
+  - **Ambiguous alias tables are rejected at registration**, because no name rule can tell whether stored data has the old layout or the new one: an old field name that is still a current field name (a chain, a swap or a self-alias), one old field name claimed by two fields, a type that names itself or repeats an old type name, two types claiming one old type name, and one type naming several registered types. Do such renames in two steps: rename, reload, then rename again.
+  - **Loading names what it drops:** a stored field that no current field takes is logged; when one is, the current fields left at their defaults are named beside it, since that is usually a rename without an alias.
 
 ---
 
