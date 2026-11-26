@@ -151,6 +151,7 @@ Order (owner, 2026-11-25): the owner's review of C1–C6 and a commit, then C9 w
 
 Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26). Step order B1–B8 there; it starts after the owner's decisions.
 
+- [ ] Owner review of [ArchitectureAssessment-2026-11-26.md](docs/ArchitectureAssessment-2026-11-26.md) before step B2: the review amendments for M6A and M6C (its section 7.1, Phase 1), the B0 contracts for this note, and owner questions Q1–Q13 one at a time, starting with Q12.
 - [ ] Owner decisions, one at a time: FD-18 material model, FD-19 custom material shaders, FD-23 multi-object FBX, FD-26 lighting in v1, and the 2D run. FD-20 to FD-22, FD-24, FD-25, FD-27 and FD-28 are delegated and recorded in the note.
 - [ ] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4).
 
