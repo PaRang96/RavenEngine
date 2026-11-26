@@ -38,8 +38,16 @@ function(raven_add_game name)
         target_compile_options(${name} PRIVATE $<$<CONFIG:Debug,RelWithDebInfo>:/Zi> $<$<CONFIG:Debug,RelWithDebInfo>:/FS>)
     endif()
     # <format> dominates a one-file game edit; this PCH cut its compile from 1.75 to 1.0 s
-    # (docs/HotReloadDesign.md, H5). Engine headers stay out: adding them measured no gain.
-    raven_enable_precompiled_headers(${name} <cmath> <exception> <format> <numbers>)
+    # (docs/HotReloadDesign.md, H5). Since M6C the game-facing engine headers (systems, input
+    # mapping, UI, sound, physics) cost a one-file edit more than <format> did, so they are
+    # precompiled too; they change only with a host rebuild (docs/GameServicesDesign.md, C10).
+    file(GLOB game_component_headers RELATIVE "${RAVEN_ROOT}/RavenEngine/Public"
+        "${RAVEN_ROOT}/RavenEngine/Public/Raven/Components/*.hpp")
+    list(TRANSFORM game_component_headers PREPEND "<")
+    list(TRANSFORM game_component_headers APPEND ">")
+    raven_enable_precompiled_headers(${name} <cmath> <exception> <format> <numbers>
+        <Raven/Core/GameSystems.hpp> <Raven/Core/Log.hpp> <Raven/Scene/SceneCommands.hpp>
+        ${game_component_headers})
     set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${RAVEN_GAME_OUTPUT}")
 
     # Linker PDB files are not removed by Ninja's ordinary clean rule.

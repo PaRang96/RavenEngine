@@ -4,6 +4,7 @@
 // Each screen is drawn from a plain model, so the game systems and the UI preview entries (F6) draw
 // the same code: systems fill the model from the world, previews from sample data.
 
+#include "Raven/Core/GameSystems.hpp"
 #include "Raven/ECS/Component.hpp"
 #include "Raven/UI/Ui.hpp"
 
@@ -58,4 +59,8 @@ namespace Arena
 	void DrawHud(Raven::UI::Ui& ui, const HudModel& model);
 	MenuResult DrawPauseMenu(Raven::UI::Ui& ui, bool focus);
 	MenuResult DrawBindings(Raven::UI::Ui& ui, const std::vector<BindingRow>& rows, std::int32_t listening, bool focus);
+
+	// The UI preview entries (F6): each screen alone with sample data, and every script the fonts cover
+	// (docs/UIDesign.md, layer 1).
+	void RegisterPreviews(Raven::SystemTable& systems);
 }
