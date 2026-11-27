@@ -6,16 +6,15 @@
 
 #include <array>
 #include <cstdint>
-#include <map>
 #include <vector>
 
 namespace Raven
 {
 	class VulkanTexture;
 
-	// One immutable set per texture for the textured and sprite path, plus one element of a
-	// bindless array that lit shaders index (docs/GpuDrivenDesign.md, G4). Pools grow in pages and
-	// survive swapchain recreation.
+	// One element per texture of the bindless array that lit, sprite and overlay shaders index
+	// (docs/GpuDrivenDesign.md, G4), and the fixed sampler set beside it (FD-21). Per-texture sets went
+	// with the CPU sprite path (docs/RenderingContentDesign.md, B5).
 	class VulkanTextureDescriptors
 	{
 	public:
@@ -28,47 +27,31 @@ namespace Raven
 		explicit VulkanTextureDescriptors(const VulkanDevice& device);
 		~VulkanTextureDescriptors();
 
-		VkDescriptorSetLayout GetLayout() const { return m_Layout; }
-		// Set 0 of the lit pipeline: the bindless array and the shared sampler.
+		// Set 0 of the lit pipeline: the bindless array and the sampler set.
 		VkDescriptorSetLayout GetBindlessLayout() const { return m_BindlessLayout; }
 		VkDescriptorSet GetBindlessSet() const { return m_BindlessSet; }
-		// Also assigns the texture its bindless element from its class. A full content class gives
-		// the texture the white element, logged once per fill, instead of failing the load.
-		VkDescriptorSet CreateBinding(VulkanTexture& texture, TextureUse use = TextureUse::Content);
+		// Assigns the texture its bindless element from its class. A full content class gives the
+		// texture the white element, logged once per fill, instead of failing the load.
+		void CreateBinding(VulkanTexture& texture, TextureUse use = TextureUse::Content);
 		// Elements in use per class, for the resource stats.
 		std::uint32_t GetEngineElements() const noexcept { return m_Classes[0].Used; }
 		std::uint32_t GetContentElements() const noexcept { return m_Classes[1].Used; }
 		// The texture's frames have completed (R3), so its element can be reused.
 		void ReleaseBinding(const VulkanTexture& texture) noexcept;
-		std::size_t GetBindingCount() const noexcept { return m_Bindings.size(); }
-		std::size_t GetPoolCount() const noexcept { return m_Pages.size(); }
-		// Points target's set and element at contents' image. The caller completes earlier GPU use first.
+		// Points target's element at contents' image. The caller completes earlier GPU use first.
 		void WriteBinding(const VulkanTexture& target, const VulkanTexture& contents) const noexcept;
 
 		VulkanTextureDescriptors(const VulkanTextureDescriptors&) = delete;
 		VulkanTextureDescriptors& operator=(const VulkanTextureDescriptors&) = delete;
 
 	private:
-		struct Page
-		{
-			VkDescriptorPool Pool = VK_NULL_HANDLE;
-			std::uint32_t Used = 0;
-		};
-
-		void AddPage();
-		void WriteSet(VkDescriptorSet set, const VulkanTexture& contents) const noexcept;
 		void WriteElement(std::uint32_t element, const VulkanTexture& contents) const noexcept;
 		void Destroy() noexcept;
 
-		static constexpr std::uint32_t SetsPerPage = 64;
 		VkDevice m_Device = VK_NULL_HANDLE;
-		VkDescriptorSetLayout m_Layout = VK_NULL_HANDLE;
-		std::vector<Page> m_Pages;
-		std::map<VkDescriptorSet, std::size_t> m_Bindings;
 		VkDescriptorSetLayout m_BindlessLayout = VK_NULL_HANDLE;
 		VkDescriptorPool m_BindlessPool = VK_NULL_HANDLE;
 		VkDescriptorSet m_BindlessSet = VK_NULL_HANDLE;
-		// Every texture's sampler is linear and clamped, so one shared sampler matches them.
 		// Clamp and repeat (FD-21), at bindless binding 1.
 		static constexpr std::size_t SamplerCount = 2;
 		std::array<VkSampler, SamplerCount> m_Samplers{};

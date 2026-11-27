@@ -53,8 +53,9 @@ raven_add_shader("Color.frag.hlsl" ps_6_0 PSMain)
 raven_add_shader("Unlit.frag.hlsl" ps_6_0 PSMain)
 raven_add_shader("Normals.frag.hlsl" ps_6_0 PSMain)
 raven_add_shader("Wireframe.frag.hlsl" ps_6_0 PSMain)
-raven_add_shader("Texture.vert.hlsl" vs_6_0 VSMain)
-raven_add_shader("Texture.frag.hlsl" ps_6_0 PSMain)
+# Sprites on the GPU path (docs/RenderingContentDesign.md, B0 contract 4).
+raven_add_shader("Sprite.vert.hlsl" vs_6_0 VSMain)
+raven_add_shader("Sprite.frag.hlsl" ps_6_0 PSMain)
 # GPU-driven scene passes (docs/GpuDrivenDesign.md, G2/G5).
 raven_add_shader("Scatter.comp.hlsl" cs_6_0 CSMain)
 raven_add_shader("Cull.comp.hlsl" cs_6_0 CSMain)

@@ -736,7 +736,9 @@ namespace Raven
 							const auto* shader = lease.GetMaterialShader();
 							return shader ? renderer.UseMaterialShader(lease.GetId(), shader->Words, lease.GetRevision(),
 								shader->VertexWords) : 0u;
-						});
+						}, renderer.GetSpriteMesh());
+						if (metrics)
+							metrics->Sprites = static_cast<std::uint32_t>(renderWorld.GetSpriteCount());
 					});
 				}
 				boundary.Run(StageBoundary::Render, [&]

@@ -17,10 +17,10 @@ namespace Raven
 	class AssetLease;
 	class Scene;
 
-	// Host-owned mirror of one scene's lit meshes for GPU-driven rendering
-	// (docs/GpuDrivenDesign.md, G1). Sync follows change ticks and the Registry's lifecycle
-	// journal, so its cost grows with changed objects, not scene size. It stores values and
-	// handles only, so it survives game-module replacement together with the Registry.
+	// Host-owned mirror of one scene's lit meshes and sprites for GPU-driven rendering
+	// (docs/GpuDrivenDesign.md, G1; docs/RenderingContentDesign.md, B0 contract 4). Sync follows change
+	// ticks and the Registry's lifecycle journal, so its cost grows with changed objects, not scene size.
+	// It stores values and handles only, so it survives game-module replacement together with the Registry.
 	class RenderWorld
 	{
 	public:
@@ -41,12 +41,15 @@ namespace Raven
 
 		// After Scene::UpdateWorldTransforms, on the rendering thread, outside view iteration.
 		// A different scene, or a journal resync, rebuilds the world once. If it throws, the
-		// world is cleared and the next Sync rebuilds.
+		// world is cleared and the next Sync rebuilds. Sprites draw on spriteMesh, the drawing context's
+		// quad (VulkanContext::GetSpriteMesh); a different one rebuilds, and a null one draws none.
 		RAVEN_API void Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-			const ShaderResolver& resolveShader = {});
+			const ShaderResolver& resolveShader = {}, MeshHandle spriteMesh = {});
 		// Drops every object and forgets the scene; the next Sync rebuilds.
 		RAVEN_API void Clear() noexcept;
 		RAVEN_API std::size_t GetObjectCount() const noexcept;
+		// Sprites in the world, drawable or not.
+		RAVEN_API std::size_t GetSpriteCount() const noexcept;
 
 		RenderWorld(const RenderWorld&) = delete;
 		RenderWorld& operator=(const RenderWorld&) = delete;
@@ -57,7 +60,7 @@ namespace Raven
 
 	private:
 		void SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-			const ShaderResolver& resolveShader);
+			const ShaderResolver& resolveShader, MeshHandle spriteMesh);
 
 		std::unique_ptr<State> m_State;
 	};

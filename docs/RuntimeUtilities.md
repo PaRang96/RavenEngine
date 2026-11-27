@@ -11,8 +11,8 @@ Content/
   Shaders/
     Color.vert.spv
     Color.frag.spv
-    Texture.vert.spv
-    Texture.frag.spv
+    Sprite.vert.spv
+    Sprite.frag.spv
   Textures/
     UVGrid.png
     UVGridAlternate.png

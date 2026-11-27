@@ -1,7 +1,4 @@
 #include "Renderer/Vulkan/VulkanClearPass.hpp"
-#include "Renderer/Vulkan/VulkanTexturedMesh.hpp"
-#include "Renderer/Vulkan/VulkanTexture.hpp"
-#include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Core/FrameTrace.hpp"
 
 #include <limits>
@@ -25,25 +22,6 @@ namespace Raven
 			if (result != VK_SUCCESS)
 				handle = VK_NULL_HANDLE;
 			CheckClearResult(result, operation);
-		}
-
-		void RecordTexturedBatches(VkCommandBuffer commands, VkBuffer instanceBuffer, VkDeviceSize instanceOffset,
-			const VulkanTexturePipeline& pipeline, std::span<const TexturedBatch> batches)
-		{
-			for (const auto& batch : batches)
-			{
-				pipeline.Bind(commands, batch.Texture->GetDescriptorSet());
-				const std::array<VkBuffer, 2> buffers
-				{
-					batch.Mesh->GetVertices().Get(), instanceBuffer
-				};
-				const std::array<VkDeviceSize, 2> offsets{ 0, instanceOffset };
-				vkCmdBindVertexBuffers(commands, 0, static_cast<std::uint32_t>(buffers.size()),
-					buffers.data(), offsets.data());
-				vkCmdBindIndexBuffer(commands, batch.Mesh->GetIndices().Get(), 0, VK_INDEX_TYPE_UINT16);
-				vkCmdDrawIndexed(commands, batch.Mesh->GetIndexCount(), batch.InstanceCount,
-					0, 0, batch.FirstInstance);
-			}
 		}
 	}
 
@@ -79,6 +57,14 @@ namespace Raven
 			m_FrameLayout, m_SceneLayout, vertex, fragment, VulkanColorPipeline::Mode::Fill);
 	}
 
+	std::shared_ptr<const VulkanColorPipeline> VulkanClearPass::LitPipelineFactory::CreateSprite(
+		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment, VulkanColorPipeline::Mode mode,
+		bool cutout) const
+	{
+		return std::make_shared<const VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
+			m_FrameLayout, m_SceneLayout, vertex, fragment, mode, cutout);
+	}
+
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
 		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_BindlessLayout, m_FrameLayout, m_Scene.GetLayout(),
@@ -87,7 +73,7 @@ namespace Raven
 
 	VulkanClearPass::Pipelines VulkanClearPass::GetPipelines() const
 	{
-		return { m_LitPipelines, m_TexturedPipelines, m_DebugLines, m_Overlay, m_ColorFormat, m_DepthFormat };
+		return { m_LitPipelines, m_SpritePipelines, m_DebugLines, m_Overlay, m_ColorFormat, m_DepthFormat };
 	}
 
 	bool VulkanClearPass::IsCurrent(const LitPipelineFactory& factory) const noexcept
@@ -103,27 +89,18 @@ namespace Raven
 		m_LitPipelines = std::move(pipelines);
 	}
 
-	VulkanClearPass::TexturedPipelines::TexturedPipelines(const VulkanDevice& device,
-		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
-		const VulkanShaderModule& vertex, const VulkanShaderModule& fragment)
-		: Opaque(device, colorFormat, depthFormat, textureLayout, vertex, fragment),
-		  Transparent(device, colorFormat, depthFormat, textureLayout, vertex, fragment,
-			  TexturePipelineMode::StraightAlpha)
+	void VulkanClearPass::ReplaceSpritePipelines(std::span<const std::uint32_t> vertex,
+		std::span<const std::uint32_t> fragment)
 	{
-	}
-
-	bool VulkanClearPass::ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
-		std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish)
-	{
-		const VulkanShaderModule vertexModule(m_DeviceOwner, vertex);
-		const VulkanShaderModule fragmentModule(m_DeviceOwner, fragment);
-		auto candidate = std::make_shared<TexturedPipelines>(m_DeviceOwner, m_ColorFormat, m_DepthFormat,
-			m_TextureLayout, vertexModule, fragmentModule);
-		if (canPublish && !canPublish())
-			return false;
-		m_Timeline.Retire(std::move(m_TexturedPipelines));
-		m_TexturedPipelines = std::move(candidate);
-		return true;
+		using Mode = VulkanColorPipeline::Mode;
+		const auto factory = GetLitPipelineFactory();
+		auto candidate = std::make_shared<SpritePipelines>();
+		candidate->Opaque = factory.CreateSprite(vertex, fragment, Mode::Fill, false);
+		candidate->Cutout = factory.CreateSprite(vertex, fragment, Mode::Fill, true);
+		candidate->Blend = factory.CreateSprite(vertex, fragment, Mode::Blend, false);
+		// Submitted frames may still draw with the previous pipelines (R3).
+		m_Timeline.Retire(std::move(m_SpritePipelines));
+		m_SpritePipelines = std::move(candidate);
 	}
 
 	void VulkanClearPass::ReplaceDebugLinePipeline(std::span<const std::uint32_t> vertex,
@@ -146,15 +123,15 @@ namespace Raven
 
 	VulkanClearPass::VulkanClearPass(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, const VulkanSwapchain& swapchain,
-		std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
+		std::uint32_t graphicsFamily, VkDescriptorSetLayout bindlessLayout,
 		VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene,
 		const LitShaders& lit,
-		std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+		std::span<const std::uint32_t> spriteVertex, std::span<const std::uint32_t> spriteFragment,
 		std::span<const std::uint32_t> debugLineVertex, std::span<const std::uint32_t> debugLineFragment,
 		std::span<const std::uint32_t> overlayVertex, std::span<const std::uint32_t> overlayFragment,
 		VulkanFrameTimeline& timeline, const Pipelines* reuse)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice), m_Timeline(timeline),
-		  m_Device(device.Get()), m_TextureLayout(textureLayout), m_BindlessLayout(bindlessLayout),
+		  m_Device(device.Get()), m_BindlessLayout(bindlessLayout),
 		  m_FrameLayout(frameLayout), m_Scene(scene), m_Extent(swapchain.GetExtent())
 	{
 		if (m_Device == VK_NULL_HANDLE || swapchain.Get() == VK_NULL_HANDLE ||
@@ -165,19 +142,19 @@ namespace Raven
 		{
 			m_ColorFormat = swapchain.GetFormat();
 			m_DepthFormat = VulkanDepthAttachment::SelectFormat(physicalDevice);
-			if (reuse && reuse->Lit && reuse->Textured && reuse->DebugLines && reuse->Overlay &&
+			if (reuse && reuse->Lit && reuse->Sprites && reuse->DebugLines && reuse->Overlay &&
 				reuse->ColorFormat == m_ColorFormat && reuse->DepthFormat == m_DepthFormat)
 			{
 				// Resizing keeps the attachment formats, so the existing pipelines remain valid.
 				m_LitPipelines = reuse->Lit;
-				m_TexturedPipelines = reuse->Textured;
+				m_SpritePipelines = reuse->Sprites;
 				m_DebugLines = reuse->DebugLines;
 				m_Overlay = reuse->Overlay;
 			}
 			else
 			{
 				UseLitPipelines(GetLitPipelineFactory().Create(lit));
-				ReplaceTexturedPipelines(texturedVertex, texturedFragment);
+				ReplaceSpritePipelines(spriteVertex, spriteFragment);
 				ReplaceDebugLinePipeline(debugLineVertex, debugLineFragment);
 				ReplaceOverlayPipeline(overlayVertex, overlayFragment);
 			}
@@ -273,7 +250,7 @@ namespace Raven
 			vkDestroyQueryPool(m_Device, m_Timestamps, nullptr);
 		for (auto& frame : m_Frames)
 			frame.Ring = {};
-		m_TexturedPipelines.reset();
+		m_SpritePipelines.reset();
 		m_DebugLines.reset();
 		m_Overlay.reset();
 		m_LitPipelines.reset();
@@ -283,12 +260,10 @@ namespace Raven
 	VulkanClearPass::RingOffsets VulkanClearPass::Upload(Frame& frame, const VulkanDrawQueue& queue)
 	{
 		const auto uniform = std::as_bytes(std::span(&queue.Frame, 1));
-		const auto textured = std::as_bytes(std::span(queue.TexturedInstances));
 		const auto lines = std::as_bytes(queue.DebugLines);
 		const auto overlay = std::as_bytes(queue.Overlay);
-		VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(VulkanUploadRing::Align(
-			VulkanUploadRing::Align(uniform.size()) + textured.size()) + lines.size()) + overlay.size()) +
-			m_Scene.GetPlannedBytes();
+		VkDeviceSize required = VulkanUploadRing::Align(VulkanUploadRing::Align(
+			VulkanUploadRing::Align(uniform.size()) + lines.size()) + overlay.size()) + m_Scene.GetPlannedBytes();
 		for (const auto& upload : queue.Uploads)
 			required += VulkanUploadRing::Align(upload.Pixels.size());
 		if (frame.Ring.Begin(m_DeviceOwner, m_PhysicalDevice, m_Timeline, required))
@@ -307,7 +282,6 @@ namespace Raven
 		if (frame.Ring.Push(uniform) != 0)
 			throw std::logic_error("The frame uniform must start the upload ring");
 		RingOffsets offsets;
-		offsets.Textured = frame.Ring.Push(textured);
 		offsets.DebugLines = frame.Ring.Push(lines);
 		offsets.Overlay = frame.Ring.Push(overlay);
 		offsets.Uploads.clear();
@@ -363,7 +337,6 @@ namespace Raven
 		const VulkanMeshPool& meshes, VkDescriptorSet bindlessTextures, const RingOffsets& offsets, bool timestamps,
 		RenderView view)
 	{
-		const auto texturedOffset = offsets.Textured;
 		const auto commands = frame.Commands;
 		const auto instanceBuffer = frame.Ring.Get();
 		CheckClearResult(vkResetCommandBuffer(commands, 0), "vkResetCommandBuffer");
@@ -488,20 +461,31 @@ namespace Raven
 		// Shaded ranges draw with their material's pipeline (B0 contract 7); debug views draw every range
 		// with their own engine pipeline.
 		const bool materials = view == RenderView::Shaded || view == RenderView::Wireframe;
-		m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey& key) -> const VulkanColorPipeline&
+		m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey& key) -> const VulkanColorPipeline*
 		{
+			if (key.Kind != DrawKindMesh)
+				return nullptr;
 			if (materials && key.Shader != 0 && key.Shader <= m_MaterialPipelines.size() && m_MaterialPipelines[key.Shader - 1])
-				return *m_MaterialPipelines[key.Shader - 1];
-			return filled;
+				return m_MaterialPipelines[key.Shader - 1].get();
+			return &filled;
 		}, bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
 		// The wireframe view draws the same commands again as lines over the shaded image (H3).
 		if (view == RenderView::Wireframe && lit.Lines)
-			m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey&) -> const VulkanColorPipeline& { return *lit.Lines; },
-				bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
-		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Opaque,
-			queue.OpaqueBatches);
-		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Transparent,
-			queue.TransparentBatches);
+			m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey& key) -> const VulkanColorPipeline*
+			{
+				return key.Kind == DrawKindMesh ? lit.Lines.get() : nullptr;
+			}, bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
+		// Opaque and cut-out sprites after the meshes, then the blended ones back to front, in every view as
+		// before (B0 contract 4).
+		const auto& sprites = *m_SpritePipelines;
+		m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey& key) -> const VulkanColorPipeline*
+		{
+			if (key.Kind != DrawKindSprite)
+				return nullptr;
+			return key.Blend == DrawBlendCutout ? sprites.Cutout.get() : sprites.Opaque.get();
+		}, bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
+		m_Scene.RecordBlended(commands, m_FrameIndex, *sprites.Blend, bindlessTextures, frame.FrameSet,
+			meshes.GetVertices(), meshes.GetIndices());
 		// Developer lines last, tested against the depth of the scene (FD-32 collider view).
 		if (!queue.DebugLines.empty())
 			m_DebugLines->Record(commands, frame.FrameSet, instanceBuffer, offsets.DebugLines,

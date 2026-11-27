@@ -388,9 +388,10 @@ def main():
                 check(f"present={mode}" in log, "Wrong presentation mode selected")
                 check(f"Swapchain created: {display.width} x {display.height}," in log,
                       "The renderer did not use the selected display resolution")
-                # One indirect command per lit mesh (cube, sphere) and four textured batches (G5); the
-                # wireframe view draws the lit commands a second time as lines (H3).
-                check(row["draw_calls"] == (8 if args.view == "wireframe" else 6), "Unexpected benchmark draw count")
+                # One indirect command per lit mesh (cube, sphere), one for the opaque demo sprites and one
+                # draw for the blended ones (G5, B0 contract 4); the wireframe view draws the lit commands a
+                # second time as lines (H3).
+                check(row["draw_calls"] == (6 if args.view == "wireframe" else 4), "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
         result = {"label": args.label, "view": args.view, "animation": args.animation, "max_fps": args.max_fps, "display": display.name, "hz": display.hz,

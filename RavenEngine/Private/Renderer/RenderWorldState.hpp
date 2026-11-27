@@ -25,9 +25,10 @@ namespace Raven
 	// GPU record of one object slot (docs/GpuDrivenDesign.md, G2). Shaders/GpuScene.hlsli mirrors it.
 	struct GpuObjectData
 	{
-		// Rows of the 3x4 local-to-world matrix.
+		// Rows of the 3x4 local-to-world matrix; a sprite's include its size and pivot.
 		std::array<Vec4, 3> WorldRows;
-		// Columns of the normal matrix.
+		// Columns of the normal matrix. Sprites are unlit: the first carries the texture rectangle (u, v,
+		// width, height) instead (docs/RenderingContentDesign.md, B0 contract 4).
 		std::array<Vec4, 3> NormalToWorld;
 		Vec4 Tint;
 		// Index into the per-mesh draw groups and their mesh table entries.
@@ -105,16 +106,24 @@ namespace Raven
 		bool Live = false;
 	};
 
+	// What an object is drawn as, and its blend class (B0 contract 4): meshes are opaque; sprites are
+	// opaque, cut out, or blended back to front on the CPU path.
+	inline constexpr std::uint8_t DrawKindMesh = 0;
+	inline constexpr std::uint8_t DrawKindSprite = 1;
+	inline constexpr std::uint8_t DrawBlendOpaque = 0;
+	inline constexpr std::uint8_t DrawBlendCutout = 1;
+	inline constexpr std::uint8_t DrawBlendAlpha = 2;
+
 	// The pipeline an object draws with (docs/RenderingContentDesign.md, B0 contract 3): the
-	// material shader, blend class, cull mode and vertex offset. Every lit object uses the default
-	// until B4's material shaders, but draw groups and command ranges are keyed on it already.
+	// material shader, blend class, cull mode, vertex offset and kind. Blended groups get no indirect
+	// command; their objects are sorted on the CPU every frame.
 	struct DrawPipelineKey
 	{
 		std::uint32_t Shader = 0;
-		std::uint8_t Blend = 0;
+		std::uint8_t Blend = DrawBlendOpaque;
 		std::uint8_t Cull = 0;
 		std::uint8_t Offset = 0;
-		std::uint8_t Padding = 0;
+		std::uint8_t Kind = DrawKindMesh;
 
 		auto operator<=>(const DrawPipelineKey&) const = default;
 	};
@@ -131,8 +140,8 @@ namespace Raven
 	{
 		std::size_t operator()(const DrawGroupKey& key) const noexcept
 		{
-			const auto pipeline = std::size_t{ key.Pipeline.Shader } << 24 ^ std::size_t{ key.Pipeline.Blend } << 16 ^
-				std::size_t{ key.Pipeline.Cull } << 8 ^ key.Pipeline.Offset;
+			const auto pipeline = std::size_t{ key.Pipeline.Shader } << 32 ^ std::size_t{ key.Pipeline.Kind } << 24 ^
+				std::size_t{ key.Pipeline.Blend } << 16 ^ std::size_t{ key.Pipeline.Cull } << 8 ^ key.Pipeline.Offset;
 			return std::hash<MeshHandle>{}(key.Mesh) ^ pipeline * 0x9e3779b97f4a7c15ull;
 		}
 	};
@@ -148,6 +157,19 @@ namespace Raven
 		bool Live = false;
 	};
 
+	// What one object slot mirrors (B0 contract 4): a static mesh, or a sprite with the keys its
+	// blended sort uses.
+	struct ObjectSource
+	{
+		std::int32_t SortLayer = 0;
+		std::int32_t SortOrder = 0;
+		// Order of first appearance, breaking ties in the blended sort like the old submission order.
+		std::uint32_t Sequence = 0;
+		// The slot's position in State::Blended, or NoSlot.
+		std::uint32_t Blended = 0xffffffffu;
+		bool Sprite = false;
+	};
+
 	struct RenderWorld::State
 	{
 		static constexpr std::uint32_t NoSlot = 0xffffffffu;
@@ -156,8 +178,8 @@ namespace Raven
 		const Scene* Source = nullptr;
 		ECS::Registry* Registry = nullptr;
 		std::uint32_t SceneId = 0;
-		// Lifecycle subscriptions: static mesh, world transform, material.
-		std::array<std::uint32_t, 3> Subscriptions{};
+		// Lifecycle subscriptions: static mesh, world transform, material, sprite.
+		std::array<std::uint32_t, 4> Subscriptions{};
 		// The change tick this world has consumed.
 		std::uint32_t Since = 0;
 		// Process-wide unique, renewed on every rebuild and clear; a renderer re-uploads
@@ -167,8 +189,16 @@ namespace Raven
 		// Dense object slots; removal moves the last slot into the gap.
 		std::vector<GpuObjectData> Objects;
 		std::vector<ECS::Entity> Entities;
-		// Slot per entity index, or NoSlot.
+		std::vector<ObjectSource> Sources;
+		// Mesh slot and sprite slot per entity index, or NoSlot: an entity may have both.
 		std::vector<std::uint32_t> SlotOfIndex;
+		std::vector<std::uint32_t> SpriteSlotOfIndex;
+		// The shared quad sprites draw on (B0 contract 4); a different one rebuilds the world.
+		MeshHandle SpriteMesh;
+		std::uint32_t SpriteCount = 0;
+		// Slots of blended sprites, in no order: the renderer sorts the visible ones back to front.
+		std::vector<std::uint32_t> Blended;
+		std::uint32_t NextSequence = 0;
 
 		// Slots changed since a renderer last committed an upload. Entries past the object
 		// count are stale and skipped.

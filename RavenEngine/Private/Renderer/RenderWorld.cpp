@@ -3,6 +3,7 @@
 #include "Renderer/DrawChecks.hpp"
 #include "Renderer/MaterialFile.hpp"
 #include "Raven/Core/Log.hpp"
+#include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
@@ -49,6 +50,7 @@ namespace Raven
 			  m_Meshes(registry.GetPool(ECS::ComponentTraits<ECS::StaticMeshComponent>::Info)),
 			  m_Worlds(registry.GetPool(ECS::ComponentTraits<ECS::WorldTransformComponent>::Info)),
 			  m_Materials(registry.GetPool(ECS::ComponentTraits<ECS::MaterialComponent>::Info)),
+			  m_Sprites(registry.GetPool(ECS::ComponentTraits<ECS::SpriteComponent>::Info)),
 			  m_Owners(registry.GetIterationState().Owners)
 		{
 		}
@@ -59,7 +61,12 @@ namespace Raven
 			state.Generation = NextGeneration();
 			state.Objects.clear();
 			state.Entities.clear();
+			state.Sources.clear();
 			std::fill(state.SlotOfIndex.begin(), state.SlotOfIndex.end(), RenderWorld::State::NoSlot);
+			std::fill(state.SpriteSlotOfIndex.begin(), state.SpriteSlotOfIndex.end(), RenderWorld::State::NoSlot);
+			state.SpriteCount = 0;
+			state.Blended.clear();
+			state.NextSequence = 0;
 			state.Dirty.clear();
 			state.DirtyFlags.clear();
 			state.Materials.clear();
@@ -86,10 +93,23 @@ namespace Raven
 				if (Owned(entity) && m_Worlds.Find(entity) != Pool::NoIndex)
 					Add(entity);
 			}
+			// Sprites in the pool's order, which their blended sort keeps for ties (B0 contract 4).
+			for (std::size_t dense = 0; dense < m_Sprites.Count; ++dense)
+			{
+				const auto entity = m_Sprites.Entities[dense];
+				if (Owned(entity) && m_Worlds.Find(entity) != Pool::NoIndex)
+					AddSprite(entity);
+			}
 		}
 
-		// Brings one entity's slot in line with its current components.
+		// Brings one entity's slots in line with its current components.
 		void Reconcile(Entity entity)
+		{
+			ReconcileMesh(entity);
+			ReconcileSprite(entity);
+		}
+
+		void ReconcileMesh(Entity entity)
 		{
 			auto& state = m_State;
 			const auto index = IndexOf(entity);
@@ -107,6 +127,27 @@ namespace Raven
 				Add(entity);
 			else if (present)
 				Write(slot, false, true, true);
+			else if (slot != RenderWorld::State::NoSlot)
+				Remove(slot);
+		}
+
+		void ReconcileSprite(Entity entity)
+		{
+			auto& state = m_State;
+			const auto index = IndexOf(entity);
+			auto slot = index < state.SpriteSlotOfIndex.size() ? state.SpriteSlotOfIndex[index] : RenderWorld::State::NoSlot;
+			if (slot != RenderWorld::State::NoSlot && !(state.Entities[slot] == entity))
+			{
+				if (!m_Registry.IsAlive(state.Entities[slot]))
+					Remove(slot);
+				slot = RenderWorld::State::NoSlot;
+			}
+			const bool present = m_Registry.IsAlive(entity) && Owned(entity) &&
+				m_Sprites.Find(entity) != Pool::NoIndex && m_Worlds.Find(entity) != Pool::NoIndex;
+			if (present && slot == RenderWorld::State::NoSlot)
+				AddSprite(entity);
+			else if (present)
+				WriteSprite(slot, false);
 			else if (slot != RenderWorld::State::NoSlot)
 				Remove(slot);
 		}
@@ -131,7 +172,7 @@ namespace Raven
 				const bool regroup = state.MaterialEntries[slot].ShaderKey != wasKey || shaderReloaded;
 				if (relit || regroup)
 					for (std::uint32_t object = 0; object < state.Objects.size(); ++object)
-						if (state.Objects[object].Material == slot)
+						if (state.Objects[object].Material == slot && !state.Sources[object].Sprite)
 							Write(object, false, false, false, regroup);
 			}
 		}
@@ -156,6 +197,19 @@ namespace Raven
 				if (meshChanged || materialChanged || (world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
 					Write(slot, false, materialChanged, meshChanged);
 			}
+			for (std::size_t dense = 0; dense < m_Sprites.Count; ++dense)
+			{
+				const auto entity = m_Sprites.Entities[dense];
+				const auto index = IndexOf(entity);
+				if (index >= state.SpriteSlotOfIndex.size())
+					continue;
+				const auto slot = state.SpriteSlotOfIndex[index];
+				if (slot == RenderWorld::State::NoSlot || !(state.Entities[slot] == entity))
+					continue;
+				const auto world = m_Worlds.Find(entity);
+				if (m_Sprites.Ticks[dense] > since || (world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
+					WriteSprite(slot, false);
+			}
 		}
 
 	private:
@@ -171,6 +225,7 @@ namespace Raven
 			state.Objects.emplace_back();
 			state.Entities.push_back(entity);
 			state.MeshRefs.emplace_back();
+			state.Sources.emplace_back();
 			const auto index = IndexOf(entity);
 			if (index >= state.SlotOfIndex.size())
 				state.SlotOfIndex.resize(index + 1, RenderWorld::State::NoSlot);
@@ -178,24 +233,67 @@ namespace Raven
 			Write(slot, true, true, true);
 		}
 
+		void AddSprite(Entity entity)
+		{
+			auto& state = m_State;
+			const auto slot = static_cast<std::uint32_t>(state.Objects.size());
+			state.Objects.emplace_back();
+			state.Entities.push_back(entity);
+			state.MeshRefs.emplace_back();
+			auto& source = state.Sources.emplace_back();
+			source.Sprite = true;
+			source.Sequence = state.NextSequence++;
+			const auto index = IndexOf(entity);
+			if (index >= state.SpriteSlotOfIndex.size())
+				state.SpriteSlotOfIndex.resize(index + 1, RenderWorld::State::NoSlot);
+			state.SpriteSlotOfIndex[index] = slot;
+			++state.SpriteCount;
+			WriteSprite(slot, true);
+		}
+
+		// Takes a slot out of the blended list; the list's last entry fills the gap.
+		void RemoveBlended(std::uint32_t slot) noexcept
+		{
+			auto& state = m_State;
+			const auto position = state.Sources[slot].Blended;
+			const auto last = state.Blended.back();
+			state.Blended[position] = last;
+			state.Sources[last].Blended = position;
+			state.Blended.pop_back();
+			state.Sources[slot].Blended = RenderWorld::State::NoSlot;
+		}
+
 		void Remove(std::uint32_t slot)
 		{
 			auto& state = m_State;
 			ReleaseGroup(state.Objects[slot].Group);
 			ReleaseMaterial(state.Objects[slot].Material);
-			state.SlotOfIndex[IndexOf(state.Entities[slot])] = RenderWorld::State::NoSlot;
+			if (state.Sources[slot].Blended != RenderWorld::State::NoSlot)
+				RemoveBlended(slot);
+			if (state.Sources[slot].Sprite)
+			{
+				state.SpriteSlotOfIndex[IndexOf(state.Entities[slot])] = RenderWorld::State::NoSlot;
+				--state.SpriteCount;
+			}
+			else
+				state.SlotOfIndex[IndexOf(state.Entities[slot])] = RenderWorld::State::NoSlot;
 			const auto last = static_cast<std::uint32_t>(state.Objects.size() - 1);
 			if (slot != last)
 			{
 				state.Objects[slot] = state.Objects[last];
 				state.Entities[slot] = state.Entities[last];
 				state.MeshRefs[slot] = state.MeshRefs[last];
-				state.SlotOfIndex[IndexOf(state.Entities[slot])] = slot;
+				state.Sources[slot] = state.Sources[last];
+				auto& slots = state.Sources[slot].Sprite ? state.SpriteSlotOfIndex : state.SlotOfIndex;
+				slots[IndexOf(state.Entities[slot])] = slot;
+				if (state.Sources[slot].Blended != RenderWorld::State::NoSlot)
+					state.Blended[state.Sources[slot].Blended] = slot;
 				state.MarkDirty(slot);
 			}
 			state.Objects.pop_back();
 			state.Entities.pop_back();
 			state.MeshRefs.pop_back();
+			state.Sources.pop_back();
 			if (state.DirtyFlags.size() > state.Objects.size())
 				state.DirtyFlags.resize(state.Objects.size());
 		}
@@ -471,26 +569,36 @@ namespace Raven
 					BuildMaterial(slot);
 				}
 			}
-			if (slot == RenderWorld::State::NoSlot)
+			if (slot != RenderWorld::State::NoSlot)
 			{
-				// Non-finite inline values never enter the table; the object is hidden instead.
-				nonFinite = !IsFinite(component.BaseColor);
-				const auto color = nonFinite ? Vec4{ 1.0f, 1.0f, 1.0f, 1.0f } : component.BaseColor;
-				InlineMaterialKey key;
-				std::memcpy(key.Color.data(), &color, sizeof(key.Color));
-				key.Texture = component.BaseColorTexture.Id;
-				key.Lit = component.Lit;
-				if (const auto found = state.MaterialOfInline.find(key); found != state.MaterialOfInline.end())
-					slot = found->second;
-				else
-				{
-					slot = NewMaterial();
-					auto& entry = state.MaterialEntries[slot];
-					entry.Inline = key;
-					entry.InlineColor = color;
-					state.MaterialOfInline.emplace(key, slot);
-					BuildMaterial(slot);
-				}
+				++state.MaterialEntries[slot].Users;
+				return slot;
+			}
+			// Non-finite inline values never enter the table; the object is hidden instead.
+			nonFinite = !IsFinite(component.BaseColor);
+			return AcquireInline(nonFinite ? Vec4{ 1.0f, 1.0f, 1.0f, 1.0f } : component.BaseColor,
+				component.BaseColorTexture.Id, component.Lit);
+		}
+
+		// The table slot of one set of inline values, taking one use of it; equal values share an entry.
+		std::uint32_t AcquireInline(Vec4 color, AssetId texture, bool lit)
+		{
+			auto& state = m_State;
+			InlineMaterialKey key;
+			std::memcpy(key.Color.data(), &color, sizeof(key.Color));
+			key.Texture = texture;
+			key.Lit = lit;
+			std::uint32_t slot;
+			if (const auto found = state.MaterialOfInline.find(key); found != state.MaterialOfInline.end())
+				slot = found->second;
+			else
+			{
+				slot = NewMaterial();
+				auto& entry = state.MaterialEntries[slot];
+				entry.Inline = key;
+				entry.InlineColor = color;
+				state.MaterialOfInline.emplace(key, slot);
+				BuildMaterial(slot);
 			}
 			++state.MaterialEntries[slot].Users;
 			return slot;
@@ -593,6 +701,72 @@ namespace Raven
 			state.MarkDirty(slot);
 		}
 
+		// A sprite's record (B0 contract 4): the shared quad placed by its size and pivot, an unlit
+		// material of its texture, and the blend class that picks its pipeline and path.
+		void WriteSprite(std::uint32_t slot, bool added)
+		{
+			auto& state = m_State;
+			const auto entity = state.Entities[slot];
+			const auto& sprite = m_Sprites.At<ECS::SpriteComponent>(m_Sprites.Find(entity));
+			const auto& world = m_Worlds.At<ECS::WorldTransformComponent>(m_Worlds.Find(entity)).World;
+			auto& object = state.Objects[slot];
+			// The texture on white, unlit: shared with every equal inline material. Only a new texture
+			// resolves a lease.
+			const bool retexture = added || !(state.MaterialEntries[object.Material].Inline.Texture == sprite.Texture.Id);
+			const auto material = retexture ? AcquireInline({ 1.0f, 1.0f, 1.0f, 1.0f }, sprite.Texture.Id, false)
+				: object.Material;
+			const bool known = sprite.BlendMode == ECS::SpriteBlendMode::Opaque ||
+				sprite.BlendMode == ECS::SpriteBlendMode::Cutout || sprite.BlendMode == ECS::SpriteBlendMode::Alpha;
+			DrawGroupKey key;
+			key.Pipeline.Kind = DrawKindSprite;
+			key.Pipeline.Blend = sprite.BlendMode == ECS::SpriteBlendMode::Cutout ? DrawBlendCutout
+				: sprite.BlendMode == ECS::SpriteBlendMode::Alpha ? DrawBlendAlpha : DrawBlendOpaque;
+			key.Mesh = state.SpriteMesh;
+			const auto group = !added && state.Groups[object.Group].Key == key ? object.Group : FindGroup(key);
+			if (added)
+			{
+				++state.Groups[group].Count;
+				++state.CountRevision;
+			}
+			else if (group != object.Group)
+			{
+				++state.Groups[group].Count;
+				ReleaseGroup(object.Group);
+			}
+			if (!added && retexture)
+				ReleaseMaterial(object.Material);
+			object.Group = group;
+			object.Material = material;
+			object.Tint = sprite.Tint;
+			// Size and pivot place the unit quad (X across, Z up) relative to the entity.
+			const auto& place = sprite.SizePivot;
+			const Mat4 model = world * Translation({ (0.5f - place.Z) * place.X, 0.0f, (0.5f - place.W) * place.Y }) *
+				Scale({ place.X, 1.0f, place.Y });
+			for (std::size_t row = 0; row < 3; ++row)
+				object.WorldRows[row] = { model(row, 0), model(row, 1), model(row, 2), model(row, 3) };
+			object.NormalToWorld = { sprite.UvRect, Vec4{}, Vec4{} };
+			// A sprite without a usable texture, or with an unknown blend mode, draws nothing, as before.
+			const bool textured = sprite.Texture.IsValid() && state.MaterialEntries[material].Textures[0].GetId().IsValid();
+			object.Flags = known && textured && IsDrawable(world) && IsDrawable(model) ? 0u : GpuObjectHidden;
+			if (!IsFinite(sprite.Tint) || !IsFinite(sprite.UvRect))
+			{
+				ReportNonFinite(entity);
+				object.Flags |= GpuObjectHidden | GpuObjectNonFinite;
+			}
+			auto& source = state.Sources[slot];
+			source.SortLayer = sprite.SortLayer;
+			source.SortOrder = sprite.SortOrder;
+			const bool blended = key.Pipeline.Blend == DrawBlendAlpha;
+			if (blended && source.Blended == RenderWorld::State::NoSlot)
+			{
+				source.Blended = static_cast<std::uint32_t>(state.Blended.size());
+				state.Blended.push_back(slot);
+			}
+			else if (!blended && source.Blended != RenderWorld::State::NoSlot)
+				RemoveBlended(slot);
+			state.MarkDirty(slot);
+		}
+
 		RenderWorld::State& m_State;
 		ECS::Registry& m_Registry;
 		const RenderWorld::AssetResolver& m_Resolve;
@@ -601,6 +775,7 @@ namespace Raven
 		const Pool m_Meshes;
 		const Pool m_Worlds;
 		const Pool m_Materials;
+		const Pool m_Sprites;
 		const std::uint32_t* m_Owners;
 	};
 
@@ -630,12 +805,17 @@ namespace Raven
 		return m_State->Objects.size();
 	}
 
+	std::size_t RenderWorld::GetSpriteCount() const noexcept
+	{
+		return m_State->SpriteCount;
+	}
+
 	void RenderWorld::Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-		const ShaderResolver& resolveShader)
+		const ShaderResolver& resolveShader, MeshHandle spriteMesh)
 	{
 		try
 		{
-			SyncUnchecked(scene, resolveAsset, resolveMesh, resolveShader);
+			SyncUnchecked(scene, resolveAsset, resolveMesh, resolveShader, spriteMesh);
 		}
 		catch (...)
 		{
@@ -647,7 +827,7 @@ namespace Raven
 	}
 
 	void RenderWorld::SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-		const ShaderResolver& resolveShader)
+		const ShaderResolver& resolveShader, MeshHandle spriteMesh)
 	{
 		auto& state = *m_State;
 		auto& registry = scene.m_Registry;
@@ -661,11 +841,18 @@ namespace Raven
 			state.Subscriptions = {
 				registry.SubscribeLifecycle<ECS::StaticMeshComponent>(),
 				registry.SubscribeLifecycle<ECS::WorldTransformComponent>(),
-				registry.SubscribeLifecycle<ECS::MaterialComponent>() };
+				registry.SubscribeLifecycle<ECS::MaterialComponent>(),
+				registry.SubscribeLifecycle<ECS::SpriteComponent>() };
+			rebuild = true;
+		}
+		// Every sprite's group names the quad, so a different one rebuilds.
+		if (!(state.SpriteMesh == spriteMesh))
+		{
+			state.SpriteMesh = spriteMesh;
 			rebuild = true;
 		}
 		// Batches from different subscriptions stay valid together: each read trims only its own type.
-		std::array<ECS::LifecycleBatch, 3> batches{};
+		std::array<ECS::LifecycleBatch, 4> batches{};
 		for (std::size_t index = 0; index < batches.size(); ++index)
 		{
 			batches[index] = registry.ReadLifecycle(state.Subscriptions[index]);

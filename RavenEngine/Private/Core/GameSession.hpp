@@ -6,8 +6,6 @@
 #include "Raven/Core/SimulationRandom.hpp"
 #include "Raven/Renderer/CameraView.hpp"
 #include "Raven/Renderer/DebugLines.hpp"
-#include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
-#include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 #include "Raven/Scene/SceneCommands.hpp"
 #include "Raven/Scene/SceneProject.hpp"
 #include "Raven/Scene/SceneSession.hpp"
@@ -45,7 +43,7 @@ namespace Raven
 	// The engine's play session for one game root (docs/DataModelDesign.md, FD-12, FD-17). It owns the
 	// project, the scene session, the deferred commands and the services game systems call, and
 	// draws the active scene: the entity tagged ActiveCameraComponent, the scene's lighting, its
-	// lit meshes from the render world and its sprites. Developer requests restart the scene, open
+	// lit meshes and sprites from the render world. Developer requests restart the scene, open
 	// the next one, cycle the render view, and pause or resume play.
 	class GameSession final : private GameServices
 	{
@@ -128,7 +126,6 @@ namespace Raven
 		void RequestRestart() noexcept override;
 		SceneTransition GetSceneTransition() const noexcept override;
 
-		void GatherSprites();
 		OverlayFrame BuildOverlay();
 		void ReportCamera(const std::string& message);
 
@@ -139,15 +136,11 @@ namespace Raven
 		AudioPlayer m_Audio;
 		std::unique_ptr<SceneSession> m_Session;
 		SceneCommands m_Commands;
-		const VulkanTexturedMesh& m_Quad;
-		std::vector<VulkanTexturedDraw> m_OpaqueSprites;
-		std::vector<VulkanTransparentDraw> m_TransparentSprites;
 		std::vector<PickHit> m_Picks;
 		std::vector<PickHit> m_PendingPicks;
 		std::string m_CameraProblem;
-		// The last reported lighting problem, and the sprite count skipped in the last gather.
+		// The last reported lighting problem.
 		std::string m_LightingProblem;
-		std::size_t m_SkippedSprites = 0;
 		bool m_Playing = true;
 		double m_TracePhase = 0.0;
 		UserDataStore* m_UserData = nullptr;

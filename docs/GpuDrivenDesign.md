@@ -166,9 +166,9 @@ The Registry gains a general, opt-in journal of structural events. It serves the
 **Public API (Q7):**
 - Lit meshes come only from the render world.
 - The lit-mesh spans leave `DrawFrame`. That removes the samples' per-frame gathering loop and the step 6 CPU lit batching.
-- `DrawFrame` keeps its spans for textured, transparent and debug draws. Transparent draws keep CPU back-to-front sorting.
+- `DrawFrame` keeps its spans for textured, transparent and debug draws. Transparent draws keep CPU back-to-front sorting. *(M6B's B5, 2026-11-27: the textured and transparent spans left `DrawFrame` when sprites joined the render world.)*
 
-**Sprites (Q5):** moved to M6. They move once, getting the bindless switch, GPU culling and the textured shader port together, with a single 2D verification. Until then, sprites keep per-texture descriptors and 2D performance is unchanged.
+**Sprites (Q5):** moved to M6 and done in M6B's B5 ([RenderingContentDesign.md](RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27)). They move once, getting the bindless switch, GPU culling and the textured shader port together, with a single 2D verification. Until then, sprites keep per-texture descriptors and 2D performance is unchanged.
 
 **Hi-Z occlusion (Q6):** built only if the 100k measurement misses its GPU-time target. The culling pass leaves room for it as one extra test.
 

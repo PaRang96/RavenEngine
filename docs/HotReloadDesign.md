@@ -148,7 +148,7 @@ A host-owned `ReloadService` replaces the per-asset and per-shader watcher threa
 - **Program table:** every engine shader is one program entry: source, stage profile, entry point and interface kind. This covers nine programs:
   - `Color.vert`/`.frag`
   - the three H3 view fragments
-  - `Texture.vert`/`.frag`
+  - `Texture.vert`/`.frag`, replaced by `Sprite.vert`/`.frag` in M6B's B5 ([RenderingContentDesign.md](RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27))
   - `Cull.comp` and `Scatter.comp`
 
   Compiling uses `CompileShader.cmake` with the same DXC and spirv-val flags as the build, after the `-MF` dependency pass.

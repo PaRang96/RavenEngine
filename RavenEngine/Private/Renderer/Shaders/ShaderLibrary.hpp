@@ -39,7 +39,7 @@ namespace Raven
 	enum class ShaderProgram : std::uint8_t
 	{
 		LitVertex, LitFragment, UnlitFragment, NormalsFragment, WireframeFragment,
-		TexturedVertex, TexturedFragment, Scatter, Cull, DebugLineVertex, DebugLineFragment, OverlayVertex,
+		SpriteVertex, SpriteFragment, Scatter, Cull, DebugLineVertex, DebugLineFragment, OverlayVertex,
 		OverlayFragment, Count
 	};
 

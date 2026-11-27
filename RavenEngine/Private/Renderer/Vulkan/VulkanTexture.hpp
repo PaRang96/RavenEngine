@@ -22,12 +22,9 @@ namespace Raven
 
 		VkImage GetImage() const { return m_Image; }
 		VkDevice GetDevice() const { return m_Device; }
-		VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
-		// A borrowed immutable binding owned by the context's descriptor pools.
-		void SetDescriptorSet(VkDescriptorSet binding);
-		// Same device, with all earlier GPU use completed. Each texture keeps its binding.
+		// Same device, with all earlier GPU use completed. Each texture keeps its bindless element.
 		void SwapImage(VulkanTexture& other) noexcept;
-		// Element of the bindless array; kept by SwapImage like the descriptor set.
+		// Element of the bindless array (docs/GpuDrivenDesign.md, G4); kept by SwapImage.
 		std::uint32_t GetBindlessIndex() const noexcept { return m_BindlessIndex; }
 		void SetBindlessIndex(std::uint32_t element) noexcept { m_BindlessIndex = element; }
 		VkImageView GetView() const { return m_View; }
@@ -47,7 +44,6 @@ namespace Raven
 		VkImage m_Image = VK_NULL_HANDLE;
 		VulkanMemory::Allocation m_Allocation;
 		VkImageView m_View = VK_NULL_HANDLE;
-		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
 		std::uint32_t m_BindlessIndex = 0;
 		VkFormat m_Format = VK_FORMAT_UNDEFINED;
 		VkExtent2D m_Extent{};

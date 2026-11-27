@@ -11,7 +11,6 @@
 
 #include "Raven/Components/CameraComponent.hpp"
 #include "Raven/Components/LightingComponent.hpp"
-#include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Core/FrameTime.hpp"
 #include "Raven/Core/GameInstance.hpp"
@@ -36,15 +35,6 @@ namespace Raven
 {
 	namespace
 	{
-		// An XZ quad facing -Y; sprites scale it. Images are top-row first, so V=0 is the top edge.
-		constexpr std::array<TexturedVertex, 4> QuadVertices
-		{
-			TexturedVertex{ { -0.5f, 0.0f, -0.5f }, { 0.0f, 1.0f } },
-			TexturedVertex{ { 0.5f, 0.0f, -0.5f }, { 1.0f, 1.0f } },
-			TexturedVertex{ { 0.5f, 0.0f, 0.5f }, { 1.0f, 0.0f } },
-			TexturedVertex{ { -0.5f, 0.0f, 0.5f }, { 0.0f, 0.0f } }
-		};
-		constexpr std::array<std::uint16_t, 6> QuadIndices{ 0, 1, 2, 2, 3, 0 };
 		// Scene restarts, quick-loads and StopSounds fade every sound out over 50 ms.
 		constexpr float StopFadeSeconds = 0.05f;
 
@@ -98,8 +88,7 @@ namespace Raven
 				  InstantiateScene(file, *scene);
 				  return scene;
 			  }, config.StartScene)),
-		  m_Commands(m_Session->GetActive()),
-		  m_Quad(renderer.CreateTexturedMesh(QuadVertices, QuadIndices))
+		  m_Commands(m_Session->GetActive())
 	{
 		if (config.WatchShaders)
 			renderer.WatchShaders();
@@ -500,50 +489,6 @@ namespace Raven
 		m_CameraProblem = message;
 	}
 
-	void GameSession::GatherSprites()
-	{
-		m_OpaqueSprites.clear();
-		m_TransparentSprites.clear();
-		auto& scene = m_Session->GetActive();
-		const auto& catalog = m_Project.GetCatalog();
-		std::size_t skipped = 0;
-		scene.GetAccess().View<const ECS::SpriteComponent, const ECS::WorldTransformComponent>().Each(
-			[&](ECS::Entity, const ECS::SpriteComponent& sprite, const ECS::WorldTransformComponent& world)
-			{
-				if (!sprite.Texture.IsValid() || (sprite.BlendMode != ECS::SpriteBlendMode::Opaque &&
-					sprite.BlendMode != ECS::SpriteBlendMode::Alpha && sprite.BlendMode != ECS::SpriteBlendMode::Cutout))
-					return;
-				// A non-finite world or tint is skipped, not thrown in the draw queue (FD-06).
-				if (!IsDrawable(world.World) || !IsFinite(sprite.Tint))
-				{
-					++skipped;
-					return;
-				}
-				// A bad game-written texture reference skips the sprite (FD-06).
-				const auto* lease = scene.FindAsset(sprite.Texture.Id);
-				if (!lease || lease->GetKind() != AssetKind::Texture)
-					lease = scene.TryUseAsset(catalog, sprite.Texture.Id, AssetKind::Texture);
-				if (!lease)
-					return;
-				// Size and pivot place the unit quad (X across, Z up) relative to the entity. This CPU
-				// path draws Cutout like Opaque and shows the whole texture; B5's GPU path adds the
-				// discard and UvRect (docs/RenderingContentDesign.md, B0 contract 4).
-				const auto& place = sprite.SizePivot;
-				const Mat4 local = Translation({ (0.5f - place.Z) * place.X, 0.0f, (0.5f - place.W) * place.Y }) *
-					Scale({ place.X, 1.0f, place.Y });
-				const VulkanTexturedDraw draw{ m_Quad, lease->GetTexture(), world.World * local, sprite.Tint };
-				if (sprite.BlendMode != ECS::SpriteBlendMode::Alpha)
-					m_OpaqueSprites.push_back(draw);
-				else
-					m_TransparentSprites.push_back({ draw, sprite.SortLayer, sprite.SortOrder });
-			});
-		if (skipped != m_SkippedSprites && skipped != 0)
-			Log(LogLevel::Warning, std::format("{} sprite(s) not drawn: a non-finite world transform or tint", skipped));
-		m_SkippedSprites = skipped;
-		if (auto* metrics = GetFrameMetrics())
-			metrics->Sprites = static_cast<std::uint32_t>(m_OpaqueSprites.size() + m_TransparentSprites.size());
-	}
-
 	OverlayFrame GameSession::BuildOverlay()
 	{
 		// The game's UI, then the developer overlay over it (docs/UIDesign.md, section 4).
@@ -607,7 +552,6 @@ namespace Raven
 			m_LightingProblem = error.what();
 			lighting = SceneLighting{};
 		}
-		GatherSprites();
 		const auto rendered = renderer.DrawFrame([&](std::uint32_t width, std::uint32_t height) -> std::optional<CameraView>
 		{
 			if (camera.IsNull())
@@ -626,7 +570,7 @@ namespace Raven
 				ReportCamera(error.what());
 				return std::nullopt;
 			}
-		}, &world, m_OpaqueSprites, m_TransparentSprites, lighting, debugLines, BuildOverlay());
+		}, &world, lighting, debugLines, BuildOverlay());
 		if (m_Text)
 			m_Text->EndFrame(rendered.has_value());
 

@@ -8,7 +8,6 @@
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 #include "Renderer/Vulkan/VulkanDevice.hpp"
 #include "Renderer/Vulkan/VulkanMesh.hpp"
-#include "Renderer/Vulkan/VulkanTexturedMesh.hpp"
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 #include "Renderer/Vulkan/VulkanTextureDescriptors.hpp"
 #include "Renderer/Vulkan/VulkanSwapchain.hpp"
@@ -51,17 +50,6 @@ namespace Raven
 	namespace
 	{
 		template<typename Resource>
-		bool OwnsResource(const std::vector<std::unique_ptr<Resource>>& resources, const Resource& resource)
-		{
-			for (const auto& owner : resources)
-			{
-				if (owner.get() == &resource)
-					return true;
-			}
-			return false;
-		}
-
-		template<typename Resource>
 		struct ResourceSlot
 		{
 			std::shared_ptr<Resource> Owner;
@@ -69,15 +57,6 @@ namespace Raven
 			bool Managed = false;
 			bool Alive = false;
 		};
-
-		template<typename Resource>
-		bool OwnsResource(const std::vector<ResourceSlot<Resource>>& resources, const Resource& resource)
-		{
-			for (const auto& slot : resources)
-				if (slot.Alive && slot.Owner.get() == &resource)
-					return true;
-			return false;
-		}
 
 		template<typename Resource>
 		std::size_t ReserveResourceSlot(std::vector<ResourceSlot<Resource>>& resources)
@@ -124,14 +103,10 @@ namespace Raven
 		std::size_t CreateMeshSlot(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices, bool managed);
 		std::size_t CreateTextureSlot(const TextureDesc& description, bool managed, TextureUse use = TextureUse::Engine);
-		const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
-			std::span<const std::uint16_t> indices);
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
 
 		std::optional<RenderedCameraView> DrawFrameWithView(const CameraViewBuilder& buildView,
-			RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
-			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {},
+			RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh, const SceneLighting& lighting = {},
 			std::span<const DebugLineVertex> debugLines = {}, const OverlayFrame& overlay = {});
 
 		const std::uint64_t m_MeshContextId = AllocateMeshContextId();
@@ -161,7 +136,8 @@ namespace Raven
 		// Mesh data returns its ranges here, including retired data dropped by the timeline (R6).
 		VulkanMeshPool m_MeshPool;
 		std::vector<ResourceSlot<VulkanMesh>> m_Meshes;
-		std::vector<std::unique_ptr<VulkanTexturedMesh>> m_TexturedMeshes;
+		// The quad every sprite draws on (docs/RenderingContentDesign.md, B0 contract 4).
+		MeshHandle m_SpriteMesh;
 		std::vector<ResourceSlot<VulkanTexture>> m_Textures;
 		VulkanTextureDescriptors m_TextureDescriptors;
 		// Pipelines retained across passes use it, so it outlives the timeline and the pass (R4).
@@ -291,9 +267,9 @@ namespace Raven
 		try
 		{
 			m_ClearPass.emplace(m_Device, m_PhysicalDevice, *m_Swapchain,
-				m_PhysicalDevice.QueueFamilies.Graphics.value(), m_TextureDescriptors.GetLayout(),
+				m_PhysicalDevice.QueueFamilies.Graphics.value(),
 				m_TextureDescriptors.GetBindlessLayout(), m_FrameLayout.Get(), m_GpuScene, GetLitShaders(),
-				m_Shaders.Get(ShaderProgram::TexturedVertex), m_Shaders.Get(ShaderProgram::TexturedFragment),
+				m_Shaders.Get(ShaderProgram::SpriteVertex), m_Shaders.Get(ShaderProgram::SpriteFragment),
 				m_Shaders.Get(ShaderProgram::DebugLineVertex), m_Shaders.Get(ShaderProgram::DebugLineFragment),
 				m_Shaders.Get(ShaderProgram::OverlayVertex), m_Shaders.Get(ShaderProgram::OverlayFragment), m_Timeline,
 				m_RetainedPipelines ? &*m_RetainedPipelines : nullptr);
@@ -394,23 +370,29 @@ namespace Raven
 			return result;
 		}
 
-		// The textured (sprite) fragment shader: its quad's UV and color, one texture and its sampler.
-		ShaderInterface TexturedFragmentInterface()
+		// What Sprite.vert.hlsl writes and Sprite.frag.hlsl reads: UV, tint and the texture's element.
+		std::vector<ShaderStageVariable> SpriteStageVariables()
 		{
-			ShaderInterface result;
-			result.Kind = ShaderInterface::Stage::Fragment;
-			result.Inputs = { { 0, 2 }, { 1, 4 } };
-			result.Outputs = { { 0, 4 } };
-			using Kind = ShaderImageBinding::Kind;
-			result.Images = { { 0, 0, Kind::Texture }, { 0, 1, Kind::Sampler } };
+			return { { 0, 2 }, { 1, 4 }, { 2, 1, true } };
+		}
+
+		// Sprites (B0 contract 4): the lit vertex stage's resources, the quad's position, color and UV.
+		ShaderInterface SpriteVertexInterface()
+		{
+			auto result = LitVertexInterface();
+			result.Inputs = { { 0, 3 }, { 1, 3 }, { 3, 2 } };
+			result.Outputs = SpriteStageVariables();
 			return result;
 		}
 
-		ShaderInterface TexturedVertexInterface()
+		ShaderInterface SpriteFragmentInterface()
 		{
 			ShaderInterface result;
-			result.Inputs = { { 0, 3 }, { 1, 2 }, { 2, 4 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 4 } };
-			result.Outputs = { { 0, 2 }, { 1, 4 } };
+			result.Kind = ShaderInterface::Stage::Fragment;
+			result.Inputs = SpriteStageVariables();
+			result.Outputs = { { 0, 4 } };
+			using Kind = ShaderImageBinding::Kind;
+			result.Images = { { 0, 0, Kind::TextureArray }, { 0, 1, Kind::SamplerArray, 2 } };
 			return result;
 		}
 
@@ -421,11 +403,11 @@ namespace Raven
 			case ShaderProgram::LitVertex:
 				CheckShaderInterface(words, LitVertexInterface());
 				break;
-			case ShaderProgram::TexturedVertex:
-				CheckShaderInterface(words, TexturedVertexInterface());
+			case ShaderProgram::SpriteVertex:
+				CheckShaderInterface(words, SpriteVertexInterface());
 				break;
-			case ShaderProgram::TexturedFragment:
-				CheckShaderInterface(words, TexturedFragmentInterface());
+			case ShaderProgram::SpriteFragment:
+				CheckShaderInterface(words, SpriteFragmentInterface());
 				break;
 			case ShaderProgram::Scatter:
 				CheckShaderInterface(words, VulkanGpuScene::GetScatterInterface());
@@ -475,7 +457,7 @@ namespace Raven
 			return;
 		// Candidates arrive only once every program has settled, so a header edit's dependents
 		// publish in the same frame and a vertex/fragment pair never mixes versions (H2).
-		std::vector<ShaderLibrary::Candidate> textured;
+		std::vector<ShaderLibrary::Candidate> sprites;
 		std::vector<ShaderLibrary::Candidate> compute;
 		std::vector<ShaderLibrary::Candidate> debugLines;
 		std::vector<ShaderLibrary::Candidate> overlay;
@@ -492,9 +474,9 @@ namespace Raven
 			else if (candidate.Program == ShaderProgram::OverlayVertex ||
 				candidate.Program == ShaderProgram::OverlayFragment)
 				overlay.push_back(std::move(candidate));
-			else if (candidate.Program == ShaderProgram::TexturedVertex ||
-				candidate.Program == ShaderProgram::TexturedFragment)
-				textured.push_back(std::move(candidate));
+			else if (candidate.Program == ShaderProgram::SpriteVertex ||
+				candidate.Program == ShaderProgram::SpriteFragment)
+				sprites.push_back(std::move(candidate));
 			else
 				// CheckProgram rejects unclassified programs first; never misroute one into a group.
 				Log(LogLevel::Error, "Shader reload dropped: the program has no pipeline group");
@@ -520,10 +502,10 @@ namespace Raven
 					ProgramNames(candidates) + ": " + error.what());
 			}
 		};
-		publish("Textured", textured, [&]
+		publish("Sprite", sprites, [&]
 		{
-			m_ClearPass->ReplaceTexturedPipelines(WordsOf(m_Shaders, textured, ShaderProgram::TexturedVertex),
-				WordsOf(m_Shaders, textured, ShaderProgram::TexturedFragment));
+			m_ClearPass->ReplaceSpritePipelines(WordsOf(m_Shaders, sprites, ShaderProgram::SpriteVertex),
+				WordsOf(m_Shaders, sprites, ShaderProgram::SpriteFragment));
 		});
 		publish("GPU scene", compute, [&]
 		{
@@ -688,7 +670,7 @@ namespace Raven
 			use == TextureUse::Content);
 		// The batch references the image until the GPU has run it.
 		m_Uploads.Keep(texture);
-		texture->SetDescriptorSet(m_TextureDescriptors.CreateBinding(*texture, use));
+		m_TextureDescriptors.CreateBinding(*texture, use);
 		auto& slot = m_Textures[index];
 		slot.Owner = std::move(texture);
 		++slot.Generation;
@@ -709,31 +691,14 @@ namespace Raven
 			}
 	}
 
-	const VulkanTexturedMesh& VulkanContext::Impl::CreateTexturedMesh(
-		std::span<const TexturedVertex> vertices, std::span<const std::uint16_t> indices)
-	{
-		m_TexturedMeshes.push_back(std::make_unique<VulkanTexturedMesh>(
-			m_Device, m_PhysicalDevice, vertices, indices));
-		return *m_TexturedMeshes.back();
-	}
-
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::Impl::DrawFrameWithView(
 		const CameraViewBuilder& buildView, RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
-		std::span<const VulkanTexturedDraw> texturedDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting,
-		std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
+		const SceneLighting& lighting, std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
 	{
 		const auto frameStart = std::chrono::steady_clock::now();
 		auto* metrics = GetFrameMetrics();
 		FrameSection preparation(metrics ? &metrics->RenderPrepare : nullptr);
 		CollectResources();
-		// Reject resources from other contexts before touching frame synchronization.
-		for (const auto& draw : texturedDraws)
-			if (!OwnsResource(m_TexturedMeshes, draw.Mesh) || !OwnsResource(m_Textures, draw.Texture))
-				throw std::invalid_argument("Textured mesh and texture must belong to this renderer context");
-		for (const auto& submission : transparentDraws)
-			if (!OwnsResource(m_TexturedMeshes, submission.Draw.Mesh) || !OwnsResource(m_Textures, submission.Draw.Texture))
-				throw std::invalid_argument("Transparent mesh and texture must belong to this renderer context");
 		if (!PrepareSwapchain() || !buildView)
 			return std::nullopt;
 
@@ -752,17 +717,22 @@ namespace Raven
 		const float seconds = std::chrono::duration<float>(now - m_ClockStart).count();
 		const float delta = m_LastFrame ? std::chrono::duration<float>(now - *m_LastFrame).count() : 0.0f;
 		m_LastFrame = now;
-		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, texturedDraws, transparentDraws, lighting, seconds, delta);
+		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, lighting, seconds, delta);
 		m_DrawQueue.DebugLines = debugLines;
 		m_DrawQueue.Overlay = overlay.Quads;
 		// Resolved by the public DrawFrame, which may read texture handles.
 		m_DrawQueue.Uploads.swap(m_ResolvedUploads);
 		m_ResolvedUploads.clear();
-		// Lit meshes: plan the GPU scene's upload; culling happens on the GPU (G5).
-		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh, m_MeshRevision);
+		// Lit meshes and sprites: plan the GPU scene's upload; culling happens on the GPU (G5), and the
+		// blended sprites are sorted here (B0 contract 4).
+		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh, m_MeshRevision, view, viewProjection);
 		if (metrics)
-			metrics->DrawCalls = m_GpuScene.GetDrawCount() * (m_View == RenderView::Wireframe ? 2 : 1) +
-				m_DrawQueue.OpaqueBatches.size() + m_DrawQueue.TransparentBatches.size();
+		{
+			// Indirect commands and the blended draw; the wireframe view draws the mesh commands twice.
+			const auto meshes = m_GpuScene.GetDrawCount() - m_GpuScene.GetSpriteCommandCount();
+			metrics->DrawCalls = meshes * (m_View == RenderView::Wireframe ? 2 : 1) + m_GpuScene.GetSpriteCommandCount() +
+				(m_GpuScene.GetBlendedCount() != 0 ? 1 : 0);
+		}
 		preparation.End();
 		UpdateMaterialPipelines();
 		// The batch goes first on the queue, so this frame samples what it filled.
@@ -813,6 +783,23 @@ namespace Raven
 	VulkanContext::VulkanContext(const Window& window, const RendererConfig& config)
 		: m_Impl(std::make_unique<Impl>(window, config))
 	{
+		// The sprite quad (B0 contract 4): an XZ quad facing -Y, which sprites place by size and pivot.
+		// Images are top-row first, so V=0 is the top edge. It lives as long as the context.
+		const std::array<ColorVertex, 4> vertices
+		{
+			ColorVertex{ { -0.5f, 0.0f, -0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 0.0f, 1.0f } },
+			ColorVertex{ { 0.5f, 0.0f, -0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 1.0f } },
+			ColorVertex{ { 0.5f, 0.0f, 0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f } },
+			ColorVertex{ { -0.5f, 0.0f, 0.5f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f } }
+		};
+		const std::array<std::uint32_t, 6> indices{ 0, 1, 2, 2, 3, 0 };
+		const auto index = m_Impl->CreateMeshSlot(vertices, indices, false);
+		m_Impl->m_SpriteMesh = MeshHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Meshes[index].Generation);
+	}
+
+	MeshHandle VulkanContext::GetSpriteMesh() const noexcept
+	{
+		return m_Impl->m_SpriteMesh;
 	}
 
 	VulkanContext::~VulkanContext() = default;
@@ -961,8 +948,6 @@ namespace Raven
 			}
 			else if (slot.Owner)
 				++result.RetiredTextures;
-		result.DescriptorBindings = m_Impl->m_TextureDescriptors.GetBindingCount();
-		result.DescriptorPools = m_Impl->m_TextureDescriptors.GetPoolCount();
 		result.BindlessEngine = m_Impl->m_TextureDescriptors.GetEngineElements();
 		result.BindlessContent = m_Impl->m_TextureDescriptors.GetContentElements();
 		const auto memory = m_Impl->m_Device.GetMemory().GetStats();
@@ -995,17 +980,9 @@ namespace Raven
 		return m_Impl->m_View;
 	}
 
-	const VulkanTexturedMesh& VulkanContext::CreateTexturedMesh(std::span<const TexturedVertex> vertices,
-		std::span<const std::uint16_t> indices)
-	{
-		return m_Impl->CreateTexturedMesh(vertices, indices);
-	}
-
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::DrawFrame(
-		const CameraViewBuilder& buildView, RenderWorld* world,
-			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting,
-			std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
+		const CameraViewBuilder& buildView, RenderWorld* world, const SceneLighting& lighting,
+		std::span<const DebugLineVertex> debugLines, const OverlayFrame& overlay)
 	{
 		// Handle resolution belongs to the context, which MeshHandle befriends.
 		const VulkanGpuScene::MeshResolver resolveMesh = [this](MeshHandle handle) -> const VulkanMeshData*
@@ -1025,8 +1002,7 @@ namespace Raven
 			m_Impl->m_ResolvedUploads.push_back({ texture->GetImage(), upload.X, upload.Y, upload.Width, upload.Height,
 				upload.Pixels });
 		}
-		return m_Impl->DrawFrameWithView(buildView, world, resolveMesh, texturedDraws, transparentDraws, lighting,
-			debugLines, overlay);
+		return m_Impl->DrawFrameWithView(buildView, world, resolveMesh, lighting, debugLines, overlay);
 	}
 
 	std::uint32_t VulkanContext::GetBindlessIndex(TextureHandle texture) const noexcept

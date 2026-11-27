@@ -9,12 +9,9 @@
 #define RAVEN_MATERIAL_HLSLI
 
 #include "GpuScene.hlsli"
+#include "Raven/Bindless.hlsli"
 #include "Raven/Frame.hlsli"
 
-// Bindless textures; element 0 is white.
-[[vk::binding(0, 0)]] Texture2D<float4> RavenTextures[];
-// The fixed sampler set (FD-21): 0 clamps at the edges, 1 repeats. Both filter linearly between mips.
-[[vk::binding(1, 0)]] SamplerState RavenSamplers[2];
 [[vk::binding(0, 1)]] ConstantBuffer<FrameData> RavenFrameData;
 [[vk::binding(RAVEN_SCENE_MATERIALS, 2)]] StructuredBuffer<MaterialData> RavenMaterials;
 [[vk::binding(RAVEN_SCENE_MATERIAL_VALUES, 2)]] StructuredBuffer<float4> RavenMaterialValues;

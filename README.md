@@ -48,7 +48,7 @@ Developer utilities include `Paths::GetContentPath()`, `GetShaderPath()`, execut
 
 `VulkanContext::CreateManagedTexture()` uploads RGBA8 textures in Linear or SRGB mode behind a releasable handle; `AssetStore` leases are the way game content reaches it. Texture descriptors and native image/view/sampler ownership stay private. See [TextureResources.md](docs/TextureResources.md) for the contract and GPU validation.
 
-The four-argument `DrawFrame()` adds straight-alpha draws with explicit layer/order and automatic camera-depth sorting. A private preparation stage performs per-instance frustum selection before Vulkan command recording. The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
+Sprites (`SpriteComponent`) are render-world objects: opaque and cut-out sprites are culled on the GPU like meshes, and straight-alpha sprites are drawn back to front by explicit layer/order and camera depth in one instanced draw ([RenderingContentDesign.md](docs/RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27)). The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
 
 Run with `--game Arena` for the M6C sample game: steer the craft with WASD or the arrows, jump with Space, turn the camera with Q/E and pause with Esc. Collect the cyan energy cells and avoid the red drones; the best score is kept in `out/User/Arena`. Ctrl+F5 and Ctrl+F9 quick-save and quick-load the world.
 

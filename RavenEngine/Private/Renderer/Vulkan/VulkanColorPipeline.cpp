@@ -13,7 +13,7 @@ namespace Raven
 	VulkanColorPipeline::VulkanColorPipeline(const VulkanDevice& device,
 		VkFormat colorFormat, VkFormat depthFormat, VkDescriptorSetLayout textureLayout,
 		VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout sceneLayout, std::span<const std::uint32_t> vertexWords,
-		std::span<const std::uint32_t> fragmentWords, Mode mode)
+		std::span<const std::uint32_t> fragmentWords, Mode mode, bool cutout)
 		: m_Device(device.Get())
 	{
 		if (m_Device == VK_NULL_HANDLE || colorFormat == VK_FORMAT_UNDEFINED || depthFormat == VK_FORMAT_UNDEFINED ||
@@ -34,6 +34,12 @@ namespace Raven
 			stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 			stages[1].module = fragment.Get();
 			stages[1].pName = "PSMain";
+			// Fragment specialization constant 0 turns on the sprite cut-out discard (Sprite.frag.hlsl).
+			const VkBool32 cutoutValue = cutout ? VK_TRUE : VK_FALSE;
+			const VkSpecializationMapEntry cutoutEntry{ 0, 0, sizeof(VkBool32) };
+			const VkSpecializationInfo specialization{ 1, &cutoutEntry, sizeof(VkBool32), &cutoutValue };
+			if (cutout)
+				stages[1].pSpecializationInfo = &specialization;
 
 			const std::array<VkVertexInputBindingDescription, 1> bindings
 			{
@@ -89,11 +95,21 @@ namespace Raven
 			depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
 			depth.depthTestEnable = VK_TRUE;
 			depth.depthWriteEnable = mode == Mode::Fill ? VK_TRUE : VK_FALSE;
-			depth.depthCompareOp = mode == Mode::Fill ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
+			depth.depthCompareOp = mode == Mode::Lines ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
 
 			VkPipelineColorBlendAttachmentState color{};
 			color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 				VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+			if (mode == Mode::Blend)
+			{
+				color.blendEnable = VK_TRUE;
+				color.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+				color.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				color.colorBlendOp = VK_BLEND_OP_ADD;
+				color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				color.alphaBlendOp = VK_BLEND_OP_ADD;
+			}
 			VkPipelineColorBlendStateCreateInfo blend{};
 			blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 			blend.attachmentCount = 1;

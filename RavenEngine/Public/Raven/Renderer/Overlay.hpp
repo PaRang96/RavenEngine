@@ -10,7 +10,8 @@ namespace Raven
 {
 	// The shared GPU 2D path, feed 1 (docs/UIDesign.md, section 4): screen-space quads drawn over the
 	// scene in one instanced draw, in submission order, with alpha blending. UI panels, text, images
-	// and on-screen diagnostics all use this one format; M6B's world-space sprites will share it.
+	// and on-screen diagnostics all use this one format. World-space sprites are render-world objects
+	// instead and share only the bindless sampling header (docs/RenderingContentDesign.md, B0 contract 4).
 	namespace OverlayFlags
 	{
 		// A filled rectangle, with optional rounded corners, border and soft edge.

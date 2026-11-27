@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Raven/Renderer/RenderView.hpp"
-#include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
@@ -11,7 +10,6 @@
 #include "Renderer/Vulkan/VulkanColorPipeline.hpp"
 #include "Renderer/Vulkan/VulkanDebugLinePipeline.hpp"
 #include "Renderer/Vulkan/VulkanOverlayPipeline.hpp"
-#include "Renderer/Vulkan/VulkanTexturePipeline.hpp"
 #include "Renderer/Vulkan/VulkanDrawQueue.hpp"
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
@@ -31,8 +29,6 @@ namespace Raven
 	class VulkanClearPass
 	{
 	public:
-		struct TexturedPipelines;
-
 		// The lit meshes' shaders: one vertex shader and a fragment shader per view (H3).
 		struct LitShaders
 		{
@@ -61,6 +57,9 @@ namespace Raven
 			// A material shader's shaded pipeline (B0 contract 7).
 			std::shared_ptr<const VulkanColorPipeline> CreateMaterial(std::span<const std::uint32_t> vertex,
 				std::span<const std::uint32_t> fragment) const;
+			// A sprite pipeline (B0 contract 4): Fill for opaque sprites, Fill with cutout, or Blend.
+			std::shared_ptr<const VulkanColorPipeline> CreateSprite(std::span<const std::uint32_t> vertex,
+				std::span<const std::uint32_t> fragment, VulkanColorPipeline::Mode mode, bool cutout) const;
 			VkFormat GetColorFormat() const noexcept { return m_ColorFormat; }
 			VkFormat GetDepthFormat() const noexcept { return m_DepthFormat; }
 
@@ -78,30 +77,31 @@ namespace Raven
 			bool m_Lines;
 		};
 
+		// The sprites' pipelines (B0 contract 4), from one vertex and one fragment program; they share the
+		// lit pipelines' layout, so the scene's sets stay bound between them.
+		struct SpritePipelines
+		{
+			std::shared_ptr<const VulkanColorPipeline> Opaque;
+			std::shared_ptr<const VulkanColorPipeline> Cutout;
+			std::shared_ptr<const VulkanColorPipeline> Blend;
+		};
+
 		// Pipelines depend only on attachment formats, so a recreated pass can keep them.
 		struct Pipelines
 		{
 			std::shared_ptr<const LitPipelines> Lit;
-			std::shared_ptr<const TexturedPipelines> Textured;
+			std::shared_ptr<const SpritePipelines> Sprites;
 			std::shared_ptr<const VulkanDebugLinePipeline> DebugLines;
 			std::shared_ptr<const VulkanOverlayPipeline> Overlay;
 			VkFormat ColorFormat = VK_FORMAT_UNDEFINED;
 			VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
 		};
 
-		struct TexturedPipelines
-		{
-			TexturedPipelines(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-				VkDescriptorSetLayout textureLayout, const VulkanShaderModule& vertex, const VulkanShaderModule& fragment);
-			VulkanTexturePipeline Opaque;
-			VulkanTexturePipeline Transparent;
-		};
-
 		VulkanClearPass(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 			const VulkanSwapchain& swapchain,
-			std::uint32_t graphicsFamily, VkDescriptorSetLayout textureLayout, VkDescriptorSetLayout bindlessLayout,
+			std::uint32_t graphicsFamily, VkDescriptorSetLayout bindlessLayout,
 			VkDescriptorSetLayout frameLayout, VulkanGpuScene& scene, const LitShaders& lit,
-			std::span<const std::uint32_t> texturedVertex, std::span<const std::uint32_t> texturedFragment,
+			std::span<const std::uint32_t> spriteVertex, std::span<const std::uint32_t> spriteFragment,
 			std::span<const std::uint32_t> debugLineVertex, std::span<const std::uint32_t> debugLineFragment,
 			std::span<const std::uint32_t> overlayVertex, std::span<const std::uint32_t> overlayFragment,
 			VulkanFrameTimeline& timeline, const Pipelines* reuse = nullptr);
@@ -109,8 +109,7 @@ namespace Raven
 		Pipelines GetPipelines() const;
 		bool IsCurrent(const LitPipelineFactory& factory) const noexcept;
 		void UseLitPipelines(std::shared_ptr<const LitPipelines> pipelines) noexcept;
-		bool ReplaceTexturedPipelines(std::span<const std::uint32_t> vertex,
-			std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish = {});
+		void ReplaceSpritePipelines(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
 		void ReplaceDebugLinePipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
 		void ReplaceOverlayPipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
 		// Material pipelines by key minus one; null entries draw with the shaded lit pipeline.
@@ -146,7 +145,6 @@ namespace Raven
 
 		struct RingOffsets
 		{
-			VkDeviceSize Textured = 0;
 			VkDeviceSize DebugLines = 0;
 			VkDeviceSize Overlay = 0;
 			std::vector<VkDeviceSize> Uploads;
@@ -168,12 +166,11 @@ namespace Raven
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
 		std::shared_ptr<const LitPipelines> m_LitPipelines;
 		std::vector<std::shared_ptr<const VulkanColorPipeline>> m_MaterialPipelines;
-		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_BindlessLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FrameLayout = VK_NULL_HANDLE;
 		// Owned by the context; outlives the pass.
 		VulkanGpuScene& m_Scene;
-		std::shared_ptr<const TexturedPipelines> m_TexturedPipelines;
+		std::shared_ptr<const SpritePipelines> m_SpritePipelines;
 		std::shared_ptr<const VulkanDebugLinePipeline> m_DebugLines;
 		std::shared_ptr<const VulkanOverlayPipeline> m_Overlay;
 		VkCommandPool m_CommandPool = VK_NULL_HANDLE;

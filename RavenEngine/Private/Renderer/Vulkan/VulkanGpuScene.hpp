@@ -3,6 +3,7 @@
 #include "Renderer/RenderWorldState.hpp"
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanMesh.hpp"
 #include "Renderer/Vulkan/ShaderInterface.hpp"
 
 #include <array>
@@ -27,8 +28,9 @@ namespace Raven
 	// GPU side of a RenderWorld (docs/GpuDrivenDesign.md, G2/G3/G5): resident object and material
 	// buffers, a resident per-group mesh table, compute culling into fixed-count indirect commands
 	// laid out contiguously per pipeline, and one indirect draw per pipeline range
-	// (docs/RenderingContentDesign.md, B0 contract 3). The context owns one; it follows whichever
-	// world it is given.
+	// (docs/RenderingContentDesign.md, B0 contract 3). Blended sprites are culled and sorted back to
+	// front on the CPU and drawn by one instanced draw (B0 contract 4). The context owns one; it
+	// follows whichever world it is given.
 	class VulkanGpuScene
 	{
 	public:
@@ -53,25 +55,35 @@ namespace Raven
 
 		// Plans this frame's upload and returns the ring bytes it needs. A null world draws nothing.
 		// The mesh table is resolved again only when the world's groups or meshRevision (bumped by
-		// the context when mesh contents are swapped or released) changed.
-		VkDeviceSize Plan(RenderWorld::State* world, const MeshResolver& resolveMesh, std::uint64_t meshRevision);
+		// the context when mesh contents are swapped or released) changed. The camera orders the
+		// blended sprites: ascending layer and order, then far to near, then first appearance.
+		VkDeviceSize Plan(RenderWorld::State* world, const MeshResolver& resolveMesh, std::uint64_t meshRevision,
+			const Mat4& view, const Mat4& viewProjection);
 		// Writes the planned records into the slot's ring after its Begin, and names the ring and
 		// buffers in the slot's set. The slot's previous frame has completed.
 		void Upload(std::size_t slot, VulkanUploadRing& ring);
 		// Outside rendering: apply uploads, then cull into the indirect commands.
 		void RecordPrepare(VkCommandBuffer commands, std::size_t slot, const Mat4& viewProjection) const;
 		// Inside rendering, with the lit pipeline's bindless and frame sets: every pipeline range with
-		// the given pipeline, as debug views draw them. Material shaders (B4) pick one per range.
-		using PipelineFor = std::function<const VulkanColorPipeline&(const DrawPipelineKey&)>;
+		// the pipeline pipelineFor gives it, skipping ranges it gives none. Material shaders (B4) pick
+		// one per range; debug views draw the meshes with one.
+		using PipelineFor = std::function<const VulkanColorPipeline*(const DrawPipelineKey&)>;
 		void RecordDraw(VkCommandBuffer commands, std::size_t slot, const PipelineFor& pipelineFor,
+			VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const;
+		// The visible blended sprites, back to front in one draw (B0 contract 4).
+		void RecordBlended(VkCommandBuffer commands, std::size_t slot, const VulkanColorPipeline& pipeline,
 			VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const;
 		// After rendering: copy the commands for the visible-count readback.
 		void RecordReadback(VkCommandBuffer commands, std::size_t slot) const;
 		// The frame was submitted: its upload is now part of the GPU state.
 		void Commit(std::size_t slot) noexcept;
-		// Visible objects of the slot's previous submitted frame; read after the slot's wait.
+		// Visible meshes of the slot's previous submitted frame (sprites are not counted); read after the
+		// slot's wait.
 		std::uint32_t ReadVisible(std::size_t slot) const noexcept;
 		std::uint32_t GetDrawCount() const noexcept { return m_CommandCount; }
+		// Commands of opaque and cut-out sprites, which debug views do not draw again.
+		std::uint32_t GetSpriteCommandCount() const noexcept { return m_SpriteCommands; }
+		std::uint32_t GetBlendedCount() const noexcept { return static_cast<std::uint32_t>(m_BlendSlots.size()); }
 		VkDeviceSize GetPlannedBytes() const noexcept { return m_PlannedBytes; }
 		std::uint32_t GetObjectCount() const noexcept { return m_ObjectCount; }
 
@@ -110,6 +122,8 @@ namespace Raven
 			VkDescriptorSet Set = VK_NULL_HANDLE;
 			std::shared_ptr<const VulkanBuffer> Readback;
 			std::uint32_t ReadbackGroups = 0;
+			// Which of the read-back commands draw sprites.
+			std::vector<std::uint8_t> ReadbackSprites;
 			// Ring offsets of this frame's upload.
 			VkDeviceSize MeshOffset = 0;
 			VkDeviceSize TemplateOffset = 0;
@@ -117,12 +131,26 @@ namespace Raven
 			VkDeviceSize SlotOffset = 0;
 			VkDeviceSize MaterialOffset = 0;
 			VkDeviceSize ValuesOffset = 0;
+			VkDeviceSize BlendOffset = 0;
 			VkBuffer Ring = VK_NULL_HANDLE;
+		};
+
+		// One blended sprite in this frame's sort, as two unsigned keys: layer and order, then far-to-near
+		// depth and first appearance.
+		struct BlendEntry
+		{
+			std::uint64_t Primary;
+			std::uint64_t Secondary;
+			std::uint32_t Slot;
 		};
 
 		struct ComputePipelines;
 		std::shared_ptr<const ComputePipelines> CreatePipelines(std::span<const std::uint32_t> scatterWords,
 			std::span<const std::uint32_t> cullWords) const;
+		void PlanBlended(const RenderWorld::State& world, const MeshResolver& resolveMesh, const Mat4& view,
+			const Mat4& viewProjection);
+		// Whether this frame records uploads and culling; a world without objects needs none.
+		bool Prepares() const noexcept { return m_World && (m_ObjectCount != 0 || m_CommandCount != 0); }
 		bool Reserve(Storage& storage, VkDeviceSize bytes, VkBufferUsageFlags usage);
 		void Destroy() noexcept;
 
@@ -150,6 +178,8 @@ namespace Raven
 		RenderWorld::State* m_World = nullptr;
 		std::vector<MeshEntry> m_MeshTable;
 		std::vector<std::uint32_t> m_CommandGroups;
+		// Per command: whether it draws sprites.
+		std::vector<std::uint8_t> m_CommandSprites;
 		std::vector<CommandRange> m_Ranges;
 		std::vector<VkDrawIndexedIndirectCommand> m_TemplateRecords;
 		bool m_UploadMeshes = false;
@@ -159,6 +189,7 @@ namespace Raven
 		std::uint32_t m_ObjectCount = 0;
 		std::uint32_t m_GroupSlots = 0;
 		std::uint32_t m_CommandCount = 0;
+		std::uint32_t m_SpriteCommands = 0;
 		std::uint64_t m_MeshRevision = 0;
 		std::uint32_t m_MaterialCount = 0;
 		bool m_AllMaterials = false;
@@ -166,6 +197,11 @@ namespace Raven
 		std::uint64_t m_UploadedValuesRevision = ~0ull;
 		std::vector<std::uint32_t> m_MaterialSlots;
 		std::vector<GpuMaterialData> m_MaterialRecords;
+		// This frame's blended sprites, back to front, after the culled instance regions in Visible.
+		std::vector<BlendEntry> m_BlendEntries;
+		std::vector<std::uint32_t> m_BlendSlots;
+		std::uint32_t m_BlendBase = 0;
+		VulkanMeshPool::Ranges m_BlendMesh{};
 		bool m_Full = false;
 		VkDeviceSize m_PlannedBytes = 0;
 

@@ -118,7 +118,7 @@ Open questions, settled when this section is written:
 
 ### Today (checked)
 
-Sprites are gathered on the CPU every frame (`GameSession::GatherSprites`) into `VulkanTexturedDraw` records: one textured mesh, one texture with its own descriptor and one model matrix each. Lit meshes already use a bindless texture array behind `Raven/Material.hlsli` (M3, G4). There is no text drawing.
+This was the state before M6C. Sprites were gathered on the CPU every frame (`GameSession::GatherSprites`) into `VulkanTexturedDraw` records: one textured mesh, one texture with its own descriptor and one model matrix each. Lit meshes already used a bindless texture array behind `Raven/Material.hlsli` (M3, G4). There was no text drawing. B5 moved sprites into the render world (see feed 2 below).
 
 ### One instance format, two feeds
 
@@ -138,9 +138,9 @@ It is drawn by one family of shaders sharing an engine header, reloaded through 
 
 **Feed 1, screen-space UI (M6C).** Built on the CPU every frame from the laid-out element list, written into the persistently mapped per-frame ring (M2), and drawn in an overlay pass after the 3D scene with alpha blending, in layer and submission order. There is no culling; clipping happens in the fragment shader through the clip index, so a typical HUD or menu is **one instanced draw**.
 
-**Feed 2, world-space quads (M6B, FD-20).** Sprites, and later world-space bars and labels, go through the render world with GPU culling, using the same instance format and texture indices. This is the path that scales to thousands of RTS health bars.
+**Feed 2, world-space quads (M6B, FD-20).** Sprites, and later world-space bars and labels, go through the render world with GPU culling. This is the path that scales to thousands of RTS health bars.
 
-M6C builds the instance format, the shader header and feed 1. M6B builds feed 2 on the same format, replacing the per-texture sprite descriptors. If M6B starts first, it builds the format and header from this section and M6C adds feed 1. Either way, nothing is written twice.
+M6C built the instance format, the shader header and feed 1. **Corrected by B0 contract 4 and built in B5 (2026-11-27):** world-space quads do not use the overlay's instance format, which is screen-space and not culled on the GPU. They are render-world objects with the normal 128-byte object record and the material table's texture elements, culled and drawn like meshes; blended ones are sorted on the CPU. The two feeds share the bindless array and its sampling helper (`Raven/Bindless.hlsli`), and the per-texture sprite descriptors are gone ([RenderingContentDesign.md](RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27)).
 
 ### Text
 

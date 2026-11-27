@@ -279,11 +279,91 @@ namespace Raven
 		return true;
 	}
 
-	VkDeviceSize VulkanGpuScene::Plan(RenderWorld::State* world, const MeshResolver& resolveMesh, std::uint64_t meshRevision)
+	void VulkanGpuScene::PlanBlended(const RenderWorld::State& world, const MeshResolver& resolveMesh, const Mat4& view,
+		const Mat4& viewProjection)
+	{
+		m_BlendEntries.clear();
+		m_BlendSlots.clear();
+		const auto* quad = world.Blended.empty() || !resolveMesh ? nullptr : resolveMesh(world.SpriteMesh);
+		m_BlendMesh = quad ? quad->Ranges : VulkanMeshPool::Ranges{};
+		if (!quad || m_BlendMesh.IndexCount == 0)
+			return;
+		const auto& local = quad->LocalBounds;
+		// The culling planes in float, tested like Cull.comp.hlsl, and the view's depth row.
+		std::array<std::array<float, 4>, 6> planes{};
+		const auto& frustum = ViewFrustum(viewProjection).GetPlanes();
+		for (std::size_t plane = 0; plane < planes.size(); ++plane)
+			for (std::size_t component = 0; component < 4; ++component)
+				planes[plane][component] = static_cast<float>(frustum[plane][component]);
+		const std::array<float, 4> depthRow{ view(2, 0), view(2, 1), view(2, 2), view(2, 3) };
+		// Signed integers and floats mapped to unsigned keys that sort in the same order.
+		const auto ordered = [](std::int32_t value) { return static_cast<std::uint32_t>(value) ^ 0x80000000u; };
+		const auto farFirst = [](float depth)
+		{
+			std::uint32_t bits;
+			const float normalized = depth + 0.0f;
+			std::memcpy(&bits, &normalized, sizeof(bits));
+			bits = (bits & 0x80000000u) != 0 ? ~bits : bits | 0x80000000u;
+			return ~bits;
+		};
+		m_BlendEntries.reserve(world.Blended.size());
+		for (const auto slot : world.Blended)
+		{
+			const auto& object = world.Objects[slot];
+			if ((object.Flags & GpuObjectHidden) != 0)
+				continue;
+			// The quad's bounds in the world; the rows are a finite affine model.
+			const auto& rows = object.WorldRows;
+			float center[3];
+			float extent[3];
+			for (std::size_t row = 0; row < 3; ++row)
+			{
+				center[row] = rows[row].X * local.Center.X + rows[row].Y * local.Center.Y + rows[row].Z * local.Center.Z +
+					rows[row].W;
+				extent[row] = std::abs(rows[row].X) * local.HalfExtent.X + std::abs(rows[row].Y) * local.HalfExtent.Y +
+					std::abs(rows[row].Z) * local.HalfExtent.Z;
+			}
+			const float depth = -(depthRow[0] * center[0] + depthRow[1] * center[1] + depthRow[2] * center[2] + depthRow[3]);
+			// A bound beyond float range cannot be tested or ordered; it draws nothing.
+			if (!std::isfinite(depth) || !std::isfinite(extent[0] + extent[1] + extent[2]))
+				continue;
+			bool inside = true;
+			for (const auto& p : planes)
+			{
+				const float distance = p[0] * center[0] + p[1] * center[1] + p[2] * center[2] + p[3];
+				const float radius = std::abs(p[0]) * extent[0] + std::abs(p[1]) * extent[1] + std::abs(p[2]) * extent[2];
+				// Keep touching bounds, with the GPU culling's relative tolerance.
+				const float tolerance = 1.0e-4f * std::max(1.0f, std::max(std::abs(distance), radius));
+				if (distance + radius < -tolerance)
+				{
+					inside = false;
+					break;
+				}
+			}
+			if (!inside)
+				continue;
+			const auto& source = world.Sources[slot];
+			m_BlendEntries.push_back({ std::uint64_t{ ordered(source.SortLayer) } << 32 | ordered(source.SortOrder),
+				std::uint64_t{ farFirst(depth) } << 32 | source.Sequence, slot });
+		}
+		std::sort(m_BlendEntries.begin(), m_BlendEntries.end(), [](const BlendEntry& left, const BlendEntry& right)
+		{
+			return left.Primary != right.Primary ? left.Primary < right.Primary : left.Secondary < right.Secondary;
+		});
+		m_BlendSlots.reserve(m_BlendEntries.size());
+		for (const auto& entry : m_BlendEntries)
+			m_BlendSlots.push_back(entry.Slot);
+	}
+
+	VkDeviceSize VulkanGpuScene::Plan(RenderWorld::State* world, const MeshResolver& resolveMesh, std::uint64_t meshRevision,
+		const Mat4& view, const Mat4& viewProjection)
 	{
 		m_World = world;
 		m_DirtySlots.clear();
 		m_DirtyRecords.clear();
+		m_BlendEntries.clear();
+		m_BlendSlots.clear();
+		m_BlendBase = 0;
 		m_ObjectCount = world ? static_cast<std::uint32_t>(world->Objects.size()) : 0;
 		m_GroupSlots = world ? static_cast<std::uint32_t>(world->Groups.size()) : 0;
 		m_MaterialCount = world ? static_cast<std::uint32_t>(world->Materials.size()) : 0;
@@ -294,6 +374,7 @@ namespace Raven
 		if (!world)
 		{
 			m_CommandCount = 0;
+			m_SpriteCommands = 0;
 			return 0;
 		}
 		m_Full = m_PendingFull || world != m_UploadedWorld || world->Generation != m_UploadedGeneration ||
@@ -322,13 +403,19 @@ namespace Raven
 		if (m_UploadMeshes)
 		{
 			m_CommandGroups.clear();
+			// Blended groups get no command: the CPU sorts their objects (B0 contract 4), and their mesh
+			// table entries stay empty, so culling skips them.
 			for (std::uint32_t group = 0; group < m_GroupSlots; ++group)
-				if (world->Groups[group].Live)
+				if (world->Groups[group].Live && world->Groups[group].Key.Pipeline.Blend != DrawBlendAlpha)
 					m_CommandGroups.push_back(group);
 			std::stable_sort(m_CommandGroups.begin(), m_CommandGroups.end(), [world](std::uint32_t left, std::uint32_t right)
 			{
 				return world->Groups[left].Key.Pipeline < world->Groups[right].Key.Pipeline;
 			});
+			m_CommandSprites.clear();
+			for (const auto group : m_CommandGroups)
+				m_CommandSprites.push_back(world->Groups[group].Key.Pipeline.Kind == DrawKindSprite ? 1 : 0);
+			m_SpriteCommands = static_cast<std::uint32_t>(std::count(m_CommandSprites.begin(), m_CommandSprites.end(), 1));
 			m_Ranges.clear();
 			m_MeshTable.assign(m_GroupSlots, MeshEntry{});
 			for (std::uint32_t command = 0; command < m_CommandGroups.size(); ++command)
@@ -354,6 +441,10 @@ namespace Raven
 			}
 		}
 		m_CommandCount = static_cast<std::uint32_t>(m_CommandGroups.size());
+		// The blended list follows the culled instance regions in Visible.
+		for (const auto group : m_CommandGroups)
+			m_BlendBase += world->Groups[group].Count;
+		PlanBlended(*world, resolveMesh, view, viewProjection);
 		// Commands take consecutive instance regions sized by their groups' counts (G5).
 		m_UploadTemplates = m_UploadMeshes || world->CountRevision != m_UploadedCounts ||
 			VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand) > m_Templates.Capacity;
@@ -392,6 +483,7 @@ namespace Raven
 			bytes += align(VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData));
 		else
 			bytes += align(m_DirtySlots.size() * sizeof(std::uint32_t)) + align(m_DirtyRecords.size() * sizeof(GpuObjectData));
+		bytes += align(m_BlendSlots.size() * sizeof(std::uint32_t));
 		m_PlannedBytes = bytes;
 		return bytes;
 	}
@@ -433,6 +525,7 @@ namespace Raven
 		auto* world = m_World;
 		slot.ValuesOffset = m_UploadValues ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Values.data()),
 			world->Values.size() * sizeof(Vec4))) : 0;
+		slot.BlendOffset = m_BlendSlots.empty() ? 0 : ring.Push(Bytes(m_BlendSlots));
 		slot.MaterialOffset = m_AllMaterials ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Materials.data()),
 			std::size_t{ m_MaterialCount } * sizeof(GpuMaterialData))) : ring.Push(Bytes(m_MaterialRecords));
 		if (m_Full)
@@ -474,7 +567,7 @@ namespace Raven
 
 	void VulkanGpuScene::RecordPrepare(VkCommandBuffer commands, std::size_t slotIndex, const Mat4& viewProjection) const
 	{
-		if (!m_World || m_CommandCount == 0)
+		if (!Prepares())
 			return;
 		const auto& slot = m_Slots.at(slotIndex);
 		const auto& vk = m_DeviceOwner.GetCommands();
@@ -500,12 +593,15 @@ namespace Raven
 			copy(slot.TemplateOffset, m_Templates, 0, commandBytes);
 			copy(slot.TemplateOffset, m_Commands, 0, commandBytes);
 		}
-		else
+		else if (commandBytes != 0)
 		{
 			// Cull accumulates instance counts, so the commands start from the templates every frame.
 			const VkBufferCopy region{ 0, 0, commandBytes };
 			vkCmdCopyBuffer(commands, m_Templates.Buffer->Get(), m_Commands.Buffer->Get(), 1, &region);
 		}
+		// The blended sprites' order, after the regions culling fills.
+		copy(slot.BlendOffset, m_Visible, VkDeviceSize{ m_BlendBase } * sizeof(std::uint32_t),
+			m_BlendSlots.size() * sizeof(std::uint32_t));
 		if (m_UploadValues)
 			copy(slot.ValuesOffset, m_Values, 0, VkDeviceSize{ m_World->Values.size() } * sizeof(Vec4));
 		if (m_AllMaterials)
@@ -539,7 +635,7 @@ namespace Raven
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR);
 
-		if (m_ObjectCount != 0)
+		if (m_ObjectCount != 0 && m_CommandCount != 0)
 		{
 			CullConstants cull{};
 			const ViewFrustum frustum(viewProjection);
@@ -570,18 +666,36 @@ namespace Raven
 		const VulkanColorPipeline* bound = nullptr;
 		for (const auto& range : m_Ranges)
 		{
-			const auto& pipeline = pipelineFor(range.Pipeline);
-			if (&pipeline != bound)
+			const auto* pipeline = pipelineFor(range.Pipeline);
+			if (!pipeline)
+				continue;
+			if (pipeline != bound)
 			{
-				pipeline.Bind(commands, textures);
-				pipeline.BindFrame(commands, frame);
-				pipeline.BindScene(commands, m_Slots.at(slotIndex).Set);
-				bound = &pipeline;
+				pipeline->Bind(commands, textures);
+				pipeline->BindFrame(commands, frame);
+				pipeline->BindScene(commands, m_Slots.at(slotIndex).Set);
+				bound = pipeline;
 			}
 			vkCmdDrawIndexedIndirect(commands, m_Commands.Buffer->Get(),
 				VkDeviceSize{ range.First } * sizeof(VkDrawIndexedIndirectCommand), range.Count,
 				sizeof(VkDrawIndexedIndirectCommand));
 		}
+	}
+
+	void VulkanGpuScene::RecordBlended(VkCommandBuffer commands, std::size_t slotIndex, const VulkanColorPipeline& pipeline,
+		VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const
+	{
+		if (!m_World || m_BlendSlots.empty())
+			return;
+		const VkDeviceSize offset = 0;
+		vkCmdBindVertexBuffers(commands, 0, 1, &vertices, &offset);
+		vkCmdBindIndexBuffer(commands, indices, 0, VK_INDEX_TYPE_UINT32);
+		pipeline.Bind(commands, textures);
+		pipeline.BindFrame(commands, frame);
+		pipeline.BindScene(commands, m_Slots.at(slotIndex).Set);
+		// Instances draw in order, so one draw keeps the back-to-front order exactly.
+		vkCmdDrawIndexed(commands, m_BlendMesh.IndexCount, static_cast<std::uint32_t>(m_BlendSlots.size()),
+			m_BlendMesh.FirstIndex, m_BlendMesh.VertexOffset, m_BlendBase);
 	}
 
 	void VulkanGpuScene::RecordReadback(VkCommandBuffer commands, std::size_t slotIndex) const
@@ -599,11 +713,21 @@ namespace Raven
 	{
 		if (!m_World)
 			return;
-		m_Slots.at(slotIndex).ReadbackGroups = m_CommandCount;
+		auto& slot = m_Slots.at(slotIndex);
+		slot.ReadbackGroups = m_CommandCount;
+		try
+		{
+			slot.ReadbackSprites = m_CommandSprites;
+		}
+		catch (...)
+		{
+			// Without the mask the next read counts nothing rather than miscounting.
+			slot.ReadbackGroups = 0;
+		}
 		m_UploadedWorld = m_World;
 		m_UploadedGeneration = m_World->Generation;
-		// Only a frame that recorded its copies holds them; one without commands copied nothing.
-		if (m_CommandCount != 0)
+		// Only a frame that recorded its copies holds them; one without objects copied nothing.
+		if (Prepares())
 		{
 			if (m_UploadValues)
 				m_UploadedValuesRevision = m_World->ValuesRevision;
@@ -623,8 +747,10 @@ namespace Raven
 			return 0;
 		std::uint32_t visible = 0;
 		const auto* mapped = slot.Readback->GetMapped();
-		for (std::uint32_t group = 0; group < slot.ReadbackGroups; ++group)
+		for (std::uint32_t group = 0; group < slot.ReadbackGroups && group < slot.ReadbackSprites.size(); ++group)
 		{
+			if (slot.ReadbackSprites[group])
+				continue;
 			VkDrawIndexedIndirectCommand command;
 			std::memcpy(&command, mapped + group * sizeof(command), sizeof(command));
 			visible += command.instanceCount;

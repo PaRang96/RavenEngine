@@ -14,9 +14,6 @@
 #include "Raven/Renderer/OrthographicCamera.hpp"
 #include "Raven/Renderer/TextureDesc.hpp"
 #include "Raven/Renderer/TextureHandle.hpp"
-#include "Raven/Renderer/TexturedVertex.hpp"
-#include "Raven/Renderer/Vulkan/VulkanTexturedDraw.hpp"
-#include "Raven/Renderer/Vulkan/VulkanTransparentDraw.hpp"
 #include "Raven/Renderer/CameraView.hpp"
 
 #include <cstddef>
@@ -42,8 +39,6 @@ namespace Raven
 		std::size_t RetiredTextures = 0;
 		std::size_t MeshSlots = 0;
 		std::size_t TextureSlots = 0;
-		std::size_t DescriptorBindings = 0;
-		std::size_t DescriptorPools = 0;
 		// Bindless elements in use per class (B0 contract 8).
 		std::size_t BindlessEngine = 0;
 		std::size_t BindlessContent = 0;
@@ -91,9 +86,9 @@ namespace Raven
 		RAVEN_API bool SwapMeshContents(MeshHandle left, MeshHandle right) noexcept;
 		RAVEN_API bool SwapTextureContents(TextureHandle left, TextureHandle right) noexcept;
 
-		// UV meshes use a separate type to enforce the matching vertex/pipeline layout.
-		RAVEN_API const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
-			std::span<const std::uint16_t> indices);
+		// The quad sprites draw on, which a render world names in Sync (docs/RenderingContentDesign.md, B0
+		// contract 4); it lives as long as the context.
+		RAVEN_API MeshHandle GetSpriteMesh() const noexcept;
 
 		// Development: recompile every engine shader (vertex, fragment and compute) when it or an
 		// include changes, and publish compatible results between frames (docs/HotReloadDesign.md, H2).
@@ -115,18 +110,15 @@ namespace Raven
 			std::uint32_t Height;
 		};
 
-		// Returns the camera and drawable extent used to present this frame. Visible opaque textured
-		// draws precede transparent draws; transparent order is ascending layer and order, then
-		// far-to-near camera depth, with submission order breaking ties. All submitted resources
-		// must belong to this context.
-		// Lit meshes come from world, culled and drawn on the GPU (docs/GpuDrivenDesign.md, G5);
-		// null draws none. The world's mesh handles and textures must belong to this context.
+		// Returns the camera and drawable extent used to present this frame.
+		// Lit meshes and sprites come from world (docs/GpuDrivenDesign.md, G5; docs/RenderingContentDesign.md,
+		// B0 contract 4); null draws none, and its mesh handles and textures must belong to this context.
+		// Meshes and opaque and cut-out sprites are culled and drawn on the GPU; blended sprites follow,
+		// in ascending layer and order, then far-to-near camera depth, with first appearance breaking ties.
 		// Debug lines (vertex pairs) are drawn depth-tested against the scene; the overlay's screen-space
 		// quads are drawn last, after its texture regions are written (docs/UIDesign.md, section 4).
 		RAVEN_API std::optional<RenderedCameraView> DrawFrame(const CameraViewBuilder& buildView,
-			RenderWorld* world,
-			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {},
+			RenderWorld* world, const SceneLighting& lighting = {},
 			std::span<const DebugLineVertex> debugLines = {}, const OverlayFrame& overlay = {});
 		// The element of a texture in the bindless array that overlay quads name; zero (white) when
 		// the handle does not resolve.
