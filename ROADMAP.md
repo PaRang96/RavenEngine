@@ -229,7 +229,7 @@ Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, te
 
 ### M6C — Game services and the sample game
 
-Design: [GameServicesDesign.md](docs/GameServicesDesign.md), decided 2026-11-24 (FD-29, FD-31 to FD-34, FD-46 to FD-48). FD-47 (movement and control) is provisional until its measurements; FD-31 (text and UI) is approved for the early deliverable only, with the full stack planned in [UIDesign.md](docs/UIDesign.md). Direction: keep the ability to build an RTS, a real-time action game and other genres, without building RTS-specific systems now.
+Design: [GameServicesDesign.md](docs/GameServicesDesign.md), decided 2026-11-24 (FD-29, FD-31 to FD-34, FD-46 to FD-48). FD-47 (movement and control) is confirmed for its built part (owner, 2026-11-27), with the crowd backend decided at its own milestone; FD-31 (text and UI) is approved for the early deliverable only, with the full stack planned in [UIDesign.md](docs/UIDesign.md). Direction: keep the ability to build an RTS, a real-time action game and other genres, without building RTS-specific systems now.
 
 - [ ] C1: input mapping contexts that consume input, one ordered event list, the developer context, the action map, key listening and layout-aware key names (FD-29).
 - [ ] C2: per-user data path, field-table records in text and binary forms, crash-safe writes and the host-owned profile store (FD-33).

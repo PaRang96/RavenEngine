@@ -2,7 +2,7 @@
 
 Status:
 - **Decided (2026-11-24),** with two parts approved only provisionally. The owner settled each decision one at a time; the record is in [Owner decisions](#owner-decisions-2026-11-24).
-  - **FD-47 (movement and control) is provisional.** It is revisited after the measurements listed in [Measurements that gate provisional parts](#measurements-that-gate-provisional-parts).
+  - **FD-47 (movement and control) is confirmed for the part that is built (owner, 2026-11-27, joint review):** the control phase, the input stream, `MoverComponent` and the character backend, for tens to a few hundred characters. The crowd backend is its own decision at its own milestone. It was provisional until the [measurements](#measurements-that-gate-provisional-parts).
   - **FD-31 (text and UI) is approved for the early deliverable only.** Full approval waits for [UIDesign.md](UIDesign.md).
 - **Implemented on Windows (2026-11-25), pending the owner's review.** The step order is in [Step order](#step-order); finished steps are recorded in [Implementation record](#implementation-record); the exit is in [M6C exit checklist](#m6c-exit-checklist), with its [results](#m6c-exit-checklist-results-2026-11-25).
 
@@ -17,7 +17,7 @@ This note records the M6C decisions FD-29 and FD-31 to FD-34 from [FutureDecisio
 | [FD-29](#fd-29--input-mapping-contexts-and-bindings) | How actions map to input, and how engine keys and game keys stop colliding | Prioritized mapping contexts that consume input (engine developer, then editor, then game), one ordered event list for all devices, and a rebinding feature set | Decided |
 | [FD-46](#fd-46--the-sample-game) | What the M6 "small 3D game" is | `Games/Arena`: a craft collecting energy cells while drones roam | Decided |
 | [FD-32](#fd-32--collision-and-physics) | How much collision and physics v1 has | Jolt Physics inside the engine; game components stay the source of truth | Decided |
-| [FD-47](#fd-47--movement-and-control) | How characters move, and how input reaches the simulation | An engine-owned input stream (adopted with amendments from another team's proposal), one `MoverComponent`, and a character backend on Jolt | **Provisional** |
+| [FD-47](#fd-47--movement-and-control) | How characters move, and how input reaches the simulation | An engine-owned input stream (adopted with amendments from another team's proposal), one `MoverComponent`, and a character backend on Jolt | **Confirmed (built part), 2026-11-27** |
 | [FD-48](#fd-48--determinism-level) | How deterministic the simulation must be | Level 1 now (same build, same machine), with one tracked check and no replay feature; level 2 at the RTS milestone; level 3 later | Decided |
 | [FD-31](#fd-31--text-and-ui) | Whether and how the engine draws text and UI | An engine-owned unified 2D and UI stack for game and editor; no Dear ImGui | **Early deliverable only** |
 | [FD-33](#fd-33--save-data-and-user-files) | Where and how per-user data is written | OS per-user folders, field-table records, text settings, binary saves with a checksum, crash-safe writes, a host-owned profile store and a developer quick-save | Decided |
@@ -141,7 +141,7 @@ Also rejected: Bullet (ageing), Havok (commercial), Box2D (2D only).
 
 ## FD-47 — Movement and control
 
-**Status: provisional.** The control layer was proposed by another team; the owner took it as a strong suggestion and adopted it with the amendments below. The whole decision is revisited after the measurements.
+**Status: confirmed for the built part (owner, 2026-11-27, joint review).** The control layer was proposed by another team; the owner took it as a strong suggestion and adopted it provisionally with the amendments below, to be revisited after the measurements. After them (measurement 3; 500 characters at 2.9 ms a step after review amendment AA2-GP-06), the owner confirmed the control phase, the input stream, `MoverComponent` and the character backend, whose measured scope is tens to a few hundred characters. The crowd backend is not built, so it is decided at its own milestone on its own measurements. The reason given: confirming fixes the contract that every game from now on is written against, so that code is not throwaway, while committing only to what the numbers support.
 
 ### Why movement and control are hard to get right once
 
@@ -1052,7 +1052,7 @@ The owner settled each decision one at a time.
 | FD-29 | A(b), B(b), C as listed | "context should work / input mapping context would be great" |
 | FD-46 | The arena game | "that is getting closer to what i really want in the future" |
 | FD-32 | Jolt inside the engine | "jolt physics, i personally like that solution", after a review of its costs and pitfalls; the physics iteration set approved separately, with the requirement to "find effective way for game dev iteration" |
-| FD-47 | Input stream with amendments, minimal movement | Provisional. The owner first set RTS as the primary genre, then clarified: "we must secure ability to build rts", not focus on it. The control layer came from another team's proposal, taken "as strong suggestion" |
+| FD-47 | Input stream with amendments, minimal movement | Provisional. The owner first set RTS as the primary genre, then clarified: "we must secure ability to build rts", not focus on it. The control layer came from another team's proposal, taken "as strong suggestion". *Confirmed 2026-11-27 (joint review, option A) for the built part; the crowd backend is decided at its milestone.* |
 | FD-48 | Level 1 with one check, no replay; level 2 at the RTS milestone; level 3 later | "approved for now / after measurement, we can decide and discuss things again" |
 | FD-31 | Engine-owned unified stack, no ImGui | "this approval is not full approval, but for early deliverable"; the owner asked to plan the engine-owned method correctly |
 | FD-33 | A(b), B (field-table records, text plus binary with checksum), C, D with the developer quick-save | The owner asked for formats beyond JSON, including binary serialization and encryption, which became the stage pipeline |
