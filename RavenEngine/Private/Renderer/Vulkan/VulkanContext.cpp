@@ -619,7 +619,10 @@ namespace Raven
 	{
 		CollectResources();
 		const auto index = ReserveResourceSlot(m_Textures);
-		auto texture = std::make_shared<VulkanTexture>(m_Device, m_PhysicalDevice, description, m_Uploads);
+		// Content gets mip maps (FD-21); engine textures such as glyph pages are updated in place and
+		// keep one level.
+		auto texture = std::make_shared<VulkanTexture>(m_Device, m_PhysicalDevice, description, m_Uploads,
+			use == TextureUse::Content);
 		// The batch references the image until the GPU has run it.
 		m_Uploads.Keep(texture);
 		texture->SetDescriptorSet(m_TextureDescriptors.CreateBinding(*texture, use));

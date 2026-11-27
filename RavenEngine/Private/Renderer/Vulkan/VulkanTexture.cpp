@@ -5,6 +5,7 @@
 #include "Renderer/Vulkan/VulkanUploadBatch.hpp"
 #include "Raven/Core/Log.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -22,7 +23,7 @@ namespace Raven
 	}
 
 	VulkanTexture::VulkanTexture(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
-		const TextureDesc& description, VulkanUploadBatch& uploads)
+		const TextureDesc& description, VulkanUploadBatch& uploads, bool mipmaps)
 		: m_Device(device.Get()), m_Memory(&device.GetMemory()), m_Extent{ description.Width, description.Height }
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
@@ -54,6 +55,12 @@ namespace Raven
 			VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
 		if ((formatProperties.optimalTilingFeatures & required) != required)
 			throw std::runtime_error("RGBA8 texture format does not support sampling with linear filtering");
+		// The mip chain is made by blitting each level from the one above with linear filtering, which
+		// the format must support; without it the texture keeps one level and samples as before.
+		constexpr VkFormatFeatureFlags blit = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+		if (mipmaps && !description.Pixels.empty() && (formatProperties.optimalTilingFeatures & blit) == blit)
+			for (auto size = std::max(description.Width, description.Height); size > 1; size /= 2)
+				++m_Levels;
 		constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT |
 			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 		VkImageFormatProperties imageProperties{};
@@ -71,7 +78,7 @@ namespace Raven
 			imageInfo.imageType = VK_IMAGE_TYPE_2D;
 			imageInfo.format = m_Format;
 			imageInfo.extent = { m_Extent.width, m_Extent.height, 1 };
-			imageInfo.mipLevels = 1;
+			imageInfo.mipLevels = m_Levels;
 			imageInfo.arrayLayers = 1;
 			imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 			imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -86,7 +93,7 @@ namespace Raven
 			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 			viewInfo.format = m_Format;
 			viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			viewInfo.subresourceRange.levelCount = 1;
+			viewInfo.subresourceRange.levelCount = m_Levels;
 			viewInfo.subresourceRange.layerCount = 1;
 			VkImageView view = VK_NULL_HANDLE;
 			CheckTextureResult(vkCreateImageView(m_Device, &viewInfo, nullptr, &view), "vkCreateImageView (texture)");
@@ -114,7 +121,7 @@ namespace Raven
 			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.image = m_Image;
 			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			barrier.subresourceRange.levelCount = 1;
+			barrier.subresourceRange.levelCount = m_Levels;
 			barrier.subresourceRange.layerCount = 1;
 			VkDependencyInfoKHR dependency{};
 			dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
@@ -137,6 +144,37 @@ namespace Raven
 				vkCmdClearColorImage(commands, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1,
 					&barrier.subresourceRange);
 			}
+
+			// Each level is blitted from the one above, which first becomes a transfer source; every
+			// finished level moves to the sampled layout.
+			barrier.subresourceRange.levelCount = 1;
+			for (std::uint32_t level = 1; level < m_Levels; ++level)
+			{
+				barrier.subresourceRange.baseMipLevel = level - 1;
+				barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
+				barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
+				barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
+				barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT_KHR;
+				barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				barrier2(commands, &dependency);
+				const auto extent = [](std::uint32_t size, std::uint32_t at) { return static_cast<std::int32_t>(std::max(size >> at, 1u)); };
+				VkImageBlit region{};
+				region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1 };
+				region.srcOffsets[1] = { extent(m_Extent.width, level - 1), extent(m_Extent.height, level - 1), 1 };
+				region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+				region.dstOffsets[1] = { extent(m_Extent.width, level), extent(m_Extent.height, level), 1 };
+				vkCmdBlitImage(commands, m_Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_Image,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR);
+				barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
+				barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT_KHR;
+				barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+				barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR;
+				barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				barrier2(commands, &dependency);
+			}
+			barrier.subresourceRange.baseMipLevel = m_Levels - 1;
 
 			// The batch's closing barrier makes the writes visible; this one sets the sampled layout.
 			barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
@@ -169,6 +207,7 @@ namespace Raven
 		swap(m_View, other.m_View);
 		swap(m_Format, other.m_Format);
 		swap(m_Extent, other.m_Extent);
+		swap(m_Levels, other.m_Levels);
 	}
 
 	VulkanTexture::~VulkanTexture()

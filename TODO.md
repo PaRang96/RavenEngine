@@ -193,7 +193,7 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
 - [x] B1: sprite baseline and reference captures.
 - [x] B2: contract window, `raven-project 3` with sidecars, device limits and bindless classes, the draw-group restructure, `.ravenmaterial` files and the keyed material table. *Done 2026-11-27 ([RenderingContentDesign.md](docs/RenderingContentDesign.md#b2-part-5--material-files-and-the-keyed-material-table-2026-11-27)).*
 - [ ] FD-27 follow-up: every object moving at 50k needs 8.6–9.0 ms of CPU against the 3.5 ms budget; tighten the single-threaded world pass and sync first, then use the job system. The 20% case (3.16–3.56 ms p95) is at the budget's edge too.
-- [ ] B3: upload batch, then GPU mips and the sampler set (per-texture samplers removed); VMA download needs the owner's approval.
+- [x] B3: upload batch, then GPU mips and the sampler set (per-texture samplers removed); VMA download needs the owner's approval. *Done 2026-11-27: VMA 3.5.0 vendored (owner approved the download), the upload batch, one shared mip sampler and GPU mip chains ([RenderingContentDesign.md](docs/RenderingContentDesign.md#b3--memory-the-upload-batch-the-sampler-and-mip-maps-2026-11-27)); the repeat sampler and per-material choice move to B4.*
 - [ ] B4: material shaders (fragment ABI v2, vertex offset hook, shader assets, per-pipeline ranges).
 - [ ] B5: sprites on the GPU path.
 - [ ] B6: async assets with placeholders.

@@ -14,8 +14,10 @@ namespace Raven
 	public:
 		// The contents are recorded into the upload batch, which keeps the staging buffer; the caller
 		// keeps the texture alive in the batch too (B0 contract 5).
+		// With mipmaps, a texture created from pixels gets its full mip chain, generated on the GPU in
+		// the batch (FD-21); a cleared texture, or a format that cannot blit, keeps one level.
 		VulkanTexture(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
-			const TextureDesc& description, VulkanUploadBatch& uploads);
+			const TextureDesc& description, VulkanUploadBatch& uploads, bool mipmaps = false);
 		~VulkanTexture();
 
 		VkImage GetImage() const { return m_Image; }
@@ -31,6 +33,7 @@ namespace Raven
 		VkImageView GetView() const { return m_View; }
 		VkFormat GetFormat() const { return m_Format; }
 		VkExtent2D GetExtent() const { return m_Extent; }
+		std::uint32_t GetLevels() const { return m_Levels; }
 
 		VulkanTexture(const VulkanTexture&) = delete;
 		VulkanTexture& operator=(const VulkanTexture&) = delete;
@@ -48,5 +51,6 @@ namespace Raven
 		std::uint32_t m_BindlessIndex = 0;
 		VkFormat m_Format = VK_FORMAT_UNDEFINED;
 		VkExtent2D m_Extent{};
+		std::uint32_t m_Levels = 1;
 	};
 }
