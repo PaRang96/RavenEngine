@@ -734,6 +734,8 @@ No tracked test was added. Tests link RavenCore, which does not export the priva
 
 ### C8, second part — the engine mixer (2026-11-25)
 
+*Owner review 2026-11-27 (joint review item 4): confirmed for what is built, the mixer, sound events, buses and the miniaudio device layer on Windows ([planning decision 6](../ROADMAP.md#planning-decisions-2026-11-24)). The device layer on macOS and Linux stays provisional until M4 plays sound there.*
+
 **Decisions.**
 - **A2 (owner, 2026-11-25):** "Implements our own mixer". No middleware; FMOD or Wwise could later be another backend if a game needs one.
 - **A3–A6 were delegated** on 2026-11-25. The owner asked to be brought only questions that cost money, change what players or designers see, or change scope. They were judged by expandability and business alignment:
