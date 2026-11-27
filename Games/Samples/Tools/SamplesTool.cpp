@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 namespace
 {
@@ -44,7 +45,17 @@ namespace
 		return material;
 	}
 
-	SceneFile CreateBenchmark(std::uint32_t meshCount)
+	// Which objects rotate, and where they sit in the scene file (docs/RenderingContentDesign.md,
+	// measurement 3): every fifth at random file positions (the default), the same fifth first in the
+	// file, or every object.
+	enum class Animation
+	{
+		Scattered,
+		Contiguous,
+		All,
+	};
+
+	SceneFile CreateBenchmark(std::uint32_t meshCount, Animation animation = Animation::Scattered)
 	{
 		std::uint32_t columns;
 		switch (meshCount)
@@ -66,6 +77,8 @@ namespace
 			return (static_cast<float>(index) - .5f * static_cast<float>(count - 1)) * spacing;
 		};
 		SampleSceneBuilder scene;
+		if (animation == Animation::Contiguous)
+			scene.UseSequentialIds();
 		ECS::TransformComponent spawn = Pose({ 0, -79.0f, 0 });
 		ECS::CameraComponent lens;
 		if (meshCount > 4000)
@@ -78,25 +91,33 @@ namespace
 		const auto paint = Material(true);
 		const auto textured = Material(true, AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19"));
 		for (std::uint32_t row = 0; row < rows; ++row)
+			scene.Group("row-" + std::to_string(row), Pose({ 0, 0, centered(row, rows) }));
+		const auto animated = [animation](std::uint32_t index)
 		{
+			return animation == Animation::All || index % 5 == 0;
+		};
+		// Contiguous creates the animated objects first; sequential IDs keep that order in the file.
+		std::vector<std::uint32_t> order(rows * columns);
+		for (std::uint32_t index = 0; index < order.size(); ++index)
+			order[index] = index;
+		if (animation == Animation::Contiguous)
+			std::stable_partition(order.begin(), order.end(), animated);
+		for (const auto index : order)
+		{
+			const auto row = index / columns, column = index % columns;
 			const auto group = "row-" + std::to_string(row);
-			scene.Group(group, Pose({ 0, 0, centered(row, rows) }));
-			for (std::uint32_t column = 0; column < columns; ++column)
-			{
-				const auto index = row * columns + column;
-				const auto suffix = std::to_string(index);
-				const bool animate = index % 5 == 0;
-				const auto pivot = (animate ? "benchmark-rotor-" : "pivot-") + suffix;
-				scene.Group(pivot, Pose({ centered(column, columns), 0, 0 }));
-				scene.Parent(pivot, group);
-				if (animate)
-					scene.Rotator(pivot, {}, { 0, .65f, 0 }, 1);
-				const auto mesh = "mesh-" + suffix;
-				scene.Mesh(mesh, index % 2 == 0 ? Cube : Sphere, Pose({ .12f, 0, 0 }, { .68f, .68f, .68f }),
-					index % 2 == 0 ? Vec4{ .9f, .55f, .18f, 1 } : Vec4{ .22f, .67f, .9f, 1 },
-					index % 4 == 0 ? textured : paint);
-				scene.Parent(mesh, pivot);
-			}
+			const auto suffix = std::to_string(index);
+			const bool animate = animated(index);
+			const auto pivot = (animate ? "benchmark-rotor-" : "pivot-") + suffix;
+			scene.Group(pivot, Pose({ centered(column, columns), 0, 0 }));
+			scene.Parent(pivot, group);
+			if (animate)
+				scene.Rotator(pivot, {}, { 0, .65f, 0 }, 1);
+			const auto mesh = "mesh-" + suffix;
+			scene.Mesh(mesh, index % 2 == 0 ? Cube : Sphere, Pose({ .12f, 0, 0 }, { .68f, .68f, .68f }),
+				index % 2 == 0 ? Vec4{ .9f, .55f, .18f, 1 } : Vec4{ .22f, .67f, .9f, 1 },
+				index % 4 == 0 ? textured : paint);
+			scene.Parent(mesh, pivot);
 		}
 		scene.Camera("main", spawn, lens, {});
 		scene.Lighting("sun", {});
@@ -333,18 +354,26 @@ int main(int argc, char** argv)
 			SaveScene(CreateSpriteBenchmark(count), AssetId::Parse(count == 0 ? "c6f2a8d1-4e97-4b3c-8d05-7a1e9f3b6c42"
 				: "5b0e9c3a-2f61-4d8e-a7c4-93e1d6f0b215"), argv[2]);
 		}
-		else if (command == "create-benchmark" && argc == 4)
+		else if (command == "create-benchmark" && (argc == 4 || argc == 5))
 		{
+			const std::string_view placement = argc == 5 ? argv[4] : "scattered";
+			Animation animation = Animation::Scattered;
+			if (placement == "contiguous")
+				animation = Animation::Contiguous;
+			else if (placement == "all")
+				animation = Animation::All;
+			else if (placement != "scattered")
+				throw std::invalid_argument("Benchmark animation must be scattered, contiguous or all");
 			std::uint32_t count = 0;
 			const std::string_view value(argv[3]);
 			const auto result = std::from_chars(value.data(), value.data() + value.size(), count);
 			if (result.ec != std::errc{} || result.ptr != value.data() + value.size())
 				throw std::invalid_argument("Expected a benchmark mesh count");
-			SaveScene(CreateBenchmark(count), BenchmarkId(count), argv[2]);
+			SaveScene(CreateBenchmark(count, animation), BenchmarkId(count), argv[2]);
 		}
 		else
 			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics <output> | "
-				"create-benchmark <output> <mesh-count> | create-sprite-benchmark <output> <sprite-count>");
+				"create-benchmark <output> <mesh-count> [scattered|contiguous|all] | create-sprite-benchmark <output> <sprite-count>");
 		std::cout << "Saved scene " << argv[2] << '\n';
 		return 0;
 	}

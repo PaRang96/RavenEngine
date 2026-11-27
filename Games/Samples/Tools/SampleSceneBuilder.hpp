@@ -25,6 +25,10 @@ namespace Samples
 	public:
 		SampleSceneBuilder();
 
+		// Entities created from now on get sequential IDs, so the scene file keeps their creation
+		// order (its rows are sorted by ID) and a loaded scene's pools follow it.
+		void UseSequentialIds() noexcept { m_NextId = 1; }
+
 		void Group(const std::string& name, const Raven::ECS::TransformComponent& transform);
 		void Mesh(const std::string& name, Raven::AssetId mesh, const Raven::ECS::TransformComponent& transform,
 			Raven::Vec4 tint, const Raven::ECS::MaterialComponent& material);
@@ -55,6 +59,7 @@ namespace Samples
 		Raven::SceneFile Finish();
 
 	private:
+		Raven::ECS::Entity Create(const std::string& name);
 		Raven::ECS::Entity Find(const std::string& name) const;
 		Raven::ECS::EntityRef Ref(const std::string& name) const;
 
@@ -66,5 +71,7 @@ namespace Samples
 		bool m_AuthoredMotion = false;
 		bool m_HasGoal = false;
 		Raven::AssetRef<Raven::AudioAsset> m_WinSound;
+		// Zero: random IDs.
+		std::uint64_t m_NextId = 0;
 	};
 }

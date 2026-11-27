@@ -190,7 +190,7 @@ def measure(report, seconds, repeats):
     return results
 
 
-def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
+def build_snapshot(report, edit=None, preset=RELEASE, stress=None, animation="scattered"):
     source = report / "source"
     source.mkdir()
     copy_source_tree(ROOT, source)
@@ -204,7 +204,7 @@ def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
             # The snapshot's own scene tool writes the scene; the rebuild stages it with the project.
             level = f"Levels/Benchmark-{stress}.ravenscene"
             subprocess.run([str(runtime(source, preset) / "SamplesTool.exe"), "create-benchmark",
-                            str(source / CONTENT / level), str(stress)],
+                            str(source / CONTENT / level), str(stress), animation],
                            stdout=output, stderr=subprocess.STDOUT, check=True)
             with (source / CONTENT / "Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
                 project.write(f'scene {STRESS[stress]}\n')
@@ -344,6 +344,8 @@ def main():
     scale.add_argument("--static", action="store_true", help="Pause the rotators (M3 100k static target)")
     scale.add_argument("--view", choices=VIEWS, default="shaded", help="Render view selected with F7 before measuring")
     scale.add_argument("--max-fps", type=int, default=0, help="Frame-rate cap passed to the host (0: none)")
+    scale.add_argument("--animation", choices=("scattered", "contiguous", "all"), default="scattered",
+                       help="Which stress objects rotate and where they sit in the scene file")
     sprites = modes.add_parser("sprites", help="The 10k-sprite budget scene against its control (M6B B1)")
     sprites.add_argument("label")
     sprites.add_argument("--seconds", type=float, default=4)
@@ -369,7 +371,7 @@ def main():
 
         check(args.seconds >= 1 and args.repeats >= 1, "Measure at least one run of one second or longer")
         display = fastest_display(SMOKE["USER"])
-        source = build_snapshot(report, stress=args.meshes)
+        source = build_snapshot(report, stress=args.meshes, animation=args.animation)
         selected = args.case or ["auto-fifo"]
         samples = []
         for trial in range(1, args.repeats + 1):
@@ -391,7 +393,7 @@ def main():
                 check(row["draw_calls"] == (8 if args.view == "wireframe" else 6), "Unexpected benchmark draw count")
                 samples.append({"run": name, "adapter": selected_adapter, "present": mode, **row})
                 print(f"{name}: {row['fps']:.1f} FPS, {row['cpu_under_5_ms_percent']:.1f}% CPU under 5 ms", flush=True)
-        result = {"label": args.label, "view": args.view, "max_fps": args.max_fps, "display": display.name, "hz": display.hz,
+        result = {"label": args.label, "view": args.view, "animation": args.animation, "max_fps": args.max_fps, "display": display.name, "hz": display.hz,
                   "resolution": [display.width, display.height], "samples": samples}
     else:
         debug = runtime(preset="x64-debug")

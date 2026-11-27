@@ -26,6 +26,13 @@ namespace Samples
 		m_Registry.Register<PatrolComponent>();
 	}
 
+	ECS::Entity SampleSceneBuilder::Create(const std::string& name)
+	{
+		if (m_NextId == 0)
+			return m_Scene.CreateEntity(name);
+		return m_Scene.CreateEntity(name, ECS::EntityRef{ m_NextId++ });
+	}
+
 	ECS::Entity SampleSceneBuilder::Find(const std::string& name) const
 	{
 		const auto entity = m_Scene.FindEntity(name);
@@ -41,13 +48,13 @@ namespace Samples
 
 	void SampleSceneBuilder::Group(const std::string& name, const ECS::TransformComponent& transform)
 	{
-		m_Registry.Add(m_Scene.CreateEntity(name), transform);
+		m_Registry.Add(Create(name), transform);
 	}
 
 	void SampleSceneBuilder::Sprite(const std::string& name, const ECS::TransformComponent& transform,
 		const ECS::SpriteComponent& sprite)
 	{
-		const auto entity = m_Scene.CreateEntity(name);
+		const auto entity = Create(name);
 		m_Registry.Add(entity, transform);
 		m_Registry.Add(entity, sprite);
 	}
@@ -55,7 +62,7 @@ namespace Samples
 	void SampleSceneBuilder::Mesh(const std::string& name, AssetId mesh, const ECS::TransformComponent& transform,
 		Vec4 tint, const ECS::MaterialComponent& material)
 	{
-		const auto entity = m_Scene.CreateEntity(name);
+		const auto entity = Create(name);
 		ECS::StaticMeshComponent component;
 		component.Mesh.Id = mesh;
 		component.Tint = tint;
@@ -72,7 +79,7 @@ namespace Samples
 	void SampleSceneBuilder::Camera(const std::string& name, const ECS::TransformComponent& spawn,
 		const ECS::CameraComponent& lens, Vec3 orbitTarget)
 	{
-		const auto entity = m_Scene.CreateEntity(name);
+		const auto entity = Create(name);
 		OrbitCameraComponent orbit;
 		orbit.Target = orbitTarget;
 		orbit.HomePosition = spawn.Position;
@@ -85,7 +92,7 @@ namespace Samples
 
 	void SampleSceneBuilder::Lighting(const std::string& name, const ECS::LightingComponent& lighting)
 	{
-		m_Registry.Add(m_Scene.CreateEntity(name), lighting);
+		m_Registry.Add(Create(name), lighting);
 	}
 
 	void SampleSceneBuilder::ControlledMesh(const std::string& name)
@@ -195,7 +202,7 @@ namespace Samples
 				m_Registry.Add(beacon, spin);
 			}
 		}
-		const auto state = m_Scene.CreateEntity("$attempt");
+		const auto state = Create("$attempt");
 		m_Registry.Add(state, AttemptComponent{});
 		DemoComponent demo;
 		demo.WinSound = m_WinSound;
@@ -208,7 +215,7 @@ namespace Samples
 		const auto quad = [&](const char* name, AssetRef<TextureAsset> texture, Vec3 position, Vec3 scale, Vec4 tint,
 			ECS::SpriteBlendMode blend)
 		{
-			const auto entity = m_Scene.CreateEntity(name);
+			const auto entity = Create(name);
 			ECS::TransformComponent transform;
 			transform.Position = position;
 			transform.Scale = scale;
