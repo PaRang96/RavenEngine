@@ -2,7 +2,7 @@
 
 Status:
 - **Decided (2026-11-24).** The owner delegated the decisions: "Make best decision based on businesses alignment and expandability in the future". Every recommendation was adopted, with two refinements added for expandability (FD-08 metadata, FD-10 deterministic output). The record and the basis are in [Owner decisions](#owner-decisions).
-- **Implemented on Windows (2026-11-24), pending the owner's single review.** Where the code differs from the plan, [Implementation notes](#implementation-notes-2026-11-24) says how and why; the results are in the [M6A exit record](#m6a-exit-record-2026-11-24).
+- **Implemented on Windows (2026-11-24); accepted in the owner's joint review on 2026-11-27.** Where the code differs from the plan, [Implementation notes](#implementation-notes-2026-11-24) says how and why; the results are in the [M6A exit record](#m6a-exit-record-2026-11-24).
 
 This is the M6 design note required by [planning decision 5](../ROADMAP.md#planning-decisions-2026-11-24). It records the decisions FD-06 to FD-17 from [FutureDecisions.md](FutureDecisions.md) (the assessment's D-A to D-I), plus the M6A exit checklist and the M6 checklist scope (assessment Q16). The M6B and M6C decisions (FD-18 to FD-34) wait for their own stage, as the decision calendar says.
 

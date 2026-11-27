@@ -2,7 +2,7 @@
 
 Status:
 - **Decided (2026-11-26).** The five decisions that needed the owner (they change what designers or players see, or the scope) are settled; they are listed in [Decisions for the owner](#decisions-for-the-owner). The technical decisions are delegated and recorded in [Delegated decisions](#delegated-decisions), judged by business alignment and expandability.
-- M6C (the previous stage) is implemented and waits for the owner's single review, together with M6A and the review amendments ([GameServicesDesign.md](GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).
+- M6C (the previous stage) was accepted with M6A and the review amendments in the owner's joint review on 2026-11-27 ([GameServicesDesign.md](GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).
 
 This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDecisions.md#6-m6b--rendering-and-content) for M6B, the assessment's steps M6-9 and M6-10. Every "Today" statement was re-checked against the code at `0f593d6` on 2026-11-26.
 

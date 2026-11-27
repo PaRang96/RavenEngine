@@ -53,6 +53,7 @@ The owner reviewed the "decide now" items of [FutureDecisions.md](docs/FutureDec
 | 18 | No 2D work (M6B 2D-run decision; decided 2026-11-26) | "We can make things in 2D, but no value for now." No 2D run, no 2D sample and no 2D-only feature. The Courtyard sample and the 2D-only `Collision2D` helpers are removed with the review amendments (the public header in the contract-hash commit). Sprites stay as 3D world quads, with the overlay and UI; M6B's B1 becomes a Samples Gallery sprite baseline. | Review amendments, M6B |
 | 19 | Performance off the laptop (2026-11-26 assessment Q11, FD-39; decided 2026-11-26) | Budgets are enforced only on the minimum-spec Windows laptop. On macOS and Linux, M4 checks that the samples run at interactive rates and records the numbers, with no budget gate. Per-OS targets can be set later from those numbers. | M4 |
 | 20 | CMake floor (2026-11-26 assessment AA2-BLD-01; decided 2026-11-27) | Every CMake file requires 3.28, the version Ubuntu 24.04 LTS ships, so local builds, CI and every OS build Raven under the same policies; CMake has no LTS releases of its own. The 3.24 paths and `CMP0141` guards are gone, CI prints its CMake version, and the Windows machines use Visual Studio's bundled CMake. |
+| 21 | Platforms (owner, 2026-11-27, joint review) | Windows is the head platform: every milestone is built, measured and accepted on Windows first. Other platforms follow, so platform-specific code is only ever encapsulated behind Raven's platform interfaces (`Platform/<OS>/`, backends selected in CMake), and macOS and Linux catch up by implementing those interfaces, never by changing shared code. The owner decides platform direction; everything else in the joint review that is technical is delegated. | Every milestone; M4 |
 
 ## Not in v1 (2026-11-26)
 
@@ -200,9 +201,9 @@ M6 runs in three stages with their own exits and reviews (planning decision 5). 
 
 **Exit for M6 as a whole (Windows):** a small 3D game and the stress sample run using only engine APIs. The 2D sample was dropped (planning decision 18). The platform exit is owed by [M4](#m4--cross-platform-parity) (planning decision 9).
 
-### M6A — Host and data model
+### M6A — Host and data model · *done on Windows 2026-11-27 (owner review)*
 
-*Implemented on Windows 2026-11-24, pending the owner's review. Decisions and results: [DataModelDesign.md](docs/DataModelDesign.md#m6a-exit-record-2026-11-24).*
+*Implemented on Windows 2026-11-24; accepted in the owner's joint review of M6A, M6C and the review amendments on 2026-11-27. Decisions and results: [DataModelDesign.md](docs/DataModelDesign.md#m6a-exit-record-2026-11-24).*
 
 - [x] M6-1: engine-owned frame pipeline. `OnFrame` splits into update and render with no shim, PostUpdate/Extract move into Application inside a recoverable error boundary (data errors recoverable, `bad_alloc`/`logic_error` fatal), the render-world `Sync` resets transactionally, and the GPU-scene generation counter becomes process-wide.
 - [x] M6-2: a typed field table for components, with type tags in `LayoutHash`; the module table registers components. This is the base of serialization and migration.
@@ -227,20 +228,20 @@ Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, te
 
 **Exit:** sprites and one custom material shader run on the GPU-driven path. A multi-object FBX imports with stable IDs. The Gallery's sprites match their baseline captures.
 
-### M6C — Game services and the sample game
+### M6C — Game services and the sample game · *done on Windows 2026-11-27 (owner review)*
 
 Design: [GameServicesDesign.md](docs/GameServicesDesign.md), decided 2026-11-24 (FD-29, FD-31 to FD-34, FD-46 to FD-48). FD-47 (movement and control) is confirmed for its built part (owner, 2026-11-27), with the crowd backend decided at its own milestone; FD-31 (text and UI) is approved in full (owner, 2026-11-27; first for the early deliverable only), with the full stack planned in [UIDesign.md](docs/UIDesign.md). Direction: keep the ability to build an RTS, a real-time action game and other genres, without building RTS-specific systems now.
 
-- [ ] C1: input mapping contexts that consume input, one ordered event list, the developer context, the action map, key listening and layout-aware key names (FD-29).
-- [ ] C2: per-user data path, field-table records in text and binary forms, crash-safe writes and the host-owned profile store (FD-33).
-- [ ] C3: step-rate setting, control phase, input stream, simulation RNG, deterministic spawn IDs and render interpolation (FD-34, FD-47, FD-48).
-- [ ] C4: Jolt Physics as a host-owned physics world with components as the source of truth, plus the physics iteration set (FD-32).
-- [ ] C5: picking on Jolt for game and editor (FD-34).
-- [ ] C6: `MoverComponent` and the character backend (FD-47).
-- [ ] C7: the shared GPU 2D path, MSDF fonts and the thin UI cut (FD-31). *Built 2026-11-25 on the shared job system ([JobSystemDesign.md](docs/JobSystemDesign.md)): FreeType, HarfBuzz, msdfgen, msdf-atlas-gen, Yoga and ICU vendored unmodified; runtime MTSDF text for every script the engine fonts cover; the immediate UI over Yoga; the F6 preview mode ([record](docs/GameServicesDesign.md#c7--the-2d-and-ui-early-deliverable-2026-11-25)).*
-- [ ] C8: audio voices: the engine mixer over one shared device layer, replacing the single-voice `AudioPlayer` and the native XAudio2 backend (planning decision 6, provisional). *Device layer done 2026-11-25: miniaudio 0.11.26 behind `AudioDevice` (decision A1), the mixer core and the device lifecycle; XAudio2 removed ([record](docs/GameServicesDesign.md#c8-first-part--the-audio-device-layer-2026-11-25)). Mixer done 2026-11-25: voices, concurrency, virtual voices, spatial panning, buses and ducking, WAV/FLAC/MP3/Ogg (A2 owner, A3–A6 delegated; [record](docs/GameServicesDesign.md#c8-second-part--the-engine-mixer-2026-11-25)). Sound-event assets done 2026-11-25 ([record](docs/GameServicesDesign.md#c8-third-part--sound-event-assets-2026-11-25)); streaming follows.*
-- [ ] C9: the arena sample game (`Games/Arena`, FD-46) and the developer quick-save. *Both parts built 2026-11-25, the second with the HUD, menus, key bindings and sounds ([record](docs/GameServicesDesign.md#c9-second-part--hud-menus-key-bindings-and-sounds-2026-11-25)).*
-- [ ] C10: the determinism check and the exit check with every measurement. *Done 2026-11-25, pending the owner's review: every exit item passes ([results](docs/GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).*
+- [x] C1: input mapping contexts that consume input, one ordered event list, the developer context, the action map, key listening and layout-aware key names (FD-29).
+- [x] C2: per-user data path, field-table records in text and binary forms, crash-safe writes and the host-owned profile store (FD-33).
+- [x] C3: step-rate setting, control phase, input stream, simulation RNG, deterministic spawn IDs and render interpolation (FD-34, FD-47, FD-48).
+- [x] C4: Jolt Physics as a host-owned physics world with components as the source of truth, plus the physics iteration set (FD-32).
+- [x] C5: picking on Jolt for game and editor (FD-34).
+- [x] C6: `MoverComponent` and the character backend (FD-47).
+- [x] C7: the shared GPU 2D path, MSDF fonts and the thin UI cut (FD-31). *Built 2026-11-25 on the shared job system ([JobSystemDesign.md](docs/JobSystemDesign.md)): FreeType, HarfBuzz, msdfgen, msdf-atlas-gen, Yoga and ICU vendored unmodified; runtime MTSDF text for every script the engine fonts cover; the immediate UI over Yoga; the F6 preview mode ([record](docs/GameServicesDesign.md#c7--the-2d-and-ui-early-deliverable-2026-11-25)).*
+- [x] C8: audio voices: the engine mixer over one shared device layer, replacing the single-voice `AudioPlayer` and the native XAudio2 backend (planning decision 6, provisional). *Device layer done 2026-11-25: miniaudio 0.11.26 behind `AudioDevice` (decision A1), the mixer core and the device lifecycle; XAudio2 removed ([record](docs/GameServicesDesign.md#c8-first-part--the-audio-device-layer-2026-11-25)). Mixer done 2026-11-25: voices, concurrency, virtual voices, spatial panning, buses and ducking, WAV/FLAC/MP3/Ogg (A2 owner, A3–A6 delegated; [record](docs/GameServicesDesign.md#c8-second-part--the-engine-mixer-2026-11-25)). Sound-event assets done 2026-11-25 ([record](docs/GameServicesDesign.md#c8-third-part--sound-event-assets-2026-11-25)); streaming follows.*
+- [x] C9: the arena sample game (`Games/Arena`, FD-46) and the developer quick-save. *Both parts built 2026-11-25, the second with the HUD, menus, key bindings and sounds ([record](docs/GameServicesDesign.md#c9-second-part--hud-menus-key-bindings-and-sounds-2026-11-25)).*
+- [x] C10: the determinism check and the exit check with every measurement. *Done 2026-11-25, accepted 2026-11-27: every exit item passes ([results](docs/GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).*
 - [ ] Add world-to-screen and screen-to-world helpers once a caller needs them, plus reusable camera controllers as gameplay requires them.
 - [ ] Keep the 3D samples and Arena working through the reusable engine, on Windows now and on macOS and Linux through M4.
 
