@@ -20,7 +20,9 @@ namespace Raven
 		Scene = 8,
 		Audio = 9,
 		// A sound-event asset (.ravensound): clips plus how they play (docs/GameServicesDesign.md, C8).
-		Sound = 10
+		Sound = 10,
+		// A TrueType or OpenType font (docs/UIDesign.md, AA2-MEDIA-05).
+		Font = 11
 	};
 
 	struct AssetRecord

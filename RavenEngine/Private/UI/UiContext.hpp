@@ -64,6 +64,10 @@ namespace Raven::UI
 		Interaction Toggle(std::string_view id, std::string_view label, bool& value, const Style& style) override;
 		void Image(std::string_view id, AssetRef<TextureAsset> texture, const Style& style) override;
 		void Focus(std::string_view id) override;
+		using Ui::Text;
+		using Ui::Button;
+		using Ui::Toggle;
+		std::string Localize(const UiText& text) const override;
 		bool IsCapturingInput() const noexcept override;
 		bool IsRightToLeft() const noexcept override { return m_RightToLeft; }
 

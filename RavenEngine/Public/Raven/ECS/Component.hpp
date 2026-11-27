@@ -56,6 +56,8 @@ namespace Raven::ECS
 
 	// ComponentInfo::Flags.
 	inline constexpr std::uint32_t ComponentIsTransient = 1;
+	// HostOwned<T>: type-erased callers (SceneCommands, SceneAccess) reject writes as the templates do.
+	inline constexpr std::uint32_t ComponentIsHostOwned = 2;
 
 	// Every component derives from this empty, non-virtual base. Registry stores component
 	// objects in their native layout, so a component is a standard-layout, trivially copyable
@@ -66,12 +68,15 @@ namespace Raven::ECS
 
 	// The value kind of one component field (docs/DataModelDesign.md, FD-08). Arrays keep the
 	// element kind and record their extents. Entity is a runtime handle that no file may store.
+	// File format; never change: scenes and player profiles store these values, so a new kind is
+	// appended with the next value and no value is ever reused (FD-10, version policy).
 	enum class FieldKind : std::uint8_t
 	{
-		Bool, Char, Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Float32, Float64,
-		Vec3, Vec4, Mat4, Entity, AssetId, AssetRef, EntityRef,
+		Bool = 0, Char = 1, Int8 = 2, UInt8 = 3, Int16 = 4, UInt16 = 5, Int32 = 6, UInt32 = 7, Int64 = 8,
+		UInt64 = 9, Float32 = 10, Float64 = 11, Vec3 = 12, Vec4 = 13, Mat4 = 14, Entity = 15, AssetId = 16,
+		AssetRef = 17, EntityRef = 18,
 		// An approved custom value, compared by size only.
-		Opaque,
+		Opaque = 19,
 	};
 
 	// FieldInfo::Flags.
@@ -385,7 +390,7 @@ namespace Raven::ECS
 			Fields::HashLayout(Detail::HashNumber(sizeof(T),
 				Detail::HashText(T::FieldNames, Detail::HashText(T::TypeName)))),
 			FieldTable.data(), FieldTable.size(),
-			Transient<T> ? ComponentIsTransient : 0u,
+			(Transient<T> ? ComponentIsTransient : 0u) | (HostOwned<T> ? ComponentIsHostOwned : 0u),
 			AliasTable.data(), AliasTable.size()
 		};
 	};

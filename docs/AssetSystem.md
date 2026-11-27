@@ -23,7 +23,7 @@ Individual Register entries are immutable. SceneProject replaces a complete vali
 
 Paths are checked with the existing `Paths::GetContentPath` policy for rooted paths and parent-directory escape, then stored in normalized relative form. Empty paths, embedded null characters, and paths without filenames are rejected. Physical symlinks are not resolved, and Windows case aliases are not merged. Registration neither reads the file nor checks whether it exists, keeping metadata registration separate from loading.
 
-Mesh entries can be resolved through AssetResources. Model and material entries currently provide metadata. FBX sub-asset relationships and reimport mapping remain open.
+Mesh and texture entries are resolved through `AssetStore` leases. Model and material entries currently provide metadata. FBX sub-asset relationships and reimport mapping remain open.
 
 ## Asset kinds (2026-11-26)
 
@@ -37,28 +37,9 @@ Delegated (business alignment and expandability; AA2-MEDIA-02). v1 game content 
 
 The migrated sample path uses [AssetStore](../RavenEngine/Public/Raven/Assets/AssetStore.hpp). Its weak cache shares resources by UUID while host-owned AssetLease values keep them live. Scene owns its acquired leases; the last owner stops the watcher and releases the managed mesh/texture or PCM clip. SceneProject validates source paths against its explicit root, including physical escapes and source existence. References written by game code at runtime go through `Scene::TryUseAsset` (2026-11-24): a nil or unregistered ID, a wrong kind or a missing file returns null and logs once per asset, so a material samples the white texture and a sprite is skipped. Decode and GPU failures still throw. The placeholder stays until the material or sprite changes again. See [scene/resource ownership](SceneWorkflow.md#scene-and-resource-ownership).
 
-### Legacy pinned service
+### The removed pinned service (2026-11-27)
 
-`AssetResources` in [AssetResources.hpp](../RavenEngine/Public/Raven/Assets/AssetResources.hpp) is a synchronous service that borrows the catalog and renderer. It captures the Content root at construction and uses the catalog's description in `LoadTexture(AssetRef<TextureAsset>)`. A common game owner should share one catalog and resource service across scenes and objects.
-
-```cpp
-#include "Raven/Assets/AssetCatalog.hpp"
-#include "Raven/Assets/AssetResources.hpp"
-
-Raven::AssetCatalog catalog;
-const auto id = Raven::AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19");
-catalog.Register(Raven::TextureAssetDesc
-{
-	id, "Textures/UVGrid.png", Raven::TextureColorSpace::SRGB
-});
-
-Raven::AssetResources resources(catalog, renderer);
-const auto& first = resources.LoadTexture({ id });
-const auto& second = resources.LoadTexture({ id });
-// &first == &second: decoding, upload and descriptor allocation are reused.
-```
-
-Within one service, the same ID returns the same GPU texture. Cache hits do not read, decode, or upload the file; an already loaded resource remains available even if its source file is deleted. Different IDs referring to the same file are separate logical assets. Caches are not shared across services or renderer contexts. Different contexts require separate GPU resources.
+`AssetResources`, a synchronous service that kept textures and meshes for the whole renderer lifetime, was removed in M6B's contract window (AA2-CORE-04), together with the `VulkanContext` entry points only it used (`CreateMesh`, `CreateMeshHandle`, `ReplaceMesh`, `CreateTexture`, `ReplaceTexture`, `ReplaceTexturedFragment` and the camera-only `DrawFrame` overloads) and the `PngFileWatch` class. Nothing called them outside their own files, and keeping a second asset entry point would have meant keeping two texture-replacement paths correct through M6B's upload batch. `AssetStore` and its leases are the only runtime asset path.
 
 Cache nodes are allocated before GPU creation. If file reading, decoding, or upload fails, the node is removed and the exception propagates, allowing a retry. `VulkanContext` owns the texture objects and descriptor sets. Returned references remain valid until renderer shutdown. Destroying the resource service does not release its GPU textures. The catalog and renderer must outlive the service.
 

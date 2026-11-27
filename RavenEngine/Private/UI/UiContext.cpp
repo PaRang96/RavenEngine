@@ -5,6 +5,7 @@
 #include <yoga/Yoga.h>
 
 #include <algorithm>
+#include <charconv>
 #include <array>
 #include <cmath>
 
@@ -182,6 +183,32 @@ namespace Raven::UI
 		result.Pressed = m_Active == id;
 		result.Clicked = m_Activated == id;
 		result.Focused = m_Focused == id;
+		return result;
+	}
+
+	std::string UiContext::Localize(const UiText& text) const
+	{
+		// No string tables yet (AA2-MEDIA-06): the key, with {n} replaced by argument n.
+		std::string result;
+		const auto key = text.Key;
+		for (std::size_t index = 0; index < key.size(); ++index)
+		{
+			if (key[index] == '{')
+			{
+				const auto close = key.find('}', index);
+				std::size_t argument = 0;
+				const auto digits = close == std::string_view::npos ? std::string_view{} : key.substr(index + 1, close - index - 1);
+				const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), argument);
+				if (!digits.empty() && parsed.ec == std::errc{} && parsed.ptr == digits.data() + digits.size() &&
+					argument < text.Args.size())
+				{
+					result += text.Args[argument];
+					index = close;
+					continue;
+				}
+			}
+			result += key[index];
+		}
 		return result;
 	}
 

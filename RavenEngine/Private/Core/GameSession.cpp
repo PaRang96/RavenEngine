@@ -78,7 +78,6 @@ namespace Raven
 		  m_Options(config.GameOptions),
 		  m_Project(renderer, ResolveContentRoot(config.ContentRoot), config.WatchContent, config.WatchContent,
 			  config.WatchContent),
-		  m_Audio(m_Project.GetCatalog()),
 		  m_Session(std::make_unique<SceneSession>(m_Project,
 			  [this](std::span<const std::byte> bytes, const std::filesystem::path&, const AssetCatalog& catalog)
 			  {
@@ -308,6 +307,7 @@ namespace Raven
 			UI::Interaction Toggle(std::string_view, std::string_view, bool&, const UI::Style&) override { return {}; }
 			void Image(std::string_view, AssetRef<TextureAsset>, const UI::Style&) override {}
 			void Focus(std::string_view) override {}
+			std::string Localize(const UI::UiText& text) const override { return std::string(text.Key); }
 			bool IsCapturingInput() const noexcept override { return false; }
 			bool IsRightToLeft() const noexcept override { return false; }
 		} noUi;
@@ -336,6 +336,7 @@ namespace Raven
 			UI::Interaction Toggle(std::string_view, std::string_view, bool&, const UI::Style&) override { Report(); return {}; }
 			void Image(std::string_view, AssetRef<TextureAsset>, const UI::Style&) override { Report(); }
 			void Focus(std::string_view) override { Report(); }
+			std::string Localize(const UI::UiText& text) const override { return std::string(text.Key); }
 			bool IsCapturingInput() const noexcept override { return false; }
 			bool IsRightToLeft() const noexcept override { return false; }
 			bool Reported = false;
@@ -501,8 +502,8 @@ namespace Raven
 		scene.GetAccess().View<const ECS::SpriteComponent, const ECS::WorldTransformComponent>().Each(
 			[&](ECS::Entity, const ECS::SpriteComponent& sprite, const ECS::WorldTransformComponent& world)
 			{
-				if (!sprite.Texture.IsValid() ||
-					(sprite.BlendMode != ECS::SpriteBlendMode::Opaque && sprite.BlendMode != ECS::SpriteBlendMode::Alpha))
+				if (!sprite.Texture.IsValid() || (sprite.BlendMode != ECS::SpriteBlendMode::Opaque &&
+					sprite.BlendMode != ECS::SpriteBlendMode::Alpha && sprite.BlendMode != ECS::SpriteBlendMode::Cutout))
 					return;
 				// A non-finite world or tint is skipped, not thrown in the draw queue (FD-06).
 				if (!IsDrawable(world.World) || !IsFinite(sprite.Tint))
@@ -516,8 +517,14 @@ namespace Raven
 					lease = scene.TryUseAsset(catalog, sprite.Texture.Id, AssetKind::Texture);
 				if (!lease)
 					return;
-				const VulkanTexturedDraw draw{ m_Quad, lease->GetTexture(), world.World, sprite.Tint };
-				if (sprite.BlendMode == ECS::SpriteBlendMode::Opaque)
+				// Size and pivot place the unit quad (X across, Z up) relative to the entity. This CPU
+				// path draws Cutout like Opaque and shows the whole texture; B5's GPU path adds the
+				// discard and UvRect (docs/RenderingContentDesign.md, B0 contract 4).
+				const auto& place = sprite.SizePivot;
+				const Mat4 local = Translation({ (0.5f - place.Z) * place.X, 0.0f, (0.5f - place.W) * place.Y }) *
+					Scale({ place.X, 1.0f, place.Y });
+				const VulkanTexturedDraw draw{ m_Quad, lease->GetTexture(), world.World * local, sprite.Tint };
+				if (sprite.BlendMode != ECS::SpriteBlendMode::Alpha)
 					m_OpaqueSprites.push_back(draw);
 				else
 					m_TransparentSprites.push_back({ draw, sprite.SortLayer, sprite.SortOrder });

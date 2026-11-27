@@ -11,10 +11,11 @@
 
 namespace Raven::ECS
 {
+	// Stored in scene files: values are pinned and only appended (docs/DataModelDesign.md, FD-10).
 	enum class CameraProjectionMode : std::uint8_t
 	{
-		Perspective,
-		Orthographic
+		Perspective = 0,
+		Orthographic = 1,
 	};
 
 	struct CameraComponent : Component

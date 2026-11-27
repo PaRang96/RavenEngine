@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <limits>
+#include <span>
+#include <string>
 #include <string_view>
 
 namespace Raven::UI
@@ -88,6 +90,19 @@ namespace Raven::UI
 		// A multiple of FontSize; zero uses the font's own spacing.
 		float LineHeight = 0.0f;
 		bool Wrap = true;
+		// A game font; empty uses the engine's fonts, which also stay the fallback for scripts the
+		// game font lacks. Weight follows CSS: 400 regular, 700 bold.
+		AssetRef<FontAsset> Font;
+		std::uint16_t Weight = 400;
+	};
+
+	// Text to show through the game's string tables (docs/UIDesign.md, section 2): a stable key and
+	// the values for its {0}, {1}... placeholders. Until string tables exist the key itself is shown,
+	// with the arguments filled in, so screens written now need no change when tables arrive.
+	struct UiText
+	{
+		std::string_view Key;
+		std::span<const std::string_view> Args{};
 	};
 
 	// What happened to an element, from the previous frame's layout.
@@ -115,6 +130,17 @@ namespace Raven::UI
 		// Flips value when clicked.
 		virtual Interaction Toggle(std::string_view id, std::string_view label, bool& value, const Style& style) = 0;
 		virtual void Image(std::string_view id, AssetRef<TextureAsset> texture, const Style& style) = 0;
+		// The shown text of a key in the current language.
+		virtual std::string Localize(const UiText& text) const = 0;
+		void Text(std::string_view id, const UiText& text, const Style& style) { Text(id, Localize(text), style); }
+		Interaction Button(std::string_view id, const UiText& label, const Style& style)
+		{
+			return Button(id, Localize(label), style);
+		}
+		Interaction Toggle(std::string_view id, const UiText& label, bool& value, const Style& style)
+		{
+			return Toggle(id, Localize(label), value, style);
+		}
 		// Gives keyboard focus to an element declared in this scope, for menus that open focused.
 		virtual void Focus(std::string_view id) = 0;
 		// True while some element has keyboard focus or the pointer is over an interactive element;

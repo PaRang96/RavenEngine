@@ -56,21 +56,8 @@ namespace Raven
 		// window keeps its swapchain and returns false.
 		RAVEN_API bool PrepareSwapchain();
 
-		// Meshes remain owned by this context until shutdown, after GPU work completes.
-		RAVEN_API const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
-			std::span<const std::uint32_t> indices);
-
-		// Value handles can be copied into ECS data; geometry is shared, not copied.
-		RAVEN_API MeshHandle CreateMeshHandle(std::span<const ColorVertex> vertices,
-			std::span<const std::uint32_t> indices);
-
 		// Null/foreign/expired-context handles resolve to null. Borrow only while this context lives.
 		RAVEN_API const VulkanMesh* ResolveMesh(MeshHandle mesh) const noexcept;
-
-		// Rendering thread, between DrawFrame calls. The mesh reference and handle stay valid.
-		// A failed replacement leaves the current geometry active.
-		RAVEN_API void ReplaceMesh(MeshHandle mesh, std::span<const ColorVertex> vertices,
-			std::span<const std::uint32_t> indices);
 
 		// Managed resources are borrowed only while their owner holds the handle. Release invalidates
 		// the handle immediately; submitted GPU work retains the required native resources.
@@ -92,17 +79,6 @@ namespace Raven
 		RAVEN_API const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);
 
-		// Upload completes before return. Textures remain owned here until shutdown.
-		RAVEN_API const VulkanTexture& CreateTexture(const TextureDesc& description);
-
-		// Rendering thread, between DrawFrame calls. A failed upload leaves the texture unchanged.
-		// Existing texture references continue to identify the same context-owned object.
-		RAVEN_API void ReplaceTexture(const VulkanTexture& texture, const TextureDesc& description);
-
-		// Between frames on the rendering thread. Words must be validated and compatible
-		// with the textured fragment interface. False means no drawable render pass yet.
-		RAVEN_API bool ReplaceTexturedFragment(std::span<const std::uint32_t> words);
-
 		// Development: recompile every engine shader (vertex, fragment and compute) when it or an
 		// include changes, and publish compatible results between frames (docs/HotReloadDesign.md, H2).
 		RAVEN_API void WatchShaders();
@@ -116,16 +92,6 @@ namespace Raven
 		using CameraViewBuilder = std::function<std::optional<CameraView>(
 			std::uint32_t width, std::uint32_t height)>;
 		
-		// Camera overloads draw only textured and transparent draws; lit meshes come from a RenderWorld.
-		// Visible opaque draws precede transparent draws. Transparent order is ascending
-		// layer/order, then far-to-near camera depth, with submission order breaking ties.
-		// All submitted resources must belong to this context.
-		RAVEN_API void DrawFrame(const PerspectiveCamera& camera,
-			std::span<const VulkanTexturedDraw> opaqueDraws = {},
-			std::span<const VulkanTransparentDraw> transparentDraws = {});
-		RAVEN_API void DrawFrame(const OrthographicCamera& camera,
-			std::span<const VulkanTexturedDraw> opaqueDraws = {},
-			std::span<const VulkanTransparentDraw> transparentDraws = {});
 		struct RenderedCameraView
 		{
 			CameraView Camera;
@@ -133,7 +99,10 @@ namespace Raven
 			std::uint32_t Height;
 		};
 
-		// Returns the camera and drawable extent used to present this frame.
+		// Returns the camera and drawable extent used to present this frame. Visible opaque textured
+		// draws precede transparent draws; transparent order is ascending layer and order, then
+		// far-to-near camera depth, with submission order breaking ties. All submitted resources
+		// must belong to this context.
 		// Lit meshes come from world, culled and drawn on the GPU (docs/GpuDrivenDesign.md, G5);
 		// null draws none. The world's mesh handles and textures must belong to this context.
 		// Debug lines (vertex pairs) are drawn depth-tested against the scene; the overlay's screen-space

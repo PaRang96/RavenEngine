@@ -384,6 +384,16 @@ Each step leaves nothing to replace. Steps that need an owner decision start aft
 
   The wall draws in 2,648 instanced runs, because alternating textures and blend modes break runs. B5's budget (1.0 ms CPU and 1.0 ms GPU for the same scene) needs the CPU cost to fall by more than half; the GPU cost is already within it.
 
+### B2, part 1 — the contract window (2026-11-27)
+
+The game-contract changes of the window above, landed together:
+- **Format pins:** `FieldKind` and every stored component enum carry explicit values, and `SceneFile.cpp` asserts its kind table follows them; FD-10 gained its version policy.
+- **The host-owned flag:** `ComponentIsHostOwned` comes from `HostOwned<T>` in each `ComponentInfo`, replacing the hard-coded list type-erased callers used.
+- **Build inputs:** every project target compiles with `/utf-8`; game modules build with hidden visibility and no longer refuse a non-Windows configure.
+- **Additive fields:** `SpriteComponent::UvRect` and `SizePivot` (today's CPU path honours the size and pivot; `UvRect` and `Cutout`'s discard come with B5's GPU path, and `Cutout` draws like Opaque until then); `SpriteBlendMode::Cutout`; `MaterialComponent::Material`; `Ui::Style::Font` and `Weight`; `UiText` with `Ui::Localize`, which shows the key with its arguments until string tables exist; `AssetKind::Font` and `FontAsset`.
+- **Removed:** `AssetResources`, the `PngFileWatch` class, the six `VulkanContext` entry points only it used and the camera-only `DrawFrame` overloads; `AudioPlayer` lost its uncached path and its catalog, and moved to `Private/Audio`.
+- **Checked:** Debug and Release build; the 9 tests pass; all six captures are bit-identical to B1's; the Arena determinism check passes, its 600-tick hash now `36f045813e737e08` because the new fields are part of every captured scene.
+
 ## Measurements
 
 | # | Measurement | Gate |

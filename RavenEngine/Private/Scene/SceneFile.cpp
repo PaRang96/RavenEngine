@@ -49,6 +49,15 @@ namespace Raven
 			{ FieldKind::Opaque, "opaque", 0 },
 		};
 
+		// The table follows the enumerators' pinned values (FieldKind is a file format).
+		static_assert([]
+		{
+			for (std::size_t index = 0; index < std::size(Kinds); ++index)
+				if (static_cast<std::size_t>(Kinds[index].Kind) != index)
+					return false;
+			return true;
+		}(), "Kinds must list every FieldKind at its pinned value");
+
 		const KindName* FindKind(FieldKind kind) noexcept
 		{
 			for (const auto& entry : Kinds)

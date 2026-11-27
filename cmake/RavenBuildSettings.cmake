@@ -53,7 +53,8 @@ option(RAVEN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors (set by CI)" 
 function(raven_apply_warnings target)
     if(MSVC)
         # C4324: alignas padding is intended on GPU-facing records.
-        target_compile_options(${target} PRIVATE /W4 /wd4324 $<$<BOOL:${RAVEN_WARNINGS_AS_ERRORS}>:/WX>)
+        # Sources are UTF-8; without /utf-8 MSVC reads them in the system code page (Korean on the laptop).
+        target_compile_options(${target} PRIVATE /W4 /wd4324 /utf-8 $<$<BOOL:${RAVEN_WARNINGS_AS_ERRORS}>:/WX>)
         # getenv is read once on the main thread; the _s variants add nothing here.
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
     else()

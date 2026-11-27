@@ -122,16 +122,9 @@ namespace Raven
 		std::size_t CreateMeshSlot(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices, bool managed);
 		std::size_t CreateTextureSlot(const TextureDesc& description, bool managed);
-		const VulkanMesh& CreateMesh(std::span<const ColorVertex> vertices,
-			std::span<const std::uint32_t> indices);
 		const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
-		void ReplaceTexture(const VulkanTexture& texture, const TextureDesc& description);
-		template<typename Camera>
-		void DrawFrame(const Camera& camera,
-			std::span<const VulkanTexturedDraw> texturedDraws,
-			std::span<const VulkanTransparentDraw> transparentDraws);
 
 		std::optional<RenderedCameraView> DrawFrameWithView(const CameraViewBuilder& buildView,
 			RenderWorld* world, const VulkanGpuScene::MeshResolver& resolveMesh,
@@ -596,12 +589,6 @@ namespace Raven
 		m_Timeline.Collect();
 	}
 
-	const VulkanMesh& VulkanContext::Impl::CreateMesh(std::span<const ColorVertex> vertices,
-		std::span<const std::uint32_t> indices)
-	{
-		return *m_Meshes[CreateMeshSlot(vertices, indices, false)].Owner;
-	}
-
 	std::size_t VulkanContext::Impl::CreateMeshSlot(std::span<const ColorVertex> vertices,
 		std::span<const std::uint32_t> indices, bool managed)
 	{
@@ -646,42 +633,12 @@ namespace Raven
 			}
 	}
 
-	void VulkanContext::Impl::ReplaceTexture(const VulkanTexture& texture, const TextureDesc& description)
-	{
-		const auto found = std::find_if(m_Textures.begin(), m_Textures.end(),
-			[&texture](const auto& slot) { return slot.Alive && slot.Owner.get() == &texture; });
-		if (found == m_Textures.end())
-			throw std::invalid_argument("Texture does not belong to this renderer context");
-
-		VulkanTexture replacement(m_Device, m_PhysicalDevice, description);
-		// The upload fence covers earlier draws on the same graphics queue.
-		// Reuse the descriptor set and destroy the old image with the temporary.
-		m_TextureDescriptors.WriteBinding(texture, replacement);
-		found->Owner->SwapImage(replacement);
-	}
-
 	const VulkanTexturedMesh& VulkanContext::Impl::CreateTexturedMesh(
 		std::span<const TexturedVertex> vertices, std::span<const std::uint16_t> indices)
 	{
 		m_TexturedMeshes.push_back(std::make_unique<VulkanTexturedMesh>(
 			m_Device, m_PhysicalDevice, vertices, indices));
 		return *m_TexturedMeshes.back();
-	}
-
-	template<typename Camera>
-	void VulkanContext::Impl::DrawFrame(const Camera& camera,
-		std::span<const VulkanTexturedDraw> texturedDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws)
-	{
-		const CameraViewBuilder buildView = [&camera](std::uint32_t width, std::uint32_t height)
-		{
-			const float aspect = static_cast<float>(width) / static_cast<float>(height);
-			return CameraView{
-				.View = camera.GetView(),
-				.Projection = camera.GetProjection(aspect)
-			};
-		};
-		DrawFrameWithView(buildView, nullptr, {}, texturedDraws, transparentDraws);
 	}
 
 	std::optional<VulkanContext::RenderedCameraView> VulkanContext::Impl::DrawFrameWithView(
@@ -781,43 +738,12 @@ namespace Raven
 		return m_Impl->PrepareSwapchain();
 	}
 
-	const VulkanMesh& VulkanContext::CreateMesh(std::span<const ColorVertex> vertices,
-		std::span<const std::uint32_t> indices)
-	{
-		return m_Impl->CreateMesh(vertices, indices);
-	}
-
-	MeshHandle VulkanContext::CreateMeshHandle(std::span<const ColorVertex> vertices,
-		std::span<const std::uint32_t> indices)
-	{
-		const auto index = m_Impl->CreateMeshSlot(vertices, indices, false);
-		return MeshHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Meshes[index].Generation);
-	}
-
-	void VulkanContext::ReplaceMesh(MeshHandle mesh, std::span<const ColorVertex> vertices,
-		std::span<const std::uint32_t> indices)
-	{
-		if (!ResolveMesh(mesh))
-			throw std::invalid_argument("Mesh handle does not belong to this renderer context");
-
-		auto& owner = *m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)].Owner;
-		auto previous = owner.GetData();
-		owner.Replace(m_Impl->m_MeshPool, m_Impl->m_Timeline, vertices, indices);
-		// Submitted frames may still read the previous buffers (R3).
-		m_Impl->m_Timeline.Retire(std::move(previous));
-	}
-
 	const VulkanMesh* VulkanContext::ResolveMesh(MeshHandle mesh) const noexcept
 	{
 		if (mesh.m_Context != m_Impl->m_MeshContextId || mesh.m_Index >= m_Impl->m_Meshes.size())
 			return nullptr;
 		const auto& slot = m_Impl->m_Meshes[static_cast<std::size_t>(mesh.m_Index)];
 		return slot.Alive && slot.Generation == mesh.m_Generation ? slot.Owner.get() : nullptr;
-	}
-
-	const VulkanTexture& VulkanContext::CreateTexture(const TextureDesc& description)
-	{
-		return m_Impl->CreateTexture(description);
 	}
 
 	MeshHandle VulkanContext::CreateManagedMesh(std::span<const ColorVertex> vertices,
@@ -946,21 +872,6 @@ namespace Raven
 		return m_Impl->m_View;
 	}
 
-	bool VulkanContext::ReplaceTexturedFragment(std::span<const std::uint32_t> words)
-	{
-		CheckFragmentShaderInterface(words, FragmentShaderKind::Textured);
-		if (!m_Impl->PrepareSwapchain())
-			return false;
-		m_Impl->m_ClearPass->ReplaceTexturedPipelines(m_Impl->m_Shaders.Get(ShaderProgram::TexturedVertex), words);
-		m_Impl->m_Shaders.Set(ShaderProgram::TexturedFragment, { words.begin(), words.end() });
-		return true;
-	}
-
-	void VulkanContext::ReplaceTexture(const VulkanTexture& texture, const TextureDesc& description)
-	{
-		m_Impl->ReplaceTexture(texture, description);
-	}
-
 	const VulkanTexturedMesh& VulkanContext::CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 		std::span<const std::uint16_t> indices)
 	{
@@ -1007,17 +918,5 @@ namespace Raven
 			return { 0, 0 };
 		const auto extent = m_Impl->m_Swapchain->GetExtent();
 		return { extent.width, extent.height };
-	}
-
-	void VulkanContext::DrawFrame(const PerspectiveCamera& camera, std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws)
-	{
-		m_Impl->DrawFrame(camera, opaqueDraws, transparentDraws);
-	}
-
-	void VulkanContext::DrawFrame(const OrthographicCamera& camera, std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws)
-	{
-		m_Impl->DrawFrame(camera, opaqueDraws, transparentDraws);
 	}
 }

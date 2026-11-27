@@ -1,7 +1,7 @@
 # Builds one game root's module against the completed engine (docs/DataModelDesign.md, FD-17).
 # Each Games/<Name>/CMakeLists.txt calls raven_add_game(<Name>) from a standalone child project
 # that RavenEngine configures; the game sees only RavenEngine/Public.
-if(NOT WIN32 OR NOT RAVEN_ROOT OR NOT RAVEN_CORE_LIBRARY OR NOT RAVEN_GAME_OUTPUT)
+if(NOT RAVEN_ROOT OR NOT RAVEN_CORE_LIBRARY OR NOT RAVEN_GAME_OUTPUT)
     message(FATAL_ERROR "Configure game modules through RavenEngine")
 endif()
 include("${RAVEN_ROOT}/cmake/RavenBuildSettings.cmake")
@@ -26,11 +26,15 @@ function(raven_add_game name)
         set_property(SOURCE "${source}" APPEND PROPERTY
             COMPILE_DEFINITIONS "RAVEN_GAME_BUILD_ID=${build_digest}")
     endforeach()
-    target_compile_options(${name} PRIVATE /utf-8)
     raven_apply_warnings(${name})
-    # Debug info, so breakpoints bind in game code. /Zi rather than /ZI: the module is replaced by
-    # reloading, not by Edit and Continue.
-    set_property(TARGET ${name} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
+    # Only RavenRegisterSystems and RavenGetGameContract leave the module (docs/EngineModules.md,
+    # module contract): no inline static of a game binds to another image (AA2-HR-02). No effect on Windows.
+    set_target_properties(${name} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+    if(MSVC)
+        # Debug info, so breakpoints bind in game code. /Zi rather than /ZI: the module is replaced by
+        # reloading, not by Edit and Continue.
+        set_property(TARGET ${name} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
+    endif()
     # <format> dominates a one-file game edit; this PCH cut its compile from 1.75 to 1.0 s
     # (docs/HotReloadDesign.md, H5). Since M6C the game-facing engine headers (systems, input
     # mapping, UI, sound, physics) cost a one-file edit more than <format> did, so they are

@@ -1,5 +1,7 @@
 #include "Raven/Scene/SceneCommands.hpp"
 
+#include "Raven/Components/TransformComponent.hpp"
+
 #include "Raven/Core/Log.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"

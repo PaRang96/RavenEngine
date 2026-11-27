@@ -46,7 +46,7 @@ Windows input uses shared state rules and a pending/published buffer owned by ea
 
 Developer utilities include `Paths::GetContentPath()`, `GetShaderPath()`, executable paths, and binary/text file readers. Validated shaders are staged in `Content/Shaders` beside the executable; copying the executable, DLL, and `Content` together preserves shader lookup from any working directory. See [RuntimeUtilities.md](docs/RuntimeUtilities.md) for usage and application content-root configuration.
 
-`VulkanContext::CreateTexture()` owns and synchronously uploads RGBA8 textures in Linear or SRGB mode. `CreateTexturedMesh()` and the additional `DrawFrame()` overload render UV geometry with a texture, model transform, and RGBA tint. Texture descriptors and native image/view/sampler ownership stay private. The existing color-mesh API remains available. See [TextureResources.md](docs/TextureResources.md) for the contract and GPU validation.
+`VulkanContext::CreateManagedTexture()` uploads RGBA8 textures in Linear or SRGB mode behind a releasable handle; `AssetStore` leases are the way game content reaches it. Texture descriptors and native image/view/sampler ownership stay private. See [TextureResources.md](docs/TextureResources.md) for the contract and GPU validation.
 
 The four-argument `DrawFrame()` adds straight-alpha draws with explicit layer/order and automatic camera-depth sorting. A private preparation stage performs per-instance frustum selection before Vulkan command recording. The sample shows overlapping transparent quads; `F1` or physical `O` toggles explicit ordering, arrows orbit, wheel zooms, Home/R resets, and Space pauses animation.
 

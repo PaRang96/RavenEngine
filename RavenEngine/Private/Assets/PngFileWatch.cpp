@@ -86,14 +86,4 @@ namespace Raven
 	{
 		return DecodePng(bytes, path);
 	}
-
-	PngFileWatch::PngFileWatch(std::filesystem::path path)
-		: m_Watch(std::move(path), "PNG", ImporterVersion::Png, Images::ReadEncoded, DecodePng)
-	{
-	}
-
-	std::optional<ImageData> PngFileWatch::TakeImage()
-	{
-		return m_Watch.Take();
-	}
 }

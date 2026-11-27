@@ -1,18 +1,13 @@
-#include "Raven/Audio/AudioPlayer.hpp"
+#include "Audio/AudioPlayer.hpp"
 
 #include "Assets/ManagedAsset.hpp"
 #include "Audio/AudioClip.hpp"
 #include "Audio/AudioOutput.hpp"
 #include "Audio/AudioVoices.hpp"
-#include "Raven/Assets/AssetCatalog.hpp"
 #include "Raven/Assets/AssetStore.hpp"
-#include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
-#include "Raven/Core/Paths.hpp"
 
 #include <chrono>
-#include <map>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,20 +16,12 @@ namespace Raven
 {
 	struct AudioPlayer::Impl
 	{
-		explicit Impl(const AssetCatalog& catalog)
-			: Catalog(catalog)
-		{
-		}
-
 		~Impl()
 		{
 			// Stop the audio thread before the voices release the clips it reads.
 			Output.reset();
 		}
 
-		const AssetCatalog& Catalog;
-		std::map<AssetId, std::shared_ptr<const PcmClip>> Clips;
-		std::set<AssetId> ReportedFailures;
 		// Opens the device in the background when the session starts, so the first sound causes no
 		// frame hitch.
 		std::unique_ptr<AudioOutput> Output = std::make_unique<AudioOutput>();
@@ -42,37 +29,12 @@ namespace Raven
 		std::chrono::steady_clock::time_point LastUpdate = std::chrono::steady_clock::now();
 	};
 
-	AudioPlayer::AudioPlayer(const AssetCatalog& catalog)
-		: m_Impl(std::make_unique<Impl>(catalog))
+	AudioPlayer::AudioPlayer()
+		: m_Impl(std::make_unique<Impl>())
 	{
 	}
 
 	AudioPlayer::~AudioPlayer() = default;
-
-	SoundHandle AudioPlayer::Play(AssetRef<AudioAsset> asset, const SoundParams& params)
-	{
-		try
-		{
-			auto clip = m_Impl->Clips.find(asset.Id);
-			if (clip == m_Impl->Clips.end())
-			{
-				const auto& record = m_Impl->Catalog.Get(asset.Id);
-				if (record.Kind != AssetKind::Audio)
-					throw std::invalid_argument("asset does not refer to audio");
-				const auto path = Paths::GetContentPath(record.SourcePath);
-				clip = m_Impl->Clips.emplace(asset.Id, std::make_shared<const PcmClip>(
-					DecodeAudio(Files::ReadBinary(path, MaxAudioFileBytes), path))).first;
-			}
-			m_Impl->ReportedFailures.erase(asset.Id);
-			return m_Impl->Voices.Play(clip->second, params);
-		}
-		catch (const std::exception& error)
-		{
-			if (m_Impl->ReportedFailures.insert(asset.Id).second)
-				Log(LogLevel::Warning, "Cannot play audio '" + asset.Id.ToString() + "': " + error.what());
-			return {};
-		}
-	}
 
 	SoundHandle AudioPlayer::Play(const AssetLease& asset, const SoundParams& params)
 	{

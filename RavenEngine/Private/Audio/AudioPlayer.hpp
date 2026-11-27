@@ -8,23 +8,20 @@
 
 namespace Raven
 {
-	class AssetCatalog;
 	class AssetLease;
 
-	// The engine mixer on the main thread (docs/GameServicesDesign.md, C8). The catalog must
-	// outlive the player.
+	// The engine mixer on the main thread (docs/GameServicesDesign.md, C8). Sounds come from the
+	// scene's asset leases, so nothing decodes while a frame runs.
 	class AudioPlayer
 	{
 	public:
-		explicit RAVEN_API AudioPlayer(const AssetCatalog& catalog);
+		RAVEN_API AudioPlayer();
 		RAVEN_API ~AudioPlayer();
 
 		AudioPlayer(const AudioPlayer&) = delete;
 		AudioPlayer& operator=(const AudioPlayer&) = delete;
 
-		// Plays a clip, caching it on first use. A bad reference is logged once and returns an
-		// empty handle.
-		RAVEN_API SoundHandle Play(AssetRef<AudioAsset> asset, const SoundParams& params = {});
+		// Plays a leased clip. A lease without a clip is logged and returns an empty handle.
 		RAVEN_API SoundHandle Play(const AssetLease& asset, const SoundParams& params = {});
 		// Fades the sound out; at least about 1 ms, so a stop never clicks.
 		RAVEN_API void Stop(SoundHandle sound, float fadeSeconds = 0.0f) noexcept;

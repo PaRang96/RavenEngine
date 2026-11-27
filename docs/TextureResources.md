@@ -4,7 +4,7 @@ The texture path covers [PNG/JPEG file decoding](ImageLoading.md), upload, descr
 
 ## Public interface
 
-The sample scene path now uses AssetStore leases and `CreateManagedTexture`/TextureHandle. A managed handle expires after its last lease releases it; frame slots retain the native texture until their GPU fences complete, then its descriptor set is freed and reusable pool capacity remains. [SceneWorkflow.md](SceneWorkflow.md#runtime-handles-and-gpu-retirement) records the current contract. The CreateTexture API below retains its original context-lifetime borrowed reference and cannot be released through the managed API.
+The sample scene path now uses AssetStore leases and `CreateManagedTexture`/TextureHandle. A managed handle expires after its last lease releases it; frame slots retain the native texture until their GPU fences complete, then its descriptor set is freed and reusable pool capacity remains. [SceneWorkflow.md](SceneWorkflow.md#runtime-handles-and-gpu-retirement) records the current contract. *2026-11-27 (AA2-CORE-04):* the unmanaged `CreateTexture` and `ReplaceTexture` described below were removed with `AssetResources`; the descriptions stay as the record of the upload path, which `CreateManagedTexture` shares. The engine's own white texture is still created through the same internal path.
 
 Include `Raven/Renderer/TextureDesc.hpp` and the public renderer context. `TextureDesc` contains width, height, a borrowed span of tightly packed RGBA8 bytes, and `TextureColorSpace` (`Linear` or `SRGB`, default `SRGB`). Rows contain exactly `Width * 4` bytes, and the span must contain exactly `Width * Height * 4` bytes.
 

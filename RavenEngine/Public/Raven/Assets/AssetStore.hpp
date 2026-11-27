@@ -70,7 +70,7 @@ namespace Raven
 	};
 
 	// Main/render-thread cache of weak entries. Leases own resources, not the cache.
-	// The renderer outlives this service and every lease. Legacy AssetResources stays pinned.
+	// The renderer outlives this service and every lease.
 	class AssetStore
 	{
 	public:

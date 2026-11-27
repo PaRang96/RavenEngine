@@ -12,14 +12,15 @@ namespace Raven::ECS
 	inline constexpr std::uint8_t PhysicsLayerCount = 16;
 	inline constexpr std::uint32_t AllPhysicsLayers = (1u << PhysicsLayerCount) - 1;
 
+	// Stored in scene files: values are pinned and only appended (docs/DataModelDesign.md, FD-10).
 	enum class ColliderShape : std::uint8_t
 	{
 		// Size is the half extent on each local axis.
-		Box,
+		Box = 0,
 		// Size.X is the radius.
-		Sphere,
+		Sphere = 1,
 		// Along local Z: Size.X is the radius, Size.Z half the length of the straight part.
-		Capsule,
+		Capsule = 2,
 	};
 
 	// A collision shape on the entity (FD-32). Without a RigidBodyComponent it is static. Sizes are
@@ -39,14 +40,15 @@ namespace Raven::ECS
 		RAVEN_COMPONENT(Raven::ECS::ColliderComponent, Shape, Size, Offset, Sensor, Layer);
 	};
 
+	// Stored in scene files: values are pinned and only appended (docs/DataModelDesign.md, FD-10).
 	enum class MotionType : std::uint8_t
 	{
 		// Never moves by simulation; may follow its transform.
-		Static,
+		Static = 0,
 		// Moved by game code through its transform; pushes dynamic bodies but nothing pushes it.
-		Kinematic,
+		Kinematic = 1,
 		// Moved by the simulation. Must be a scene root.
-		Dynamic,
+		Dynamic = 2,
 	};
 
 	// Simulation values for an entity with a ColliderComponent (FD-32). The engine writes the
@@ -72,21 +74,23 @@ namespace Raven::ECS
 			AngularVelocity, Continuous);
 	};
 
+	// Stored in scene files: values are pinned and only appended (docs/DataModelDesign.md, FD-10).
 	enum class MoverBackend : std::uint8_t
 	{
 		// Precise, collision-correct movement for tens of characters (Jolt's virtual character).
-		Character,
+		Character = 0,
 	};
 
+	// Stored in scene files: values are pinned and only appended (docs/DataModelDesign.md, FD-10).
 	enum class MoverGround : std::uint8_t
 	{
 		// Standing on walkable ground.
-		OnGround,
+		OnGround = 0,
 		// Touching ground too steep to stand on; it slides.
-		OnSteepGround,
+		OnSteepGround = 1,
 		// Touching something that does not hold it up.
-		NotSupported,
-		InAir,
+		NotSupported = 2,
+		InAir = 3,
 	};
 
 	// Moves an entity as a capsule that slides along walls, walks up slopes and steps, rides moving

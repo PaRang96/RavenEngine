@@ -304,7 +304,7 @@ GameBindings passes nullable camera and player handles by value. The DLL supplie
 
 3D collision, physics and movers run on Jolt since M6C ([Physics.md](Physics.md)). General-purpose 2D collision stays deferred; see the [roadmap](../ROADMAP.md#collision-and-physics).
 
-AudioPlayer caches WAV, FLAC, MP3 and Ogg Vorbis clips by asset ID. At load it converts them to the mixer format: float stereo at 48 kHz. The sample owns the service, catalog, and attempt cues across level replacements and DLL reloads.
+AudioPlayer (private since 2026-11-27) plays clips that scene leases decoded; WAV, FLAC, MP3 and Ogg Vorbis are accepted. At load it converts them to the mixer format: float stereo at 48 kHz. The sample owns the service, catalog, and attempt cues across level replacements and DLL reloads.
 - **Playback path:** the engine mixer over the private `AudioDevice` interface, whose backend is miniaudio ([UIAudioLibraries.md](UIAudioLibraries.md#hiding-the-device-layer-owner-question-2026-11-25), [record](GameServicesDesign.md#c8-first-part--the-audio-device-layer-2026-11-25)).
 - **Voices:** up to 64 mixed at once, with concurrency groups, virtual voices, spatial panning and six buses ([record](GameServicesDesign.md#c8-second-part--the-engine-mixer-2026-11-25)). Cues overlap instead of replacing each other. The mixer keeps each clip alive until the audio thread releases it.
 - **The output** opens in the background when the session starts.

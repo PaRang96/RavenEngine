@@ -48,7 +48,7 @@ namespace Raven
 		}
 	}
 
-	inline constexpr std::array<AssetKindInfo, 10> AssetKinds{ {
+	inline constexpr std::array<AssetKindInfo, 11> AssetKinds{ {
 		{ AssetKind::Texture, "PNG", "texture", { ".png" }, Detail::AssetTag<TextureAsset>(), true },
 		{ AssetKind::Model, "model", {}, {}, Detail::AssetTag<ModelAsset>(), false },
 		{ AssetKind::Mesh, "FBX", "mesh", { ".fbx" }, Detail::AssetTag<MeshAsset>(), true },
@@ -58,7 +58,8 @@ namespace Raven
 		{ AssetKind::Shader, "shader", {}, {}, Detail::AssetTag<ShaderAsset>(), false },
 		{ AssetKind::Scene, "scene", "scene", { ".ravenscene" }, Detail::AssetTag<SceneAsset>(), false },
 		{ AssetKind::Audio, "audio", "audio", { ".wav", ".flac", ".mp3", ".ogg" }, Detail::AssetTag<AudioAsset>(), true },
-		{ AssetKind::Sound, "sound event", "sound", { ".ravensound" }, Detail::AssetTag<SoundAsset>(), true } } };
+		{ AssetKind::Sound, "sound event", "sound", { ".ravensound" }, Detail::AssetTag<SoundAsset>(), true },
+		{ AssetKind::Font, "font", {}, {}, Detail::AssetTag<FontAsset>(), false } } };
 
 	// The row of a kind; null for Unknown or a value outside the enum.
 	inline const AssetKindInfo* FindAssetKind(AssetKind kind) noexcept
