@@ -149,6 +149,8 @@ Order (owner, 2026-11-25): the owner's review of C1–C6 and a commit, then C9 w
 
 ## M6B — Rendering and content (current)
 
+Build mode (owner, 2026-11-27): the whole of M6B is implemented directly, starting with the platform layer, verified step by step, with one joint review at the end; nothing is pushed without the owner's approval.
+
 Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26). Step order B1–B8 there. The owner's decisions are settled (2026-11-26); B1 starts after the review amendments and the B0 contracts below.
 
 - [x] Owner questions from [ArchitectureAssessment-2026-11-26.md](docs/ArchitectureAssessment-2026-11-26.md) (Q1–Q13), [CodeQualityAssessment-2026-11-26.md](docs/CodeQualityAssessment-2026-11-26.md) (Q1–Q4) and this note (FD-18, FD-19, FD-23, FD-26, the 2D run), settled one at a time on 2026-11-26. Records: [planning decisions 4 and 7–19](ROADMAP.md#planning-decisions-2026-11-24) and [Not in v1](ROADMAP.md#not-in-v1-2026-11-26).
