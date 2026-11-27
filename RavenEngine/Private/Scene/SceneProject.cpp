@@ -247,8 +247,11 @@ namespace Raven
 		{
 			if (watch)
 			{
+				// No retry after a failure: the inputs include the content fingerprint, so any content
+				// change (a fixed scene, a new file) re-imports through the reload service's audit. A retry
+				// would rescan the content and repeat its warnings several times a second.
 				Watch = std::make_unique<SettledFileWatch<SceneProjectDefinition>>(Path,
-					"project", ImporterVersion::Project, ReadProjectInputs, DecodeDevelopment, Current.SourceBytes, true);
+					"project", ImporterVersion::Project, ReadProjectInputs, DecodeDevelopment, Current.SourceBytes);
 				Log(LogLevel::Info, "Watching project " + PathToUtf8(Path));
 			}
 			Log(LogLevel::Info, "Scene content root " + PathToUtf8(Root));
