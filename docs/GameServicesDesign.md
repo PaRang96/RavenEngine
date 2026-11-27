@@ -185,6 +185,8 @@ Also rejected: Bullet (ageing), Havok (commercial), Box2D (2D only).
 | 2 | Same build, different PCs (Windows x64): lockstep between players | Target of the RTS milestone |
 | 3 | Different platforms and compilers | Decided later |
 
+**Confirmed (owner, 2026-11-27, joint review item 2).** v1 stays at level 1, which is built and checked. Level 2 is the declared target, for the milestone that brings multiplayer or RTS lockstep; multiplayer is not a current target, so nothing is built for it now. One rule is recorded now so that milestone is not a rewrite: an engine change must not make level 2 harder to reach (no CPU-dependent paths in simulation code, no wall clock and no pointer-ordered iteration in fixed steps). Two known level-2 fixes wait for that milestone, since each is a few lines with no rework: turning off the C runtime's FMA3 math paths (`_set_FMA3_enable(0)`) and resetting the floating-point control state at each fixed step.
+
 **What M6C builds for level 1:**
 
 1. A seeded simulation RNG in `SystemContext`. Fixed-step code must not read the wall clock or `std::random_device`.
@@ -1053,7 +1055,7 @@ The owner settled each decision one at a time.
 | FD-46 | The arena game | "that is getting closer to what i really want in the future" |
 | FD-32 | Jolt inside the engine | "jolt physics, i personally like that solution", after a review of its costs and pitfalls; the physics iteration set approved separately, with the requirement to "find effective way for game dev iteration" |
 | FD-47 | Input stream with amendments, minimal movement | Provisional. The owner first set RTS as the primary genre, then clarified: "we must secure ability to build rts", not focus on it. The control layer came from another team's proposal, taken "as strong suggestion". *Confirmed 2026-11-27 (joint review, option A) for the built part; the crowd backend is decided at its milestone.* |
-| FD-48 | Level 1 with one check, no replay; level 2 at the RTS milestone; level 3 later | "approved for now / after measurement, we can decide and discuss things again" |
+| FD-48 | Level 1 with one check, no replay; level 2 at the RTS milestone; level 3 later | "approved for now / after measurement, we can decide and discuss things again". *Confirmed 2026-11-27 (joint review): level 1 for v1; level 2 the target for the multiplayer milestone, with only the "keep level 2 reachable" rule now.* |
 | FD-31 | Engine-owned unified stack, no ImGui | "this approval is not full approval, but for early deliverable"; the owner asked to plan the engine-owned method correctly |
 | FD-33 | A(b), B (field-table records, text plus binary with checksum), C, D with the developer quick-save | The owner asked for formats beyond JSON, including binary serialization and encryption, which became the stage pipeline |
 | FD-34 | Interpolation; Jolt picking in game and editor; profile data outside the ECS and DLL; present-queue switch skipped | The owner proposed Jolt for editor picking and the separate profile store |
