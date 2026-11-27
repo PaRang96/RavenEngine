@@ -1,7 +1,7 @@
 # UI design note: the engine-owned 2D and UI stack
 
 Status:
-- **Draft for owner review (2026-11-25).** [FD-31](GameServicesDesign.md#fd-31--text-and-ui) approved the engine-owned stack for the M6C early deliverable only (2026-11-24): "this approval is not full approval, but for early deliverable". Full approval of the stack waits for this note.
+- **The stack is approved in full (owner, 2026-11-27, joint review).** [FD-31](GameServicesDesign.md#fd-31--text-and-ui) first approved the engine-owned stack for the M6C early deliverable only (2026-11-24): "this approval is not full approval, but for early deliverable". Sections 1, 2 and 4 were approved on 2026-11-25; sections 3, 5, 6 and 7 are still written and reviewed before the work each covers.
 - **Owner decisions (2026-11-25):**
   - U1: Raven builds its own stack ("Let's build own stack").
   - U4: it must support many languages, "not only kor or eng".

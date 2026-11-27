@@ -202,7 +202,7 @@ Already in place: fixed steps, sorted contacts, a fixed body-add order, and only
 
 ## FD-31 — Text and UI
 
-**Status: approved for the early deliverable only.** The full stack is planned in [UIDesign.md](UIDesign.md), which the owner reviews before any UI work beyond the early deliverable.
+**Status: approved in full (owner, 2026-11-27, joint review item 3).** It was approved for the early deliverable only on 2026-11-24. Everything it rests on was decided since (U1–U5 and UIDesign.md sections 1, 2 and 4, on 2026-11-25), built and measured, so the engine-owned stack is Raven's UI from now on. The unwritten UIDesign.md sections (3 layout, 5 input and text editing, 6 editor path, 7 budgets) are still written and brought to the owner before the work each covers. In M6B this means: font family, weight and font assets (AA2-MEDIA-05) and the `UiText` localization seam (AA2-MEDIA-06) go in B2's contract window, and section 5 comes to the owner before the rebindable UI keys (AA2-MEDIA-04 steps 2-3).
 
 ### Today (checked)
 
@@ -1056,6 +1056,6 @@ The owner settled each decision one at a time.
 | FD-32 | Jolt inside the engine | "jolt physics, i personally like that solution", after a review of its costs and pitfalls; the physics iteration set approved separately, with the requirement to "find effective way for game dev iteration" |
 | FD-47 | Input stream with amendments, minimal movement | Provisional. The owner first set RTS as the primary genre, then clarified: "we must secure ability to build rts", not focus on it. The control layer came from another team's proposal, taken "as strong suggestion". *Confirmed 2026-11-27 (joint review, option A) for the built part; the crowd backend is decided at its milestone.* |
 | FD-48 | Level 1 with one check, no replay; level 2 at the RTS milestone; level 3 later | "approved for now / after measurement, we can decide and discuss things again". *Confirmed 2026-11-27 (joint review): level 1 for v1; level 2 the target for the multiplayer milestone, with only the "keep level 2 reachable" rule now.* |
-| FD-31 | Engine-owned unified stack, no ImGui | "this approval is not full approval, but for early deliverable"; the owner asked to plan the engine-owned method correctly |
+| FD-31 | Engine-owned unified stack, no ImGui | "this approval is not full approval, but for early deliverable"; the owner asked to plan the engine-owned method correctly. *Approved in full 2026-11-27 (joint review); unwritten UIDesign.md sections still come to the owner before their work.* |
 | FD-33 | A(b), B (field-table records, text plus binary with checksum), C, D with the developer quick-save | The owner asked for formats beyond JSON, including binary serialization and encryption, which became the stage pipeline |
 | FD-34 | Interpolation; Jolt picking in game and editor; profile data outside the ECS and DLL; present-queue switch skipped | The owner proposed Jolt for editor picking and the separate profile store |
