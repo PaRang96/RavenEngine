@@ -404,6 +404,17 @@ Contract 9, built:
 - **Checked live:** a PNG dropped into Samples' content during a session got its sidecar and the project republished in about two seconds. A copied PNG with its copied sidecar, sorting before the original, got the new ID while the original kept its own; a first version of the rule gave the new ID by path order and so broke the original's references. That bug was found by this check and fixed before commit, and the engine kept the last good world meanwhile. Copies with equal timestamps rewrite nothing and are reported.
 - **Also checked:** the 9 tests; the Arena determinism hash is unchanged (`36f045813e737e08`); Arena's staged player project decodes; all six captures are bit-identical to B1's.
 
+### B2, part 3 — device limits and bindless classes (2026-11-27)
+
+Contract 8, built:
+- **Selection:** device selection reads `VkPhysicalDeviceVulkan12Properties` and rejects a device whose update-after-bind sampled-image limits (per set or per stage) are below `BindlessTextureCapacity` (4,096), naming the limit in the "No Vulkan GPU meets" message beside the missing features.
+- **Classes** (`VulkanTextureDescriptors`): element 0 is the context's white texture; elements 1–64 are the engine reserve; content takes 65–4095. `CreateManagedTexture` takes a `TextureUse` (Content by default); the text system's glyph pages use Engine, and textures the context creates itself are engine textures. A full class gives the texture element 0 and logs one warning per fill instead of throwing; replacing such a texture never overwrites white.
+- **Release:** a freed element is pointed at white before it returns to its class's free list (AA2-RND-05 step 1), so a stale index shows white, never another texture.
+- **Stats:** `VulkanResourceStats::BindlessEngine` and `BindlessContent`.
+- **Checked:** a temporary probe (deleted) filled both classes, 4,100 content and 70 engine textures: 4,031 and 64 elements were used, each class logged once, and releasing everything returned both counts to zero, with freed elements reused. The 9 tests pass, and the six captures are bit-identical to B1's.
+- **Found by the probe:** every texture still creates its own `VkSampler`, and the test laptop's driver allows 4,000 samplers, so content cannot actually reach the class limit before validation errors. B3 already removes per-texture samplers for the fixed sampler set, which removes this limit too; until then the practical texture limit is about 4,000.
+- **Left to the macOS port:** logging MoltenVK's portability-subset features. Their structure exists only in Vulkan's beta header, which the build does not enable, and no Windows device reports the extension, so it cannot be built or exercised here. It is listed in [PlatformHandoff.md](PlatformHandoff.md).
+
 ## Measurements
 
 | # | Measurement | Gate |

@@ -611,7 +611,7 @@ namespace Raven::Text
 				}
 				// A new page, cleared to "far outside" so filtering at glyph edges reads empty space.
 				const std::vector<std::byte> clear(std::size_t{ PageSize } * PageSize * 4, std::byte{ 0 });
-				Pages.push_back({ Renderer.CreateManagedTexture({ PageSize, PageSize, clear, TextureColorSpace::Linear }) });
+				Pages.push_back({ Renderer.CreateManagedTexture({ PageSize, PageSize, clear, TextureColorSpace::Linear }, TextureUse::Engine) });
 				PageIndex.push_back(Renderer.GetBindlessIndex(Pages.back().Texture));
 			}
 			return false;

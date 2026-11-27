@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "Raven/Renderer/RendererConfig.hpp"
 
 #include "Renderer/Vulkan/VulkanQueueFamilies.hpp"
@@ -8,6 +10,10 @@
 
 namespace Raven
 {
+	// Elements of the bindless texture array (docs/GpuDrivenDesign.md, G4); selection rejects a
+	// device whose descriptor limits cannot hold it.
+	inline constexpr std::uint32_t BindlessTextureCapacity = 4096;
+
 	struct VulkanPhysicalDevice
 	{
 		VkPhysicalDevice Handle = VK_NULL_HANDLE;

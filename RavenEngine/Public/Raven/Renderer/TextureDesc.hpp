@@ -6,6 +6,14 @@
 
 namespace Raven
 {
+	// Which part of the bindless array a managed texture takes (docs/RenderingContentDesign.md, B0
+	// contract 8): engine textures (glyph pages, UI) have a reserve content cannot use up.
+	enum class TextureUse
+	{
+		Content,
+		Engine,
+	};
+
 	enum class TextureColorSpace
 	{
 		Linear,

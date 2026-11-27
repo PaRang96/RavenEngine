@@ -1,12 +1,15 @@
 #include "Renderer/Vulkan/VulkanTextureDescriptors.hpp"
-#include "Core/DataError.hpp"
+
+#include "Raven/Core/Log.hpp"
 
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 
 #include <algorithm>
 #include <array>
+#include <format>
 #include <iterator>
 #include <stdexcept>
+#include <utility>
 #include <string>
 
 namespace Raven
@@ -143,11 +146,8 @@ namespace Raven
 		m_Pages.push_back({ pool, 0 });
 	}
 
-	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(VulkanTexture& texture)
+	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(VulkanTexture& texture, TextureUse use)
 	{
-		if (m_FreeElements.empty() && m_NextElement == BindlessCapacity)
-			// Content can fill it, so it is a data error: the texture falls back to white (FD-06).
-			throw DataError("The bindless texture array is full");
 		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE ||
 			texture.GetSampler() == VK_NULL_HANDLE)
 			throw std::invalid_argument("Texture descriptors require a texture from the same device");
@@ -180,16 +180,33 @@ namespace Raven
 		}
 		++page->Used;
 		WriteSet(set, texture);
-		std::uint32_t element = m_NextElement;
-		if (!m_FreeElements.empty())
+		// The first texture is the context's white, element 0.
+		if (m_WhiteView == VK_NULL_HANDLE)
 		{
-			element = m_FreeElements.back();
-			m_FreeElements.pop_back();
+			m_WhiteView = texture.GetView();
+			texture.SetBindlessIndex(0);
+			WriteElement(0, texture);
+			return set;
 		}
-		else
+		auto& elements = m_Classes[use == TextureUse::Engine ? 0 : 1];
+		std::uint32_t element = 0;
+		if (!elements.Free.empty())
 		{
-			++m_NextElement;
+			element = elements.Free.back();
+			elements.Free.pop_back();
 		}
+		else if (elements.Next < elements.End)
+			element = elements.Next++;
+		if (element == 0)
+		{
+			// Full: the texture samples white, one line per fill (FD-06, a data error, not fatal).
+			if (!std::exchange(elements.ReportedFull, true))
+				Log(LogLevel::Warning, std::format("The bindless {} textures are full ({} elements); further textures draw "
+					"white until some are released", use == TextureUse::Engine ? "engine" : "content", elements.End - elements.First));
+			texture.SetBindlessIndex(0);
+			return set;
+		}
+		++elements.Used;
 		texture.SetBindlessIndex(element);
 		WriteElement(element, texture);
 		return set;
@@ -197,14 +214,36 @@ namespace Raven
 
 	void VulkanTextureDescriptors::ReleaseBinding(const VulkanTexture& texture) noexcept
 	{
-		try
-		{
-			m_FreeElements.push_back(texture.GetBindlessIndex());
-		}
-		catch (...)
-		{
-			// The element stays unused until shutdown.
-		}
+		const auto element = texture.GetBindlessIndex();
+		for (auto& elements : m_Classes)
+			if (element >= elements.First && element < elements.End)
+			{
+				// Freed elements sample white until reused, so a stale index never shows another
+				// texture (AA2-RND-05 step 1).
+				if (m_WhiteView != VK_NULL_HANDLE)
+				{
+					const VkDescriptorImageInfo image{ VK_NULL_HANDLE, m_WhiteView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+					VkWriteDescriptorSet write{};
+					write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+					write.dstSet = m_BindlessSet;
+					write.dstBinding = 0;
+					write.dstArrayElement = element;
+					write.descriptorCount = 1;
+					write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+					write.pImageInfo = &image;
+					vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+				}
+				try
+				{
+					elements.Free.push_back(element);
+					--elements.Used;
+					elements.ReportedFull = false;
+				}
+				catch (...)
+				{
+					// The element stays unused until shutdown.
+				}
+			}
 		auto binding = texture.GetDescriptorSet();
 		const auto found = m_Bindings.find(binding);
 		if (found == m_Bindings.end())
@@ -220,7 +259,9 @@ namespace Raven
 	void VulkanTextureDescriptors::WriteBinding(const VulkanTexture& target, const VulkanTexture& contents) const noexcept
 	{
 		WriteSet(target.GetDescriptorSet(), contents);
-		WriteElement(target.GetBindlessIndex(), contents);
+		// A texture created while its class was full shares element 0 and must not overwrite white.
+		if (target.GetBindlessIndex() != 0 || target.GetView() == m_WhiteView)
+			WriteElement(target.GetBindlessIndex(), contents);
 	}
 
 	void VulkanTextureDescriptors::WriteElement(std::uint32_t element, const VulkanTexture& contents) const noexcept

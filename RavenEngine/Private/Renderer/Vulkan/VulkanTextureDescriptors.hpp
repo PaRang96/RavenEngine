@@ -1,7 +1,10 @@
 #pragma once
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
+#include "Raven/Renderer/TextureDesc.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -17,7 +20,10 @@ namespace Raven
 	{
 	public:
 		// Elements of the bindless array; the first texture created (the context's white) is element 0.
-		static constexpr std::uint32_t BindlessCapacity = 4096;
+		static constexpr std::uint32_t BindlessCapacity = BindlessTextureCapacity;
+		// Elements 1 to EngineReserve belong to engine textures (glyph pages, UI), so content can
+		// never starve them; content takes the rest (B0 contract 8). Element 0 stays white.
+		static constexpr std::uint32_t EngineReserve = 64;
 
 		explicit VulkanTextureDescriptors(const VulkanDevice& device);
 		~VulkanTextureDescriptors();
@@ -26,8 +32,12 @@ namespace Raven
 		// Set 0 of the lit pipeline: the bindless array and the shared sampler.
 		VkDescriptorSetLayout GetBindlessLayout() const { return m_BindlessLayout; }
 		VkDescriptorSet GetBindlessSet() const { return m_BindlessSet; }
-		// Also assigns the texture its bindless element.
-		VkDescriptorSet CreateBinding(VulkanTexture& texture);
+		// Also assigns the texture its bindless element from its class. A full content class gives
+		// the texture the white element, logged once per fill, instead of failing the load.
+		VkDescriptorSet CreateBinding(VulkanTexture& texture, TextureUse use = TextureUse::Content);
+		// Elements in use per class, for the resource stats.
+		std::uint32_t GetEngineElements() const noexcept { return m_Classes[0].Used; }
+		std::uint32_t GetContentElements() const noexcept { return m_Classes[1].Used; }
 		// The texture's frames have completed (R3), so its element can be reused.
 		void ReleaseBinding(const VulkanTexture& texture) noexcept;
 		std::size_t GetBindingCount() const noexcept { return m_Bindings.size(); }
@@ -60,7 +70,18 @@ namespace Raven
 		VkDescriptorSet m_BindlessSet = VK_NULL_HANDLE;
 		// Every texture's sampler is linear and clamped, so one shared sampler matches them.
 		VkSampler m_Sampler = VK_NULL_HANDLE;
-		std::vector<std::uint32_t> m_FreeElements;
-		std::uint32_t m_NextElement = 0;
+		struct ElementClass
+		{
+			std::uint32_t First = 0;
+			std::uint32_t End = 0;
+			std::uint32_t Next = 0;
+			std::uint32_t Used = 0;
+			std::vector<std::uint32_t> Free;
+			bool ReportedFull = false;
+		};
+		// Engine, then content.
+		std::array<ElementClass, 2> m_Classes{ { { 1, 1 + EngineReserve, 1 }, { 1 + EngineReserve, BindlessCapacity, 1 + EngineReserve } } };
+		// Element 0, the white texture: freed elements are pointed at it until reused.
+		VkImageView m_WhiteView = VK_NULL_HANDLE;
 	};
 }

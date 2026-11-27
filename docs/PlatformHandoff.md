@@ -127,6 +127,7 @@ Generate an asset ID once for a new registration with `Generate()`, and read pre
 
    - [ ] Verify Metal surface creation, GPU enumeration, graphics/present queue selection, swapchain creation, and presentation on an actual Mac.
    - [ ] Check existing shared portability enumeration flags and portability subset device-extension handling. Coordinate additional requirements with the Windows contributor rather than duplicating the shared renderer.
+   - [ ] Query `VkPhysicalDevicePortabilitySubsetFeaturesKHR` during device selection and log it once (M6B contract 8, [RenderingContentDesign.md](RenderingContentDesign.md#8-device-limits-and-bindless-classes-aa2-rnd-07)). It needs `VK_ENABLE_BETA_EXTENSIONS` for that translation unit only.
    - [ ] Verify current HLSL/SPIR-V, depth formats, and RGBA8 Linear/SRGB uploads on the target GPU. Record unsupported-capability errors.
 
 5. **Verify builds and library placement**

@@ -1,5 +1,6 @@
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <stdexcept>
@@ -224,6 +225,22 @@ namespace Raven
 			require(hasDynamicRendering && support.DynamicRendering, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 			require(hasSynchronization2 && support.Synchronization2, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
 			require(support.DescriptorIndexing, "descriptor indexing for bindless textures");
+			// The bindless array's capacity must fit the update-after-bind limits, or the set layout
+			// fails at startup with no reason given (B0 contract 8).
+			{
+				VkPhysicalDeviceVulkan12Properties vulkan12{};
+				vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+				VkPhysicalDeviceProperties2 properties{};
+				properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+				properties.pNext = &vulkan12;
+				vkGetPhysicalDeviceProperties2(device, &properties);
+				const auto images = std::min(vulkan12.maxDescriptorSetUpdateAfterBindSampledImages,
+					vulkan12.maxPerStageDescriptorUpdateAfterBindSampledImages);
+				if (images < BindlessTextureCapacity)
+					missing += (missing.empty() ? "" : ", ") + std::string("room for ") +
+						std::to_string(BindlessTextureCapacity) + " bindless textures (the limit is " +
+						std::to_string(images) + ")";
+			}
 			require(support.MultiDrawIndirect, "multiDrawIndirect");
 			require(support.DrawIndirectFirstInstance, "drawIndirectFirstInstance");
 			if (!missing.empty())

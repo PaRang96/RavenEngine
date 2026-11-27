@@ -121,7 +121,7 @@ namespace Raven
 		void CollectResources() noexcept;
 		std::size_t CreateMeshSlot(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices, bool managed);
-		std::size_t CreateTextureSlot(const TextureDesc& description, bool managed);
+		std::size_t CreateTextureSlot(const TextureDesc& description, bool managed, TextureUse use = TextureUse::Engine);
 		const VulkanTexturedMesh& CreateTexturedMesh(std::span<const TexturedVertex> vertices,
 			std::span<const std::uint16_t> indices);
 		const VulkanTexture& CreateTexture(const TextureDesc& description);
@@ -607,12 +607,12 @@ namespace Raven
 		return *m_Textures[CreateTextureSlot(description, false)].Owner;
 	}
 
-	std::size_t VulkanContext::Impl::CreateTextureSlot(const TextureDesc& description, bool managed)
+	std::size_t VulkanContext::Impl::CreateTextureSlot(const TextureDesc& description, bool managed, TextureUse use)
 	{
 		CollectResources();
 		const auto index = ReserveResourceSlot(m_Textures);
 		auto texture = std::make_shared<VulkanTexture>(m_Device, m_PhysicalDevice, description);
-		texture->SetDescriptorSet(m_TextureDescriptors.CreateBinding(*texture));
+		texture->SetDescriptorSet(m_TextureDescriptors.CreateBinding(*texture, use));
 		auto& slot = m_Textures[index];
 		slot.Owner = std::move(texture);
 		++slot.Generation;
@@ -753,9 +753,9 @@ namespace Raven
 		return MeshHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Meshes[index].Generation);
 	}
 
-	TextureHandle VulkanContext::CreateManagedTexture(const TextureDesc& description)
+	TextureHandle VulkanContext::CreateManagedTexture(const TextureDesc& description, TextureUse use)
 	{
-		const auto index = m_Impl->CreateTextureSlot(description, true);
+		const auto index = m_Impl->CreateTextureSlot(description, true, use);
 		return TextureHandle(m_Impl->m_MeshContextId, index, m_Impl->m_Textures[index].Generation);
 	}
 
@@ -846,6 +846,8 @@ namespace Raven
 				++result.RetiredTextures;
 		result.DescriptorBindings = m_Impl->m_TextureDescriptors.GetBindingCount();
 		result.DescriptorPools = m_Impl->m_TextureDescriptors.GetPoolCount();
+		result.BindlessEngine = m_Impl->m_TextureDescriptors.GetEngineElements();
+		result.BindlessContent = m_Impl->m_TextureDescriptors.GetContentElements();
 		return result;
 	}
 

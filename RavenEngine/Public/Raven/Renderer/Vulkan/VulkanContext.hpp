@@ -43,6 +43,9 @@ namespace Raven
 		std::size_t TextureSlots = 0;
 		std::size_t DescriptorBindings = 0;
 		std::size_t DescriptorPools = 0;
+		// Bindless elements in use per class (B0 contract 8).
+		std::size_t BindlessEngine = 0;
+		std::size_t BindlessContent = 0;
 	};
 
 	class VulkanContext
@@ -63,7 +66,7 @@ namespace Raven
 		// the handle immediately; submitted GPU work retains the required native resources.
 		RAVEN_API MeshHandle CreateManagedMesh(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices);
-		RAVEN_API TextureHandle CreateManagedTexture(const TextureDesc& description);
+		RAVEN_API TextureHandle CreateManagedTexture(const TextureDesc& description, TextureUse use = TextureUse::Content);
 		RAVEN_API const VulkanTexture* ResolveTexture(TextureHandle texture) const noexcept;
 		RAVEN_API bool ReleaseMesh(MeshHandle mesh) noexcept;
 		RAVEN_API bool ReleaseTexture(TextureHandle texture) noexcept;
