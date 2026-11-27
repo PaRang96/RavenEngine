@@ -225,6 +225,9 @@ def live(executable, source, directory, capture=True):
     metadata = content / "Project.ravenproject"
     mesh = content / "Meshes/Cube.fbx"
     png = content / "Textures/UVGridAlternate.png"
+    # Material files and material shaders reload too (docs/RenderingContentDesign.md, B0 contracts 6 and 7).
+    paint = content / "Materials/Paint.ravenmaterial"
+    stripes = content / "Shaders/Stripes.hlsl"
     # Lit shaders reload when the engine material header changes (docs/GpuDrivenDesign.md, G4).
     header = shader.parent / "Raven/Material.hlsli"
     # Every stage and include reloads since M5 (docs/HotReloadDesign.md, H2).
@@ -232,7 +235,7 @@ def live(executable, source, directory, capture=True):
     cull = shader.parent / "Cull.comp.hlsl"
     scene_header = shader.parent / "GpuScene.hlsli"
     originals = {path: path.read_bytes() for path in (shader, header, vertex, cull, scene_header, game, scene,
-                                                       metadata, mesh, png)}
+                                                       metadata, mesh, png, paint, stripes)}
     measurements = {}
     rejections = {}
     try:
@@ -433,6 +436,37 @@ def live(executable, source, directory, capture=True):
             lines = re.findall(rb"FBX reload presented:.*?clock (\d+) ns", app.log.read_bytes())
             measurements["fbx"] = (start, int(lines[-1]), "presentation clock")
             screenshot("fbx-replaced", png_image, True)
+
+            app.level("Puzzle")
+            puzzle = screenshot("puzzle")
+            count = app.count(b"Replaced material ") + 1
+            start = save(paint, originals[paint].replace(b"\nlit\n", b"\nlit\nbase-color 1 0.54 0.36 1\n"))
+            app.marker(b"Replaced material ", count)
+            material_image = screenshot("material-replaced", puzzle, True)
+            measurements["material"] = (start, time.perf_counter_ns(),
+                                        "observed changed screenshot" if capture else "observed publication")
+            striped = originals[stripes].replace(b"albedo = lerp(albedo, parameters.StripeColor.rgb, parameters.StripeColor.a);",
+                                                 b"albedo = lerp(albedo, float3(0.1, 0.2, 0.9), 0.8);")
+            check(striped != originals[stripes], "Material shader fixture moved")
+            count = app.count(b"Replaced shader ") + 1
+            start = save(stripes, striped)
+            app.marker(b"Replaced shader ", count)
+            shader_image = screenshot("material-shader-replaced", material_image, True)
+            measurements["material-shader"] = (start, time.perf_counter_ns(),
+                                               "observed changed screenshot" if capture else "observed publication")
+            bad = b"Stripes.hlsl: Cannot compile material shader"
+            count = app.count(bad) + 1
+            start = save(stripes, striped + b"\nfloat4 BrokenShader( {\n")
+            app.marker(bad, count, 30)
+            rejections["material-shader-syntax"] = (start, time.perf_counter_ns())
+            screenshot("material-shader-retained", shader_image, False)
+            count = app.count(b"Replaced shader ") + 1
+            save(stripes, originals[stripes])
+            app.marker(b"Replaced shader ", count)
+            count = app.count(b"Replaced material ") + 1
+            save(paint, originals[paint])
+            app.marker(b"Replaced material ", count)
+            screenshot("material-restored", puzzle, False)
     finally:
         for path, data in originals.items():
             if path.read_bytes() != data:

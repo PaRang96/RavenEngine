@@ -50,6 +50,10 @@ namespace Raven
 		std::uint32_t UiQuads = 0;
 		// Sprites in the render world this frame, opaque, cut-out and blended (docs/RenderingContentDesign.md, B1, B5).
 		std::uint32_t Sprites = 0;
+		// GPU time of the upload batches that completed since the previous frame, and the bytes of device
+		// memory allocated (docs/RenderingContentDesign.md, measurement 6).
+		std::int64_t UploadGpu = 0;
+		std::uint64_t GpuMemory = 0;
 	};
 
 	RAVEN_API FrameMetrics* GetFrameMetrics() noexcept;

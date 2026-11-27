@@ -96,6 +96,7 @@ namespace Raven
 		{
 			DecodedAsset result;
 			result.Bytes.assign(bytes.begin(), bytes.end());
+			result.BytesHash = ReloadService::HashContent(bytes);
 			const auto extension = LowercaseExtension(path);
 			if (extension == ".fbx")
 				result.Data = DecodeFbxMesh(bytes, path, part);
@@ -126,7 +127,8 @@ namespace Raven
 
 	bool ManagedAsset::IsCurrent() const
 	{
-		return ReadAsset(Source) == Bytes;
+		const auto bytes = ReadAsset(Source);
+		return bytes.size() == BytesSize && ReloadService::HashContent(bytes) == BytesHash;
 	}
 
 	void ManagedAsset::Commit(ManagedAsset& candidate) noexcept
@@ -150,7 +152,8 @@ namespace Raven
 		std::swap(Record, candidate.Record);
 		std::swap(ColorSpace, candidate.ColorSpace);
 		Source.swap(candidate.Source);
-		Bytes.swap(candidate.Bytes);
+		std::swap(BytesSize, candidate.BytesSize);
+		std::swap(BytesHash, candidate.BytesHash);
 		Watch.swap(candidate.Watch);
 	}
 
@@ -304,7 +307,8 @@ namespace Raven
 				result->Shader = std::make_shared<const MaterialShader>(std::get<MaterialShader>(std::move(decoded->Data)));
 			else
 				throw std::invalid_argument("Asset kind cannot be acquired by a scene");
-			result->Bytes = std::move(decoded->Bytes);
+			result->BytesSize = decoded->Bytes.size();
+			result->BytesHash = decoded->BytesHash;
 			// Content watching covers textures, and with them audio clips, sound events (C8) and materials.
 			const bool sound = record.Kind == AssetKind::Audio || record.Kind == AssetKind::Sound;
 			const bool material = record.Kind == AssetKind::Material;
@@ -319,7 +323,7 @@ namespace Raven
 					[part = record.Part](std::span<const std::byte> bytes, const std::filesystem::path& path)
 					{
 						return DecodeAsset(bytes, path, part);
-					}, result->Bytes);
+					}, std::move(decoded->Bytes), false, result->BytesHash);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
 			}
 			return result;

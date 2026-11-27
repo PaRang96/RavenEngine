@@ -792,7 +792,7 @@ namespace Raven
 			trace << "start_ns,work_ns,drawable,gameplay_ns,scene_gather_ns,world_ns,render_prepare_ns,record_submit_ns,"
 				"fence_wait_ns,acquire_wait_ns,present_wait_ns,presented_ns,gpu_frame_ns,gpu_ns,gpu_cull_ns,visible_meshes,draw_calls,"
 				"game_generation,delta_seconds,benchmark_phase,scene_replaced,physics_ns,physics_bodies,physics_active,"
-				"physics_contacts,ui_ns,ui_quads,sprites\n" << std::setprecision(10);
+				"physics_contacts,ui_ns,ui_quads,sprites,upload_gpu_ns,gpu_memory_bytes\n" << std::setprecision(10);
 			for (const auto& sample : samples)
 			{
 				const auto& m = sample.Metrics;
@@ -802,7 +802,7 @@ namespace Raven
 					<< ',' << m.GpuFrame << ',' << m.Gpu << ',' << m.GpuCull << ',' << m.VisibleMeshes << ',' << m.DrawCalls
 					<< ',' << m.GameGeneration << ',' << m.DeltaSeconds << ',' << m.BenchmarkPhase << ',' << m.SceneReplaced
 					<< ',' << m.Physics << ',' << m.PhysicsBodies << ',' << m.PhysicsActive << ',' << m.PhysicsContacts
-					<< ',' << m.Ui << ',' << m.UiQuads << ',' << m.Sprites << '\n';
+					<< ',' << m.Ui << ',' << m.UiQuads << ',' << m.Sprites << ',' << m.UploadGpu << ',' << m.GpuMemory << '\n';
 			}
 			trace.close();
 			if (!trace)

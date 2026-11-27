@@ -217,7 +217,7 @@ namespace Raven
 		  m_TextureDescriptors(m_Device),
 		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
-		  m_Uploads(m_Device, m_PhysicalDevice.QueueFamilies.Graphics.value(), m_Timeline),
+		  m_Uploads(m_Device, m_PhysicalDevice, m_Timeline),
 		  m_GpuScene(m_Device, m_PhysicalDevice, m_Timeline,
 			  m_Shaders.Get(ShaderProgram::Scatter), m_Shaders.Get(ShaderProgram::Cull))
 	{
@@ -746,7 +746,12 @@ namespace Raven
 			return std::nullopt;
 		}
 		if (metrics)
+		{
 			metrics->Presented = TraceNanoseconds(TraceClock::now().time_since_epoch());
+			// Upload batches that completed since the last frame, and the device memory in use (measurement 6).
+			metrics->UploadGpu = m_Uploads.TakeGpuNanoseconds();
+			metrics->GpuMemory = m_Device.GetMemory().GetStats().AllocatedBytes;
+		}
 		if (!m_HasPresentedFrame)
 		{
 			Log(LogLevel::Info, "First Vulkan frame presented");

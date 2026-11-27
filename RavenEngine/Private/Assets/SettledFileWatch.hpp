@@ -30,8 +30,10 @@ namespace Raven
 		using DecodeFile = std::function<Data(std::span<const std::byte>, const std::filesystem::path&)>;
 
 		// importerVersion comes from ImporterVersions.hpp and keys the dependency record (Q4 A+).
+		// loadedHash is ReloadService::HashContent of loadedBytes when a worker already computed it.
 		SettledFileWatch(std::filesystem::path path, std::string_view format, std::uint32_t importerVersion, ReadFile read,
-			DecodeFile decode, std::optional<std::vector<std::byte>> loadedBytes = std::nullopt, bool retryFailures = false)
+			DecodeFile decode, std::optional<std::vector<std::byte>> loadedBytes = std::nullopt, bool retryFailures = false,
+			std::optional<std::uint64_t> loadedHash = std::nullopt)
 			: m_Path(std::filesystem::absolute(path)), m_Format(format), m_Decode(decode)
 		{
 			ReloadOptions options;
@@ -40,6 +42,8 @@ namespace Raven
 			options.RetryFailures = retryFailures;
 			if (loadedBytes)
 				options.Baseline = ReloadSnapshot{ { std::move(*loadedBytes) }, {} };
+			if (loadedBytes && loadedHash)
+				options.BaselineHashes = { *loadedHash };
 			m_Subscription = ReloadService::Subscribe({ ReloadInput{ m_Path, read } }, *this, std::move(options));
 		}
 

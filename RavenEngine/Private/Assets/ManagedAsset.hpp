@@ -21,6 +21,9 @@ namespace Raven
 	struct DecodedAsset
 	{
 		std::vector<std::byte> Bytes;
+		// ReloadService::HashContent of Bytes, computed where the file was decoded (a worker, for background
+		// loads and reloads), so starting the asset's watch never hashes a large file on the main thread.
+		std::uint64_t BytesHash = 0;
 		std::variant<FbxMesh, ImageData, PcmClip, SoundEvent, MaterialDefinition, MaterialShader> Data;
 	};
 
@@ -35,7 +38,10 @@ namespace Raven
 		AssetRecord Record;
 		TextureColorSpace ColorSpace = TextureColorSpace::SRGB;
 		std::filesystem::path Source;
-		std::vector<std::byte> Bytes;
+		// The loaded file's size and ReloadService::HashContent; its bytes go to the watch, which needs them,
+		// not to every asset (measurement 6).
+		std::size_t BytesSize = 0;
+		std::uint64_t BytesHash = 0;
 		MeshHandle Mesh;
 		TextureHandle Texture;
 		std::shared_ptr<const PcmClip> Clip;

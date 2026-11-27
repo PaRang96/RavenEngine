@@ -632,8 +632,11 @@ namespace Raven
 		{
 			state->Observed = std::move(options.Baseline);
 			state->Handled = true;
-			state->Record.InputHashes = HashContents(*state->Observed);
+			// A large file's hash is costly; a consumer may bring it from the worker that decoded it.
+			state->Record.InputHashes = options.BaselineHashes.size() == state->Observed->Contents.size()
+				? std::move(options.BaselineHashes) : HashContents(*state->Observed);
 			options.Baseline.reset();
+			options.BaselineHashes.clear();
 		}
 		state->Inputs = std::move(inputs);
 		state->Paused = options.StartPaused;
@@ -641,6 +644,11 @@ namespace Raven
 		auto service = AcquireService();
 		service->Add(state);
 		return std::unique_ptr<ReloadSubscription>(new ReloadSubscription(std::move(service), std::move(state)));
+	}
+
+	std::uint64_t ReloadService::HashContent(std::span<const std::byte> bytes) noexcept
+	{
+		return Hash(bytes);
 	}
 
 	std::vector<ReloadRecord> ReloadService::GetRecords()

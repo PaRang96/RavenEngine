@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -87,6 +88,9 @@ namespace Raven
 		std::uint32_t ImporterVersion = 1;
 		// Contents already loaded by the consumer; they count as imported.
 		std::optional<ReloadSnapshot> Baseline;
+		// The baseline's input hashes (HashContent), when the consumer computed them off the main thread;
+		// otherwise Subscribe hashes the baseline itself.
+		std::vector<std::uint64_t> BaselineHashes;
 		// Retry a failed import after another settle time, for inputs that may become valid
 		// without changing (a referenced file that appears later).
 		bool RetryFailures = false;
@@ -134,6 +138,8 @@ namespace Raven
 		static std::unique_ptr<ReloadSubscription> Subscribe(std::vector<ReloadInput> inputs,
 			ReloadConsumer& consumer, ReloadOptions options);
 		static std::vector<ReloadRecord> GetRecords();
+		// The hash dependency records key inputs by, for consumers that hash a baseline on a worker.
+		static std::uint64_t HashContent(std::span<const std::byte> bytes) noexcept;
 		// Threads owned by the service right now: zero, or the watcher plus the workers.
 		static std::size_t GetThreadCount();
 	};

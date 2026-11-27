@@ -26,6 +26,8 @@ namespace Raven
 		void MarkSubmitted() noexcept { ++m_Submitted; }
 		// Blocks until the GPU reaches value. A value already reached returns without a driver wait.
 		void Wait(std::uint64_t value);
+		// Whether the GPU has reached value, without waiting.
+		bool Reached(std::uint64_t value) noexcept;
 
 		// Keeps a released or replaced resource until every frame submitted so far completes.
 		void Retire(std::shared_ptr<const void> resource) noexcept;
@@ -37,8 +39,6 @@ namespace Raven
 		VulkanFrameTimeline& operator=(const VulkanFrameTimeline&) = delete;
 
 	private:
-		bool Reached(std::uint64_t value) noexcept;
-
 		struct Retired
 		{
 			std::uint64_t Value = 0;
