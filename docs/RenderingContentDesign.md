@@ -415,6 +415,26 @@ Contract 8, built:
 - **Found by the probe:** every texture still creates its own `VkSampler`, and the test laptop's driver allows 4,000 samplers, so content cannot actually reach the class limit before validation errors. B3 already removes per-texture samplers for the fixed sampler set, which removes this limit too; until then the practical texture limit is about 4,000.
 - **Left to the macOS port:** logging MoltenVK's portability-subset features. Their structure exists only in Vulkan's beta header, which the build does not enable, and no Windows device reports the extension, so it cannot be built or exercised here. It is listed in [PlatformHandoff.md](PlatformHandoff.md).
 
+### B2, part 4 — draw groups, the command index and the 0.27 ms (2026-11-27)
+
+**Measurements 3 and 2, taken first.** `SamplesTool create-benchmark` takes a placement (`scattered`, the default and the realistic baseline; `contiguous`, the same animated fifth first in the scene file through sequential entity IDs; `all`), and `Benchmark-Windows3D.py scale --animation` passes it on. One same-day run on the test laptop, 50k objects, auto FIFO at 165 Hz, three runs each, before the restructure:
+
+| Placement | Render-world sync p50 / p95 | World pass p50 / p95 | CPU preparation p50 / p95 | FPS |
+| --- | --- | --- | --- | --- |
+| Scattered fifth | 0.89–0.94 / 1.07–1.21 ms | 1.38–1.45 / 1.56–1.72 ms | 2.79–2.95 / 3.16–3.56 ms | 165.0 |
+| Contiguous fifth | 0.60–0.61 / 0.71 ms | 1.13–1.17 / 1.38–1.39 ms | 2.12–2.17 / 2.48–2.51 ms | 165.0 |
+| Every object | 2.32–2.35 / 2.59–2.65 ms | 4.19–4.25 / 4.56–4.76 ms | 7.95–8.02 / 8.57–9.04 ms | 121.7–123.3 |
+
+- **The 0.27 ms is explained: change locality** (AA2-PERF-07). With the animated fifth contiguous in the file, the sync returns to the pre-M6 0.63–0.69 ms and the world pass to the pre-M6 1.07–1.19 ms; scattered reproduces M6A's 0.90–0.93 ms. M6A's random 64-bit IDs order scene rows randomly, so the changed objects are spread through the pools and every write misses cache. The code is not slower. Scene files are not reordered to hide it; scattered stays the baseline.
+- **FD-27 misses:** with every object moving, CPU preparation is 8.6–9.0 ms p95 against the 3.5 ms budget, mostly the world pass (4.2 ms) and the sync (2.3 ms). FD-27's rule applies: tighten the single-threaded path first, then use the job system. The scattered p95 of 3.16–3.56 ms is also at the edge of the 3.5 ms budget. Both are taken up after B2's material table and measured again at B8.
+
+**Contract 3, built:**
+- **Groups** (`RenderWorldState.hpp`): `DrawGroup` keyed by `DrawGroupKey` (`DrawPipelineKey` of shader, blend, cull and offset, plus the mesh handle) in a hash map; `MeshHandle` gained a `std::hash`. Every lit object uses the default pipeline key until B4. A group whose count reaches zero is retired: it leaves the map and goes to a free list, and the next new key reuses its ID.
+- **Tint-only writes:** each slot keeps the mesh reference it resolved, so a `StaticMeshComponent` write that keeps `Mesh` reuses the group's handle and never calls the resolver.
+- **Revisions:** the world bumps `LayoutRevision` when a group is added, retired or reused and `CountRevision` when any count changes. The context bumps a mesh revision when managed mesh contents are swapped or released.
+- **GPU** (`VulkanGpuScene`): the mesh table is a resident device buffer, resolved and uploaded only when the layout or mesh revision changes; before, every group was resolved every frame. Live groups get commands sorted by pipeline key, each table entry stores its `CommandIndex` (the former padding word), and Cull writes `Commands[mesh.CommandIndex]`. Templates live in their own buffer, uploaded when counts change and copied over the commands on the GPU every frame, because Cull accumulates instance counts. The frame issues one indirect draw per pipeline range; debug views draw every range with their one pipeline.
+- **Checked:** a temporary CPU probe (deleted) showed a tint-only write resolving nothing and changing no revision, a new mesh reference resolving once, and removing every object retiring the group, which the next object reused. The 9 tests pass and the six captures are bit-identical to B1's. In Debug, with Samples running, replacing `Cube.fbx` with the sphere redrew every cube user (the boxes and the floor slab) through the resident mesh table, and restoring it brought the cubes back; the shader reload steps of the live check pass. The tracked live check (`scripts/Test-Windows3DLive.py`) does not run to its end: its screenshot comparisons predate M6C's on-screen problem overlay, and one awaited message changed in the review amendments. It found one real regression from part 2: a broken scene file made the project retry its import several times a second, each retry rescanning the content and repeating its warning. Both are reported for the owner's approval before they are fixed.
+
 ## Measurements
 
 | # | Measurement | Gate |

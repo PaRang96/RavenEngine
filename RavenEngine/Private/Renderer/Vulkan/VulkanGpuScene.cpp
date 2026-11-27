@@ -209,7 +209,7 @@ namespace Raven
 			{ set, Materials, sizeof(GpuMaterialData), { offsetof(GpuMaterialData, BaseColor), offsetof(GpuMaterialData, Texture),
 				offsetof(GpuMaterialData, Lit), offsetof(GpuMaterialData, Padding) } },
 			{ set, Meshes, sizeof(MeshEntry), { offsetof(MeshEntry, IndexCount), offsetof(MeshEntry, FirstIndex),
-				offsetof(MeshEntry, VertexOffset), offsetof(MeshEntry, Padding), offsetof(MeshEntry, Center),
+				offsetof(MeshEntry, VertexOffset), offsetof(MeshEntry, CommandIndex), offsetof(MeshEntry, Center),
 				offsetof(MeshEntry, HalfExtent) } },
 			{ set, Commands, sizeof(Command), { offsetof(Command, indexCount), offsetof(Command, instanceCount),
 				offsetof(Command, firstIndex), offsetof(Command, vertexOffset), offsetof(Command, firstInstance) } },
@@ -273,46 +273,78 @@ namespace Raven
 		return true;
 	}
 
-	VkDeviceSize VulkanGpuScene::Plan(RenderWorld::State* world, const MeshResolver& resolveMesh)
+	VkDeviceSize VulkanGpuScene::Plan(RenderWorld::State* world, const MeshResolver& resolveMesh, std::uint64_t meshRevision)
 	{
 		m_World = world;
-		m_MeshTable.clear();
-		m_Templates.clear();
 		m_DirtySlots.clear();
 		m_DirtyRecords.clear();
 		m_ObjectCount = world ? static_cast<std::uint32_t>(world->Objects.size()) : 0;
-		m_GroupCount = world ? static_cast<std::uint32_t>(world->Groups.size()) : 0;
+		m_GroupSlots = world ? static_cast<std::uint32_t>(world->Groups.size()) : 0;
 		m_MaterialCount = world ? static_cast<std::uint32_t>(world->Materials.size()) : 0;
+		m_MeshRevision = meshRevision;
+		m_UploadMeshes = false;
+		m_UploadTemplates = false;
 		m_PlannedBytes = 0;
 		if (!world)
+		{
+			m_CommandCount = 0;
 			return 0;
+		}
 		m_Full = m_PendingFull || world != m_UploadedWorld || world->Generation != m_UploadedGeneration ||
 			VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData) > m_Objects.Capacity;
 		const bool allMaterials = m_Full || VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData) > m_Materials.Capacity;
 		m_FirstMaterial = allMaterials ? 0 : std::min(m_UploadedMaterials, m_MaterialCount);
 
-		// Draw groups take consecutive instance regions sized by their object counts (G5).
-		std::uint32_t first = 0;
-		m_MeshTable.reserve(m_GroupCount);
-		m_Templates.reserve(m_GroupCount);
-		for (std::uint32_t group = 0; group < m_GroupCount; ++group)
+		// The mesh table and the command order follow the groups (B0 contract 3): live groups get
+		// commands, contiguous per pipeline, and each table entry names its command.
+		m_UploadMeshes = m_Full || world->LayoutRevision != m_UploadedLayout || meshRevision != m_UploadedMeshRevision ||
+			VkDeviceSize{ m_GroupSlots } * sizeof(MeshEntry) > m_Meshes.Capacity;
+		if (m_UploadMeshes)
 		{
-			// Released or replaced mesh data is retired, so these ranges outlive the frame (R3).
-			const auto* mesh = resolveMesh ? resolveMesh(world->Groups[group]) : nullptr;
-			MeshEntry entry;
-			VkDrawIndexedIndirectCommand command{ 0, 0, 0, 0, first };
-			if (mesh)
+			m_CommandGroups.clear();
+			for (std::uint32_t group = 0; group < m_GroupSlots; ++group)
+				if (world->Groups[group].Live)
+					m_CommandGroups.push_back(group);
+			std::stable_sort(m_CommandGroups.begin(), m_CommandGroups.end(), [world](std::uint32_t left, std::uint32_t right)
 			{
-				entry = { mesh->Ranges.IndexCount, mesh->Ranges.FirstIndex, mesh->Ranges.VertexOffset, 0,
-					{ mesh->LocalBounds.Center.X, mesh->LocalBounds.Center.Y, mesh->LocalBounds.Center.Z, 0.0f },
-					{ mesh->LocalBounds.HalfExtent.X, mesh->LocalBounds.HalfExtent.Y, mesh->LocalBounds.HalfExtent.Z, 0.0f } };
-				command.indexCount = mesh->Ranges.IndexCount;
-				command.firstIndex = mesh->Ranges.FirstIndex;
-				command.vertexOffset = mesh->Ranges.VertexOffset;
+				return world->Groups[left].Key.Pipeline < world->Groups[right].Key.Pipeline;
+			});
+			m_Ranges.clear();
+			m_MeshTable.assign(m_GroupSlots, MeshEntry{});
+			for (std::uint32_t command = 0; command < m_CommandGroups.size(); ++command)
+			{
+				const auto& group = world->Groups[m_CommandGroups[command]];
+				if (m_Ranges.empty() || !(m_Ranges.back().Pipeline == group.Key.Pipeline))
+					m_Ranges.push_back({ group.Key.Pipeline, command, 0 });
+				++m_Ranges.back().Count;
+				// Released or replaced mesh data is retired, so these ranges outlive the frame (R3).
+				auto& entry = m_MeshTable[m_CommandGroups[command]];
+				entry.CommandIndex = command;
+				if (const auto* mesh = resolveMesh ? resolveMesh(group.Key.Mesh) : nullptr)
+				{
+					entry.IndexCount = mesh->Ranges.IndexCount;
+					entry.FirstIndex = mesh->Ranges.FirstIndex;
+					entry.VertexOffset = mesh->Ranges.VertexOffset;
+					entry.Center = { mesh->LocalBounds.Center.X, mesh->LocalBounds.Center.Y, mesh->LocalBounds.Center.Z, 0.0f };
+					entry.HalfExtent = { mesh->LocalBounds.HalfExtent.X, mesh->LocalBounds.HalfExtent.Y,
+						mesh->LocalBounds.HalfExtent.Z, 0.0f };
+				}
 			}
-			m_MeshTable.push_back(entry);
-			m_Templates.push_back(command);
-			first += world->GroupCounts[group];
+		}
+		m_CommandCount = static_cast<std::uint32_t>(m_CommandGroups.size());
+		// Commands take consecutive instance regions sized by their groups' counts (G5).
+		m_UploadTemplates = m_UploadMeshes || world->CountRevision != m_UploadedCounts ||
+			VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand) > m_Templates.Capacity;
+		if (m_UploadTemplates)
+		{
+			m_TemplateRecords.clear();
+			std::uint32_t first = 0;
+			for (const auto group : m_CommandGroups)
+			{
+				const auto& entry = m_MeshTable[group];
+				m_TemplateRecords.push_back({ entry.IndexCount, 0, entry.FirstIndex, entry.VertexOffset, first });
+				first += world->Groups[group].Count;
+			}
 		}
 		if (!m_Full)
 		{
@@ -326,9 +358,11 @@ namespace Raven
 				}
 		}
 		const auto align = VulkanUploadRing::Align;
-		VkDeviceSize bytes = align(m_MeshTable.size() * sizeof(MeshEntry)) +
-			align(m_Templates.size() * sizeof(VkDrawIndexedIndirectCommand)) +
-			align(VkDeviceSize{ m_MaterialCount - m_FirstMaterial } * sizeof(GpuMaterialData));
+		VkDeviceSize bytes = align(VkDeviceSize{ m_MaterialCount - m_FirstMaterial } * sizeof(GpuMaterialData));
+		if (m_UploadMeshes)
+			bytes += align(m_MeshTable.size() * sizeof(MeshEntry));
+		if (m_UploadTemplates)
+			bytes += align(m_TemplateRecords.size() * sizeof(VkDrawIndexedIndirectCommand));
 		if (m_Full)
 			bytes += align(VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData));
 		else
@@ -345,16 +379,21 @@ namespace Raven
 			return;
 		// Rebuilt every frame, so replacing them needs no copy.
 		Reserve(m_Visible, VkDeviceSize{ m_ObjectCount } * sizeof(std::uint32_t), 0);
-		Reserve(m_Meshes, VkDeviceSize{ m_GroupCount } * sizeof(MeshEntry), 0);
-		Reserve(m_Commands, VkDeviceSize{ m_GroupCount } * sizeof(VkDrawIndexedIndirectCommand),
+		Reserve(m_Commands, VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand),
 			VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+		// Plan uploads these whenever they must grow; a replaced one is forgotten until committed.
+		if (Reserve(m_Meshes, VkDeviceSize{ m_GroupSlots } * sizeof(MeshEntry), 0))
+			m_UploadedLayout = ~0ull;
+		if (Reserve(m_Templates, VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+			m_UploadedCounts = ~0ull;
 		// Plan chose a full upload whenever these must grow.
 		if (Reserve(m_Objects, VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData), 0))
 			m_PendingFull = true;
 		if (Reserve(m_Materials, VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData), 0))
 			m_UploadedMaterials = 0;
 		const VkDeviceSize readbackBytes = std::max<VkDeviceSize>(256,
-			VkDeviceSize{ m_GroupCount } * sizeof(VkDrawIndexedIndirectCommand));
+			VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand));
 		if (!slot.Readback || slot.Readback->GetSize() < readbackBytes)
 		{
 			// The slot's previous frame has completed, so its readback buffer is idle.
@@ -362,8 +401,8 @@ namespace Raven
 				VK_BUFFER_USAGE_TRANSFER_DST_BIT, VulkanBuffer::Mapping::Persistent);
 		}
 
-		slot.MeshOffset = ring.Push(Bytes(m_MeshTable));
-		slot.TemplateOffset = ring.Push(Bytes(m_Templates));
+		slot.MeshOffset = m_UploadMeshes ? ring.Push(Bytes(m_MeshTable)) : 0;
+		slot.TemplateOffset = m_UploadTemplates ? ring.Push(Bytes(m_TemplateRecords)) : 0;
 		auto* world = m_World;
 		const auto* worldBegin = reinterpret_cast<const std::byte*>(world->Materials.data());
 		slot.MaterialOffset = ring.Push(std::span(worldBegin + m_FirstMaterial * sizeof(GpuMaterialData),
@@ -406,7 +445,7 @@ namespace Raven
 
 	void VulkanGpuScene::RecordPrepare(VkCommandBuffer commands, std::size_t slotIndex, const Mat4& viewProjection) const
 	{
-		if (!m_World || m_GroupCount == 0)
+		if (!m_World || m_CommandCount == 0)
 			return;
 		const auto& slot = m_Slots.at(slotIndex);
 		const auto& vk = m_DeviceOwner.GetCommands();
@@ -414,7 +453,8 @@ namespace Raven
 		Barrier(vk, commands, GeometryStages | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_COPY_BIT_KHR,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR | VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COPY_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR);
+			VK_ACCESS_2_TRANSFER_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR |
+			VK_ACCESS_2_SHADER_WRITE_BIT_KHR);
 		const auto copy = [commands, &slot](VkDeviceSize offset, const Storage& storage, VkDeviceSize target, VkDeviceSize bytes)
 		{
 			if (bytes == 0)
@@ -422,8 +462,21 @@ namespace Raven
 			const VkBufferCopy region{ offset, target, bytes };
 			vkCmdCopyBuffer(commands, slot.Ring, storage.Buffer->Get(), 1, &region);
 		};
-		copy(slot.MeshOffset, m_Meshes, 0, m_MeshTable.size() * sizeof(MeshEntry));
-		copy(slot.TemplateOffset, m_Commands, 0, m_Templates.size() * sizeof(VkDrawIndexedIndirectCommand));
+		const VkDeviceSize commandBytes = VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand);
+		if (m_UploadMeshes)
+			copy(slot.MeshOffset, m_Meshes, 0, m_MeshTable.size() * sizeof(MeshEntry));
+		if (m_UploadTemplates)
+		{
+			// New templates reset the commands straight from the ring and are kept for later frames.
+			copy(slot.TemplateOffset, m_Templates, 0, commandBytes);
+			copy(slot.TemplateOffset, m_Commands, 0, commandBytes);
+		}
+		else
+		{
+			// Cull accumulates instance counts, so the commands start from the templates every frame.
+			const VkBufferCopy region{ 0, 0, commandBytes };
+			vkCmdCopyBuffer(commands, m_Templates.Buffer->Get(), m_Commands.Buffer->Get(), 1, &region);
+		}
 		copy(slot.MaterialOffset, m_Materials, VkDeviceSize{ m_FirstMaterial } * sizeof(GpuMaterialData),
 			VkDeviceSize{ m_MaterialCount - m_FirstMaterial } * sizeof(GpuMaterialData));
 		if (m_Full)
@@ -465,7 +518,7 @@ namespace Raven
 	void VulkanGpuScene::RecordDraw(VkCommandBuffer commands, std::size_t slotIndex, const VulkanColorPipeline& pipeline,
 		VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const
 	{
-		if (!m_World || m_GroupCount == 0)
+		if (!m_World || m_CommandCount == 0)
 			return;
 		pipeline.Bind(commands, textures);
 		pipeline.BindFrame(commands, frame);
@@ -473,17 +526,20 @@ namespace Raven
 		const VkDeviceSize offset = 0;
 		vkCmdBindVertexBuffers(commands, 0, 1, &vertices, &offset);
 		vkCmdBindIndexBuffer(commands, indices, 0, VK_INDEX_TYPE_UINT32);
-		// One command per mesh; meshes with nothing visible have zero instances (Q4).
-		vkCmdDrawIndexedIndirect(commands, m_Commands.Buffer->Get(), 0, m_GroupCount,
-			sizeof(VkDrawIndexedIndirectCommand));
+		// One command per group, one draw per pipeline range; groups with nothing visible have zero
+		// instances (Q4).
+		for (const auto& range : m_Ranges)
+			vkCmdDrawIndexedIndirect(commands, m_Commands.Buffer->Get(),
+				VkDeviceSize{ range.First } * sizeof(VkDrawIndexedIndirectCommand), range.Count,
+				sizeof(VkDrawIndexedIndirectCommand));
 	}
 
 	void VulkanGpuScene::RecordReadback(VkCommandBuffer commands, std::size_t slotIndex) const
 	{
-		if (!m_World || m_GroupCount == 0)
+		if (!m_World || m_CommandCount == 0)
 			return;
 		const auto& slot = m_Slots.at(slotIndex);
-		const VkBufferCopy region{ 0, 0, VkDeviceSize{ m_GroupCount } * sizeof(VkDrawIndexedIndirectCommand) };
+		const VkBufferCopy region{ 0, 0, VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand) };
 		vkCmdCopyBuffer(commands, m_Commands.Buffer->Get(), slot.Readback->Get(), 1, &region);
 		Barrier(m_DeviceOwner.GetCommands(), commands, VK_PIPELINE_STAGE_2_COPY_BIT_KHR, VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_HOST_BIT_KHR, VK_ACCESS_2_HOST_READ_BIT_KHR);
@@ -493,10 +549,17 @@ namespace Raven
 	{
 		if (!m_World)
 			return;
-		m_Slots.at(slotIndex).ReadbackGroups = m_GroupCount;
+		m_Slots.at(slotIndex).ReadbackGroups = m_CommandCount;
 		m_UploadedWorld = m_World;
 		m_UploadedGeneration = m_World->Generation;
 		m_UploadedMaterials = m_MaterialCount;
+		// Only a frame that recorded its copies holds them; one without commands copied nothing.
+		if (m_CommandCount != 0)
+		{
+			m_UploadedLayout = m_World->LayoutRevision;
+			m_UploadedCounts = m_World->CountRevision;
+			m_UploadedMeshRevision = m_MeshRevision;
+		}
 		m_PendingFull = false;
 		m_World->CommitChanges();
 	}

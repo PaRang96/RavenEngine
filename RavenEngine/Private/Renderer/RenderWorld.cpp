@@ -59,7 +59,11 @@ namespace Raven
 			state.DirtyFlags.clear();
 			state.Materials.clear();
 			state.Groups.clear();
-			state.GroupCounts.clear();
+			state.FreeGroups.clear();
+			state.GroupOfKey.clear();
+			state.MeshRefs.clear();
+			++state.LayoutRevision;
+			++state.CountRevision;
 			for (std::size_t dense = 0; dense < m_Meshes.Count; ++dense)
 			{
 				const auto entity = m_Meshes.Entities[dense];
@@ -125,6 +129,7 @@ namespace Raven
 			const auto slot = static_cast<std::uint32_t>(state.Objects.size());
 			state.Objects.emplace_back();
 			state.Entities.push_back(entity);
+			state.MeshRefs.emplace_back();
 			const auto index = IndexOf(entity);
 			if (index >= state.SlotOfIndex.size())
 				state.SlotOfIndex.resize(index + 1, RenderWorld::State::NoSlot);
@@ -135,31 +140,65 @@ namespace Raven
 		void Remove(std::uint32_t slot)
 		{
 			auto& state = m_State;
-			--state.GroupCounts[state.Objects[slot].Group];
+			ReleaseGroup(state.Objects[slot].Group);
 			state.SlotOfIndex[IndexOf(state.Entities[slot])] = RenderWorld::State::NoSlot;
 			const auto last = static_cast<std::uint32_t>(state.Objects.size() - 1);
 			if (slot != last)
 			{
 				state.Objects[slot] = state.Objects[last];
 				state.Entities[slot] = state.Entities[last];
+				state.MeshRefs[slot] = state.MeshRefs[last];
 				state.SlotOfIndex[IndexOf(state.Entities[slot])] = slot;
 				state.MarkDirty(slot);
 			}
 			state.Objects.pop_back();
 			state.Entities.pop_back();
+			state.MeshRefs.pop_back();
 			if (state.DirtyFlags.size() > state.Objects.size())
 				state.DirtyFlags.resize(state.Objects.size());
 		}
 
-		std::uint32_t FindGroup(MeshHandle mesh)
+		// The group of a key, adding one (from the free list first) for a new key.
+		std::uint32_t FindGroup(const DrawGroupKey& key)
 		{
 			auto& state = m_State;
-			for (std::size_t group = 0; group < state.Groups.size(); ++group)
-				if (state.Groups[group] == mesh)
-					return static_cast<std::uint32_t>(group);
-			state.Groups.push_back(mesh);
-			state.GroupCounts.push_back(0);
-			return static_cast<std::uint32_t>(state.Groups.size() - 1);
+			if (const auto found = state.GroupOfKey.find(key); found != state.GroupOfKey.end())
+				return found->second;
+			std::uint32_t group;
+			if (!state.FreeGroups.empty())
+				group = state.FreeGroups.back();
+			else
+			{
+				group = static_cast<std::uint32_t>(state.Groups.size());
+				state.Groups.emplace_back();
+			}
+			state.GroupOfKey.emplace(key, group);
+			if (!state.FreeGroups.empty() && state.FreeGroups.back() == group)
+				state.FreeGroups.pop_back();
+			state.Groups[group] = { key, 0, true };
+			++state.LayoutRevision;
+			return group;
+		}
+
+		// One object fewer in the group; the last one retires it.
+		void ReleaseGroup(std::uint32_t group) noexcept
+		{
+			auto& state = m_State;
+			auto& entry = state.Groups[group];
+			++state.CountRevision;
+			if (--entry.Count != 0)
+				return;
+			state.GroupOfKey.erase(entry.Key);
+			try
+			{
+				state.FreeGroups.push_back(group);
+			}
+			catch (...)
+			{
+				// The slot is not reused; it stays retired.
+			}
+			entry = {};
+			++state.LayoutRevision;
 		}
 
 		std::uint32_t FindMaterial(Entity entity)
@@ -194,14 +233,27 @@ namespace Raven
 			auto& object = state.Objects[slot];
 			// Resolve everything that can fail before the group counts change.
 			const auto material = added || materialChanged ? FindMaterial(entity) : object.Material;
-			const auto group = added || meshChanged
-				? FindGroup(m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{}) : object.Group;
+			auto group = object.Group;
+			if (added || materialChanged || meshChanged)
+			{
+				// A write that kept the mesh reference (a Tint edit) reuses the resolved handle.
+				auto& reference = state.MeshRefs[slot];
+				const bool resolve = added || !(reference == mesh.Mesh);
+				const auto handle = resolve ? (m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{})
+					: state.Groups[object.Group].Key.Mesh;
+				// B4 derives the pipeline from the material's shader and blend class.
+				group = FindGroup({ DrawPipelineKey{}, handle });
+				reference = mesh.Mesh;
+			}
 			if (added)
-				++state.GroupCounts[group];
+			{
+				++state.Groups[group].Count;
+				++state.CountRevision;
+			}
 			else if (group != object.Group)
 			{
-				--state.GroupCounts[object.Group];
-				++state.GroupCounts[group];
+				++state.Groups[group].Count;
+				ReleaseGroup(object.Group);
 			}
 			object.Group = group;
 			object.Material = material;

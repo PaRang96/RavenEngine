@@ -1,6 +1,7 @@
 #include "GpuScene.hlsli"
 
-// Frustum culling into per-mesh indirect commands (docs/GpuDrivenDesign.md, G5).
+// Frustum culling into per-group indirect commands (docs/GpuDrivenDesign.md, G5;
+// docs/RenderingContentDesign.md, B0 contract 3).
 [[vk::binding(RAVEN_SCENE_OBJECTS, 0)]] StructuredBuffer<ObjectData> Objects;
 [[vk::binding(RAVEN_SCENE_VISIBLE, 0)]] RWStructuredBuffer<uint> Visible;
 [[vk::binding(RAVEN_SCENE_MESHES, 0)]] StructuredBuffer<MeshData> Meshes;
@@ -44,6 +45,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 			return;
 	}
 	uint index;
-	InterlockedAdd(Commands[object.Group].InstanceCount, 1u, index);
-	Visible[Commands[object.Group].FirstInstance + index] = slot;
+	InterlockedAdd(Commands[mesh.CommandIndex].InstanceCount, 1u, index);
+	Visible[Commands[mesh.CommandIndex].FirstInstance + index] = slot;
 }

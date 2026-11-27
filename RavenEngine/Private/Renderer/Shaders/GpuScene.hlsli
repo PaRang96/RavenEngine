@@ -28,7 +28,8 @@ struct MeshData
 	uint IndexCount;
 	uint FirstIndex;
 	int VertexOffset;
-	uint Padding;
+	// The group's indirect command; commands are contiguous per pipeline.
+	uint CommandIndex;
 	float4 Center;
 	float4 HalfExtent;
 };

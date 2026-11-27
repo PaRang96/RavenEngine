@@ -169,6 +169,9 @@ namespace Raven
 		VulkanFrameTimeline m_Timeline;
 		// GPU-driven lit meshes (docs/GpuDrivenDesign.md, G2/G5); the pass borrows it.
 		VulkanGpuScene m_GpuScene;
+		// Bumped when managed mesh contents are swapped or released; the GPU scene's resident mesh
+		// table re-resolves on a change (B0 contract 3).
+		std::uint64_t m_MeshRevision = 0;
 		std::optional<VulkanSwapchain> m_Swapchain;
 		// The overlay's texture regions for the next frame, resolved from their handles.
 		std::vector<VulkanDrawQueue::TextureUpload> m_ResolvedUploads;
@@ -678,7 +681,7 @@ namespace Raven
 		m_DrawQueue.Uploads.swap(m_ResolvedUploads);
 		m_ResolvedUploads.clear();
 		// Lit meshes: plan the GPU scene's upload; culling happens on the GPU (G5).
-		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh);
+		m_GpuScene.Plan(world ? &world->GetState() : nullptr, resolveMesh, m_MeshRevision);
 		if (metrics)
 			metrics->DrawCalls = m_GpuScene.GetDrawCount() * (m_View == RenderView::Wireframe ? 2 : 1) +
 				m_DrawQueue.OpaqueBatches.size() + m_DrawQueue.TransparentBatches.size();
@@ -775,6 +778,7 @@ namespace Raven
 		if (!slot.Managed)
 			return false;
 		slot.Alive = false;
+		++m_Impl->m_MeshRevision;
 		// Submitted frames may still read the mesh buffers (R3).
 		m_Impl->m_Timeline.Retire(std::move(slot.Owner));
 		return true;
@@ -808,6 +812,7 @@ namespace Raven
 		if (!a.Managed || !b.Managed)
 			return false;
 		a.Owner->SwapData(*b.Owner);
+		++m_Impl->m_MeshRevision;
 		return true;
 	}
 
