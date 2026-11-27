@@ -74,5 +74,6 @@ namespace Raven
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,
 		std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {});
+		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting = {},
+		float seconds = 0.0f, float delta = 0.0f);
 }

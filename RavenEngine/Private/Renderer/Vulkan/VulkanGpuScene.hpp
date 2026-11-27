@@ -15,6 +15,10 @@
 namespace Raven
 {
 	class VulkanColorPipeline;
+
+	// Bindings of the scene set that material shaders read (Shaders/GpuScene.hlsli).
+	inline constexpr std::uint32_t RavenSceneMaterialsBinding = 2;
+	inline constexpr std::uint32_t RavenSceneMaterialValuesBinding = 7;
 	class VulkanFrameTimeline;
 	class VulkanUploadRing;
 	struct VulkanMeshData;
@@ -131,6 +135,8 @@ namespace Raven
 		Storage m_Objects;
 		Storage m_Visible;
 		Storage m_Materials;
+		// The materials' values (B0 contract 1); filled with B4's material shaders.
+		Storage m_Values;
 		Storage m_Meshes;
 		// The command templates; copied over the commands every frame, since Cull accumulates.
 		Storage m_Templates;

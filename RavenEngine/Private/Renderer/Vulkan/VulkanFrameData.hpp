@@ -13,7 +13,7 @@ namespace Raven
 {
 	struct VulkanPhysicalDevice;
 
-	// Camera and lighting written once per frame and read by the lit vertex shader at set 1
+	// Camera, lighting and time written once per frame, read by the lit vertex and fragment shaders at set 1
 	// (docs/RendererDesign.md, R4). Matrices are column-major, matching float4[4] columns in HLSL.
 	struct FrameUniformData
 	{
@@ -23,14 +23,17 @@ namespace Raven
 		Vec4 Ambient;
 		Vec4 LightDirection;
 		Vec4 LightColor;
+		// X: seconds since the renderer started; Y: seconds since the previous frame (B0 contract 1).
+		Vec4 Time;
 	};
 
 	static_assert(std::is_standard_layout_v<FrameUniformData>);
 	static_assert(std::is_trivially_copyable_v<FrameUniformData>);
-	static_assert(sizeof(FrameUniformData) == 192);
+	static_assert(sizeof(FrameUniformData) == 208);
 	static_assert(offsetof(FrameUniformData, View) == 64);
 	static_assert(offsetof(FrameUniformData, CameraPosition) == 128);
 	static_assert(offsetof(FrameUniformData, LightColor) == 176);
+	static_assert(offsetof(FrameUniformData, Time) == 192);
 
 	// Set layout for the frame uniform. It outlives passes because retained pipelines use it.
 	class VulkanFrameLayout

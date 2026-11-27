@@ -54,7 +54,7 @@ namespace Raven
 				VkDescriptorSetLayoutBinding{ 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 					BindlessCapacity, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
 				VkDescriptorSetLayoutBinding{ 1, VK_DESCRIPTOR_TYPE_SAMPLER,
-					1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
+					static_cast<std::uint32_t>(SamplerCount), VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
 			};
 			const std::array<VkDescriptorBindingFlags, 2> flags
 			{
@@ -78,7 +78,7 @@ namespace Raven
 			const std::array<VkDescriptorPoolSize, 2> sizes
 			{
 				VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, BindlessCapacity },
-				VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
+				VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<std::uint32_t>(SamplerCount) }
 			};
 			VkDescriptorPoolCreateInfo poolInfo{};
 			poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -96,28 +96,33 @@ namespace Raven
 			CheckDescriptorResult(vkAllocateDescriptorSets(m_Device, &allocation, &m_BindlessSet),
 				"vkAllocateDescriptorSets (bindless textures)");
 
-			VkSamplerCreateInfo samplerInfo{};
-			samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-			samplerInfo.magFilter = VK_FILTER_LINEAR;
-			samplerInfo.minFilter = VK_FILTER_LINEAR;
-			// The one sampler every texture shares (FD-21): linear, blending between mip levels, so
-			// textures with a mip chain stay smooth in the distance and single-level ones sample as
-			// before. A repeat sampler and the per-material choice come with B4's fragment ABI.
-			samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-			samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-			CheckDescriptorResult(vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_Sampler),
-				"vkCreateSampler (bindless textures)");
-			const VkDescriptorImageInfo sampler{ m_Sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED };
+			// The fixed sampler set (FD-21): linear, blending between mip levels, so textures with a
+			// mip chain stay smooth in the distance. Element 0 clamps at the edges, element 1 repeats;
+			// a material picks one per texture slot.
+			std::array<VkDescriptorImageInfo, SamplerCount> samplers{};
+			for (std::size_t index = 0; index < SamplerCount; ++index)
+			{
+				const auto address = index == 0 ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+				VkSamplerCreateInfo samplerInfo{};
+				samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+				samplerInfo.magFilter = VK_FILTER_LINEAR;
+				samplerInfo.minFilter = VK_FILTER_LINEAR;
+				samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+				samplerInfo.addressModeU = address;
+				samplerInfo.addressModeV = address;
+				samplerInfo.addressModeW = address;
+				samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+				CheckDescriptorResult(vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_Samplers[index]),
+					"vkCreateSampler (bindless textures)");
+				samplers[index] = { m_Samplers[index], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED };
+			}
 			VkWriteDescriptorSet write{};
 			write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			write.dstSet = m_BindlessSet;
 			write.dstBinding = 1;
-			write.descriptorCount = 1;
+			write.descriptorCount = static_cast<std::uint32_t>(SamplerCount);
 			write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-			write.pImageInfo = &sampler;
+			write.pImageInfo = samplers.data();
 			vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
 		}
 		catch (...)
@@ -285,7 +290,7 @@ namespace Raven
 		const VkDescriptorImageInfo image{ VK_NULL_HANDLE, texture.GetView(),
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 		// Per-texture sets name the shared sampler too; textures no longer own one.
-		const VkDescriptorImageInfo sampler{ m_Sampler, VK_NULL_HANDLE,
+		const VkDescriptorImageInfo sampler{ m_Samplers[0], VK_NULL_HANDLE,
 			VK_IMAGE_LAYOUT_UNDEFINED };
 		std::array<VkWriteDescriptorSet, 2> writes{};
 		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -313,9 +318,12 @@ namespace Raven
 		for (const auto& page : m_Pages)
 			vkDestroyDescriptorPool(m_Device, page.Pool, nullptr);
 		m_Pages.clear();
-		if (m_Sampler != VK_NULL_HANDLE)
-			vkDestroySampler(m_Device, m_Sampler, nullptr);
-		m_Sampler = VK_NULL_HANDLE;
+		for (auto& sampler : m_Samplers)
+		{
+			if (sampler != VK_NULL_HANDLE)
+				vkDestroySampler(m_Device, sampler, nullptr);
+			sampler = VK_NULL_HANDLE;
+		}
 		if (m_BindlessPool != VK_NULL_HANDLE)
 			vkDestroyDescriptorPool(m_Device, m_BindlessPool, nullptr);
 		m_BindlessPool = VK_NULL_HANDLE;

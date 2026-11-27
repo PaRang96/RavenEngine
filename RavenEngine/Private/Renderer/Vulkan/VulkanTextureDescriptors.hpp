@@ -69,7 +69,9 @@ namespace Raven
 		VkDescriptorPool m_BindlessPool = VK_NULL_HANDLE;
 		VkDescriptorSet m_BindlessSet = VK_NULL_HANDLE;
 		// Every texture's sampler is linear and clamped, so one shared sampler matches them.
-		VkSampler m_Sampler = VK_NULL_HANDLE;
+		// Clamp and repeat (FD-21), at bindless binding 1.
+		static constexpr std::size_t SamplerCount = 2;
+		std::array<VkSampler, SamplerCount> m_Samplers{};
 		struct ElementClass
 		{
 			std::uint32_t First = 0;

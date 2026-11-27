@@ -274,13 +274,13 @@ def live(executable, source, directory, capture=True):
             rejections["shader-syntax"] = (start, time.perf_counter_ns())
             screenshot("syntax-retained", warm_image, False)
             check(app.count(shader_marker) == generation, "Failed shader was activated")
-            # An extra stage input is outside the lit interface the vertex shader provides.
+            # An extra stage input (location 9) is outside the lit interface the vertex shader provides.
             incompatible = cool.replace(b"float4 PSMain(RavenFragmentInput input) : SV_Target0",
-                b"float4 PSMain(RavenFragmentInput input, [[vk::location(7)]] float4 extra : TEXCOORD7) : SV_Target0").replace(
+                b"float4 PSMain(RavenFragmentInput input, [[vk::location(9)]] float4 extra : TEXCOORD9) : SV_Target0").replace(
                 b"float3(0.45, 0.74, 1.0), 1.0", b"float3(0.45, 0.74, 1.0) + extra.rgb, 1.0")
             check(incompatible.count(b"extra") == 2, "Incompatible shader fixture moved")
             start = save(shader, incompatible)
-            app.marker(b"Incompatible fragment shader:")
+            app.marker(b"Incompatible shader: unexpected input at location 9")
             rejections["shader-interface"] = (start, time.perf_counter_ns())
             screenshot("interface-retained", warm_image, False)
             check(app.count(shader_marker) == generation, "Incompatible shader was activated")

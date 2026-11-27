@@ -57,5 +57,7 @@ struct DrawCommand
 #define RAVEN_SCENE_COMMANDS 4
 #define RAVEN_SCENE_OBJECT_BYTES 5
 #define RAVEN_SCENE_UPLOAD 6
+// The materials' float4 values, which ValueOffset and ValueCount index (B0 contract 1).
+#define RAVEN_SCENE_MATERIAL_VALUES 7
 
 #endif

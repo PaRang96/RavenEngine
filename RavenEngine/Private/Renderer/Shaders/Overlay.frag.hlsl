@@ -1,7 +1,8 @@
 // The shared GPU 2D path (docs/UIDesign.md, section 4): rounded rectangles with borders and soft
 // edges, textured images, and MTSDF glyphs, all from one instance format.
 [[vk::binding(0, 0)]] Texture2D<float4> RavenTextures[];
-[[vk::binding(1, 0)]] SamplerState RavenSampler;
+// The fixed sampler set; the 2D path clamps (set 0 is shared with the lit shaders).
+[[vk::binding(1, 0)]] SamplerState RavenSamplers[2];
 
 static const uint FlagImage = 1;
 static const uint FlagGlyph = 2;
@@ -34,7 +35,7 @@ float4 PSMain(QuadOutput input) : SV_Target0
 	if (flags == FlagGlyph)
 	{
 		// MTSDF: the median of RGB is the sharp-corner distance; the range maps it to screen pixels.
-		const float4 field = RavenTextures[NonUniformResourceIndex(input.Info.x)].Sample(RavenSampler, input.Uv);
+		const float4 field = RavenTextures[NonUniformResourceIndex(input.Info.x)].Sample(RavenSamplers[0], input.Uv);
 		const float distance = input.Shape.w * (Median(field.rgb) - 0.5);
 		const float coverage = saturate(distance + 0.5);
 		return float4(input.Color.rgb, input.Color.a * coverage);
@@ -42,7 +43,7 @@ float4 PSMain(QuadOutput input) : SV_Target0
 
 	float4 fill = input.Color;
 	if (flags == FlagImage)
-		fill *= RavenTextures[NonUniformResourceIndex(input.Info.x)].Sample(RavenSampler, input.Uv);
+		fill *= RavenTextures[NonUniformResourceIndex(input.Info.x)].Sample(RavenSamplers[0], input.Uv);
 
 	// Signed distance to the rounded rectangle: negative inside.
 	const float radius = min(input.Shape.x, min(input.HalfSize.x, input.HalfSize.y));

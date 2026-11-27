@@ -19,7 +19,8 @@ namespace Raven
 		// Bindings of the scene set; Shaders/GpuScene.hlsli names them.
 		enum Binding : std::uint32_t
 		{
-			Objects = 0, Visible = 1, Materials = 2, Meshes = 3, Commands = 4, ObjectBytes = 5, Upload = 6, Count = 7
+			Objects = 0, Visible = 1, Materials = 2, Meshes = 3, Commands = 4, ObjectBytes = 5, Upload = 6,
+			MaterialValues = 7, Count = 8
 		};
 
 		struct CullConstants
@@ -111,7 +112,9 @@ namespace Raven
 			}
 			bindings[Objects].stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
 			bindings[Visible].stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
-			bindings[Materials].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+			// Material shaders read their records and values (B0 contract 1).
+			bindings[Materials].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+			bindings[MaterialValues].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 			VkDescriptorSetLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 			layoutInfo.bindingCount = Count;
@@ -214,6 +217,8 @@ namespace Raven
 				offsetof(MeshEntry, HalfExtent) } },
 			{ set, Commands, sizeof(Command), { offsetof(Command, indexCount), offsetof(Command, instanceCount),
 				offsetof(Command, firstIndex), offsetof(Command, vertexOffset), offsetof(Command, firstInstance) } },
+			// Material values are float4 elements (B0 contract 1).
+			{ set, MaterialValues, sizeof(Vec4), {} },
 			// Byte-address buffers: runtime arrays of uint.
 			{ set, ObjectBytes, sizeof(std::uint32_t), {} },
 			{ set, Binding::Upload, sizeof(std::uint32_t), {} },
@@ -392,6 +397,7 @@ namespace Raven
 			return;
 		// Rebuilt every frame, so replacing them needs no copy.
 		Reserve(m_Visible, VkDeviceSize{ m_ObjectCount } * sizeof(std::uint32_t), 0);
+		Reserve(m_Values, 0, 0);
 		Reserve(m_Commands, VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand),
 			VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 		// Plan uploads these whenever they must grow; a replaced one is forgotten until committed.
@@ -440,7 +446,8 @@ namespace Raven
 			VkDescriptorBufferInfo{ m_Meshes.Buffer->Get(), 0, VK_WHOLE_SIZE },
 			VkDescriptorBufferInfo{ m_Commands.Buffer->Get(), 0, VK_WHOLE_SIZE },
 			VkDescriptorBufferInfo{ m_Objects.Buffer->Get(), 0, VK_WHOLE_SIZE },
-			VkDescriptorBufferInfo{ slot.Ring, 0, VK_WHOLE_SIZE }
+			VkDescriptorBufferInfo{ slot.Ring, 0, VK_WHOLE_SIZE },
+			VkDescriptorBufferInfo{ m_Values.Buffer->Get(), 0, VK_WHOLE_SIZE }
 		};
 		std::array<VkWriteDescriptorSet, Count> writes{};
 		for (std::uint32_t binding = 0; binding < Count; ++binding)

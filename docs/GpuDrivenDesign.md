@@ -124,6 +124,11 @@ The Registry gains a general, opt-in journal of structural events. It serves the
   - **Raw declarations are allowed** as a documented advanced path, with the layout marked "may change between versions". A shader that declares the same bindings passes the same check.
 - **Fallback:** if a device lacks update-after-bind or non-uniform indexing (some MoltenVK configurations), the engine batches per texture with a fixed-size array. The header hides the difference, so shaders are identical on every platform. A device with neither path gets a clear unsupported-device error.
 - **Scope:** the textured and sprite path keeps its per-texture descriptors and is untouched in M3 (Q5).
+- **Version 2 of the fragment interface (M6B B4, 2026-11-27; [RenderingContentDesign.md, contract 1](RenderingContentDesign.md#1-fragment-abi-v2-and-the-material-record-aa2-rnd-01-fd-19)).** Additive to version 1:
+  - **Inputs:** `RavenFragmentInput` gains `nointerpolation uint Material` (location 7) and `float3 WorldPosition` (location 8); locations 0–6 are unchanged.
+  - **Resources a fragment shader may read:** the frame uniform (set 1, `Raven/Frame.hlsli`, now with `Time`: seconds and frame delta), the material records (set 2 binding 2) and their values (set 2 binding 7, `float4`), and the sampler set as `SamplerState RavenSamplers[2]` (0 clamps, 1 repeats) at set 0 binding 1, replacing the single sampler.
+  - **Accessors:** `RavenMaterialTexture(input, slot, uv)` samples a texture slot with that slot's sampler, `RavenMaterialValue(input, index)` reads a value, and `RavenGetFrame()` returns time, delta and camera position. `RavenSampleBaseColor` now reads slot 0 through them.
+  - **One check for every stage:** `ShaderInterface` gained the fragment stage, textures and samplers; a fragment shader may read any subset of the inputs and resources. `FragmentShaderInterface` was removed. Version 2 becomes part of the game contract when B4 lets games author material shaders.
 
 ### G5 — Compute frustum culling and fixed-count indirect draws (Q4)
 

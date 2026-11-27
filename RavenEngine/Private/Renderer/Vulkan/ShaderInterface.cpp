@@ -16,8 +16,8 @@ namespace Raven
 		enum Op : std::uint16_t
 		{
 			OpEntryPoint = 15, OpExecutionMode = 16, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23,
-			OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30, OpTypePointer = 32,
-			OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72
+			OpTypeImage = 25, OpTypeSampler = 26, OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30,
+			OpTypePointer = 32, OpConstant = 43, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72
 		};
 		enum Decoration : std::uint32_t
 		{
@@ -28,6 +28,7 @@ namespace Raven
 			UniformConstant = 0, Input = 1, Uniform = 2, Output = 3, PushConstant = 9, StorageBuffer = 12
 		};
 		constexpr std::uint32_t ExecutionModelVertex = 0;
+		constexpr std::uint32_t ExecutionModelFragment = 4;
 		constexpr std::uint32_t ExecutionModelCompute = 5;
 		constexpr std::uint32_t ExecutionModeLocalSize = 17;
 
@@ -41,6 +42,8 @@ namespace Raven
 			std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> Types;
 			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> Decorations;
 			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> MemberOffsets;
+			// 32-bit integer constants, for array lengths.
+			std::unordered_map<std::uint32_t, std::uint32_t> Constants;
 			struct Variable
 			{
 				std::uint32_t Id;
@@ -117,6 +120,8 @@ namespace Raven
 				case OpTypeInt:
 				case OpTypeFloat:
 				case OpTypeVector:
+				case OpTypeImage:
+				case OpTypeSampler:
 				case OpTypeArray:
 				case OpTypeRuntimeArray:
 				case OpTypeStruct:
@@ -124,6 +129,10 @@ namespace Raven
 					if (size < 2)
 						Reject("invalid type");
 					module.Types.emplace(instruction[1], instruction);
+					break;
+				case OpConstant:
+					if (size == 4)
+						module.Constants[instruction[2]] = instruction[3];
 					break;
 				case OpVariable:
 					if (size < 4)
@@ -156,7 +165,7 @@ namespace Raven
 		}
 
 		void CheckStageVariables(const Module& module, std::uint32_t storage,
-			const std::vector<ShaderStageVariable>& expected, const char* label)
+			const std::vector<ShaderStageVariable>& expected, const char* label, bool subset = false)
 		{
 			std::vector<ShaderStageVariable> found;
 			for (const auto& variable : module.Variables)
@@ -185,6 +194,14 @@ namespace Raven
 			std::sort(found.begin(), found.end(), byLocation);
 			auto wanted = expected;
 			std::sort(wanted.begin(), wanted.end(), byLocation);
+			// A subset keeps the expected entries the shader declares, so the comparison below names
+			// only real differences.
+			if (subset)
+				std::erase_if(wanted, [&](const ShaderStageVariable& entry)
+				{
+					return std::none_of(found.begin(), found.end(),
+						[&](const ShaderStageVariable& used) { return used.Location == entry.Location; });
+				});
 			for (std::size_t index = 0; index < std::max(found.size(), wanted.size()); ++index)
 			{
 				if (index >= found.size())
@@ -196,6 +213,57 @@ namespace Raven
 						std::to_string(found[index].Components) + (found[index].Integer ? " integer" : " float") +
 						" components; the pipeline expects " + std::to_string(wanted[index].Components) +
 						(wanted[index].Integer ? " integer" : " float"));
+			}
+		}
+
+		// A float, 2D, non-arrayed, single-sample image used with a sampler: Texture2D<float4>.
+		void CheckSampledImage(const Module& module, std::uint32_t id, const std::string& where)
+		{
+			const auto image = module.Type(id);
+			if ((image[0] & 0xffff) != OpTypeImage || image.size() < 9)
+				Reject(where + " must be a Texture2D");
+			const auto sample = module.Type(image[2]);
+			if ((sample[0] & 0xffff) != OpTypeFloat || sample[2] != 32 || image[3] != 1 || image[4] == 1 ||
+				image[5] != 0 || image[6] != 0 || image[7] != 1)
+				Reject(where + " must be a sampled float Texture2D");
+		}
+
+		void CheckImage(const Module& module, const Module::Variable& variable, const ShaderInterface& expected)
+		{
+			const auto set = module.Decorated(variable.Id, DescriptorSet);
+			const auto binding = module.Decorated(variable.Id, Binding);
+			if (!set || !binding)
+				Reject("a resource without a set and binding");
+			const std::string where = "set " + std::to_string(*set) + " binding " + std::to_string(*binding);
+			const auto found = std::find_if(expected.Images.begin(), expected.Images.end(),
+				[&](const ShaderImageBinding& image) { return image.Set == *set && image.Binding == *binding; });
+			if (found == expected.Images.end())
+				Reject("uses a texture or sampler at " + where + ", which the engine does not bind to this stage");
+			const auto type = module.Type(module.Type(variable.Pointer)[3]);
+			const auto opcode = type[0] & 0xffff;
+			using Kind = ShaderImageBinding::Kind;
+			switch (found->Type)
+			{
+			case Kind::Texture:
+				CheckSampledImage(module, type[1], where);
+				break;
+			case Kind::TextureArray:
+				if (opcode != OpTypeRuntimeArray)
+					Reject(where + " must be a runtime array of Texture2D (the bindless array)");
+				CheckSampledImage(module, type[2], where);
+				break;
+			case Kind::Sampler:
+				if (opcode != OpTypeSampler)
+					Reject(where + " must be a SamplerState");
+				break;
+			case Kind::SamplerArray:
+			{
+				const auto length = opcode == OpTypeArray ? module.Constants.find(type[3]) : module.Constants.end();
+				if (opcode != OpTypeArray || (module.Type(type[2])[0] & 0xffff) != OpTypeSampler ||
+					length == module.Constants.end() || length->second != found->Count)
+					Reject(where + " must be SamplerState[" + std::to_string(found->Count) + "]");
+				break;
+			}
 			}
 		}
 
@@ -244,9 +312,11 @@ namespace Raven
 	{
 		const auto module = Parse(words);
 		const bool compute = expected.Kind == ShaderInterface::Stage::Compute;
-		if (module.Entry[1] != (compute ? ExecutionModelCompute : ExecutionModelVertex))
-			Reject(compute ? "expected a compute shader" : "expected a vertex shader");
-		const char* entry = compute ? "CSMain" : "VSMain";
+		const bool fragment = expected.Kind == ShaderInterface::Stage::Fragment;
+		const auto model = compute ? ExecutionModelCompute : fragment ? ExecutionModelFragment : ExecutionModelVertex;
+		if (module.Entry[1] != model)
+			Reject(compute ? "expected a compute shader" : fragment ? "expected a fragment shader" : "expected a vertex shader");
+		const char* entry = compute ? "CSMain" : fragment ? "PSMain" : "VSMain";
 		if (module.EntryName != entry)
 			Reject(std::string("expected the entry point ") + entry);
 		if (compute)
@@ -261,7 +331,7 @@ namespace Raven
 		}
 		else
 		{
-			CheckStageVariables(module, Input, expected.Inputs, "input");
+			CheckStageVariables(module, Input, expected.Inputs, "input", fragment);
 			CheckStageVariables(module, Output, expected.Outputs, "output");
 		}
 		for (const auto& variable : module.Variables)
@@ -269,6 +339,8 @@ namespace Raven
 			switch (variable.Class)
 			{
 			case UniformConstant:
+				CheckImage(module, variable, expected);
+				break;
 			case Uniform:
 			case StorageBuffer:
 				CheckBuffer(module, variable, expected);

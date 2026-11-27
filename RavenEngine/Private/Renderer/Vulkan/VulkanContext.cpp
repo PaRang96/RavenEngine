@@ -16,7 +16,6 @@
 #include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Renderer/Shaders/ShaderLibrary.hpp"
-#include "Renderer/Vulkan/FragmentShaderInterface.hpp"
 #include "Renderer/Vulkan/ShaderInterface.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Core/PathText.hpp"
@@ -171,6 +170,8 @@ namespace Raven
 		VulkanFrameTimeline m_Timeline;
 		// Texture contents created between frames, submitted just before the next one (B0 contract 5).
 		VulkanUploadBatch m_Uploads;
+		const std::chrono::steady_clock::time_point m_ClockStart = std::chrono::steady_clock::now();
+		std::optional<std::chrono::steady_clock::time_point> m_LastFrame;
 		// GPU-driven lit meshes (docs/GpuDrivenDesign.md, G2/G5); the pass borrows it.
 		VulkanGpuScene m_GpuScene;
 		// Bumped when managed mesh contents are swapped or released; the GPU scene's resident mesh
@@ -352,16 +353,28 @@ namespace Raven
 			return library.Get(program);
 		}
 
+		// The frame uniform's members (Raven/Frame.hlsli).
+		std::vector<std::uint32_t> FrameOffsets()
+		{
+			return { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
+				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
+				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor),
+				offsetof(FrameUniformData, Time) };
+		}
+
+		// RavenFragmentInput in Raven/Material.hlsli, version 2 (B0 contract 1).
+		std::vector<ShaderStageVariable> LitStageVariables()
+		{
+			return { { 0, 3 }, { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 3 }, { 5, 3 }, { 6, 1, true }, { 7, 1, true }, { 8, 3 } };
+		}
+
 		// The fixed interfaces reloaded shaders are checked against (docs/HotReloadDesign.md, H2).
 		ShaderInterface LitVertexInterface()
 		{
 			ShaderInterface result;
 			result.Inputs = { { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 2 } };
-			// RavenFragmentInput in Raven/Material.hlsli.
-			result.Outputs = { { 0, 3 }, { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 3 }, { 5, 3 }, { 6, 1, true } };
-			result.Buffers.push_back({ 1, 0, 0, { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
-				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
-				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor) } });
+			result.Outputs = LitStageVariables();
+			result.Buffers.push_back({ 1, 0, 0, FrameOffsets() });
 			// The vertex stage sees the objects, visible slots and materials of the scene set.
 			for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
 				if (buffer.Binding <= 2)
@@ -375,9 +388,7 @@ namespace Raven
 			ShaderInterface result;
 			result.Inputs = { { 0, 3 }, { 1, 4 } };
 			result.Outputs = { { 0, 4 } };
-			result.Buffers.push_back({ 0, 0, 0, { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
-				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
-				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor) } });
+			result.Buffers.push_back({ 0, 0, 0, FrameOffsets() });
 			return result;
 		}
 
@@ -389,6 +400,35 @@ namespace Raven
 			result.Outputs = { { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 4 }, { 7, 2, true } };
 			// The push constant is the framebuffer size.
 			result.PushConstantOffsets = { 0 };
+			return result;
+		}
+
+		// Lit fragment shaders (Raven/Material.hlsli): any subset of the inputs, the bindless textures,
+		// the sampler set, the frame uniform, and the materials with their values.
+		ShaderInterface LitFragmentInterface()
+		{
+			ShaderInterface result;
+			result.Kind = ShaderInterface::Stage::Fragment;
+			result.Inputs = LitStageVariables();
+			result.Outputs = { { 0, 4 } };
+			result.Buffers.push_back({ 1, 0, 0, FrameOffsets() });
+			for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
+				if (buffer.Binding == RavenSceneMaterialsBinding || buffer.Binding == RavenSceneMaterialValuesBinding)
+					result.Buffers.push_back(std::move(buffer));
+			using Kind = ShaderImageBinding::Kind;
+			result.Images = { { 0, 0, Kind::TextureArray }, { 0, 1, Kind::SamplerArray, 2 } };
+			return result;
+		}
+
+		// The textured (sprite) fragment shader: its quad's UV and color, one texture and its sampler.
+		ShaderInterface TexturedFragmentInterface()
+		{
+			ShaderInterface result;
+			result.Kind = ShaderInterface::Stage::Fragment;
+			result.Inputs = { { 0, 2 }, { 1, 4 } };
+			result.Outputs = { { 0, 4 } };
+			using Kind = ShaderImageBinding::Kind;
+			result.Images = { { 0, 0, Kind::Texture }, { 0, 1, Kind::Sampler } };
 			return result;
 		}
 
@@ -411,7 +451,7 @@ namespace Raven
 				CheckShaderInterface(words, TexturedVertexInterface());
 				break;
 			case ShaderProgram::TexturedFragment:
-				CheckFragmentShaderInterface(words, FragmentShaderKind::Textured);
+				CheckShaderInterface(words, TexturedFragmentInterface());
 				break;
 			case ShaderProgram::Scatter:
 				CheckShaderInterface(words, VulkanGpuScene::GetScatterInterface());
@@ -438,7 +478,7 @@ namespace Raven
 			case ShaderProgram::NormalsFragment:
 			case ShaderProgram::WireframeFragment:
 				// Every lit view's fragment shader uses the material interface.
-				CheckFragmentShaderInterface(words, FragmentShaderKind::Lit);
+				CheckShaderInterface(words, LitFragmentInterface());
 				break;
 			default:
 				// A new program needs its own check and group here and in ApplyShaderReloads. This runs on
@@ -684,7 +724,12 @@ namespace Raven
 		const Mat4 viewProjection = cameraView->Projection * view;
 
 		// Visibility and ordering complete before acquisition or command recording.
-		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, texturedDraws, transparentDraws, lighting);
+		// Shader time (B0 contract 1): the renderer's own clock, so material effects run in any play state.
+		const auto now = std::chrono::steady_clock::now();
+		const float seconds = std::chrono::duration<float>(now - m_ClockStart).count();
+		const float delta = m_LastFrame ? std::chrono::duration<float>(now - *m_LastFrame).count() : 0.0f;
+		m_LastFrame = now;
+		BuildVulkanDrawQueue(m_DrawQueue, view, viewProjection, texturedDraws, transparentDraws, lighting, seconds, delta);
 		m_DrawQueue.DebugLines = debugLines;
 		m_DrawQueue.Overlay = overlay.Quads;
 		// Resolved by the public DrawFrame, which may read texture handles.

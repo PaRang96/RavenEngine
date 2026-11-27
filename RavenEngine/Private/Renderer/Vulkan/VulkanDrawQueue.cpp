@@ -79,14 +79,15 @@ namespace Raven
 
 	void BuildVulkanDrawQueue(VulkanDrawQueue& queue, const Mat4& view, const Mat4& viewProjection,
 		std::span<const VulkanTexturedDraw> opaqueDraws,
-		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting)
+		std::span<const VulkanTransparentDraw> transparentDraws, const SceneLighting& lighting,
+		float seconds, float delta)
 	{
 		lighting.Validate();
 		const auto direction = Normalize(lighting.Direction);
 		queue.Frame = FrameUniformData{ viewProjection, view, CameraPosition(view),
 			{ lighting.Ambient.X, lighting.Ambient.Y, lighting.Ambient.Z, 0.0f },
 			{ direction.X, direction.Y, direction.Z, 0.0f },
-			{ lighting.Color.X, lighting.Color.Y, lighting.Color.Z, 0.0f } };
+			{ lighting.Color.X, lighting.Color.Y, lighting.Color.Z, 0.0f }, { seconds, delta, 0.0f, 0.0f } };
 		queue.OpaqueTexture.clear();
 		queue.Transparent.clear();
 		queue.TexturedInstances.clear();

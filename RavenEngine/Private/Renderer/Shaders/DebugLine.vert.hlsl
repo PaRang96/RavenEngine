@@ -1,14 +1,6 @@
 // Developer debug lines, such as the collider view (docs/GameServicesDesign.md, FD-32).
 // Only the frame uniform's view-projection is read; the rest of FrameData keeps its layout.
-struct FrameData
-{
-	float4 ViewProjection[4];
-	float4 View[4];
-	float4 CameraPosition;
-	float4 Ambient;
-	float4 LightDirection;
-	float4 LightColor;
-};
+#include "Raven/Frame.hlsli"
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameData> Frame;
 

@@ -1,15 +1,6 @@
 #include "GpuScene.hlsli"
 
-// Written once per frame (docs/RendererDesign.md, R4).
-struct FrameData
-{
-	float4 ViewProjection[4];
-	float4 View[4];
-	float4 CameraPosition;
-	float4 Ambient;
-	float4 LightDirection;
-	float4 LightColor;
-};
+#include "Raven/Frame.hlsli"
 
 [[vk::binding(0, 1)]] ConstantBuffer<FrameData> Frame;
 // GPU-driven objects (docs/GpuDrivenDesign.md, G5): culling wrote this draw's visible slots.
@@ -36,6 +27,8 @@ struct VertexOutput
 	[[vk::location(4)]] nointerpolation float3 LightDirection : TEXCOORD2;
 	[[vk::location(5)]] nointerpolation float3 LightColor : COLOR1;
 	[[vk::location(6)]] nointerpolation uint Texture : TEXCOORD3;
+	[[vk::location(7)]] nointerpolation uint Material : TEXCOORD4;
+	[[vk::location(8)]] float3 WorldPosition : TEXCOORD5;
 };
 
 // SV_InstanceID is the Vulkan instance index, which includes the command's firstInstance.
@@ -56,5 +49,7 @@ VertexOutput VSMain(VertexInput input, uint instance : SV_InstanceID)
 	output.LightDirection = Frame.LightDirection.xyz;
 	output.LightColor = Frame.LightColor.rgb;
 	output.Texture = material.Textures.x;
+	output.Material = object.Material;
+	output.WorldPosition = world;
 	return output;
 }
