@@ -491,6 +491,12 @@ Structural changes during a view are rejected (`Create` throws), and no sample s
 - **Each text format states whether it is tolerant or strict:** `raven-project` and `.ravenasset` sidecars skip unknown records with a warning; `.ravensound` and `.ravenmat` reject unknown keys, because a misspelt parameter must not draw with a default.
 - **Binary enum values are pinned:** `FieldKind` and every stored enum (`SpriteBlendMode`, `MotionType`, `ColliderShape` and the like) carry explicit values, and new values are appended only. `SceneFile.cpp` asserts that its kind table follows `FieldKind`'s values.
 
+### File types (owner, 2026-11-27)
+
+- **Imported files keep their standard format** (`.fbx`, `.png`, `.wav`/`.flac`/`.mp3`/`.ogg`, and later fonts and `.hlsl`) and never get a Raven extension. Their ID and import settings live in the one `.ravenasset` sidecar beside them.
+- **A Raven extension exists only for a new kind of authored data that no standard format describes.** One extension per kind; the file carries its ID in its own header and has a row in the version policy above.
+- **Names are `.raven` plus one short word or a widely understood abbreviation.** Today: `.ravenproject`, `.ravenscene`, `.ravensound`, `.ravenmat`, and the sidecar `.ravenasset`; the engine-internal `.ravendata` (user data) and `.ravenlaunch` (player marker) follow it too. Expected later: `.ravenstrings` (string tables) and `.ravenui` (UI layouts). Length has no technical effect; the rule keeps names consistent and clear of other programs' extensions.
+
 ## FD-15 — Prefabs
 
 ### Options
