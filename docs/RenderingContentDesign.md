@@ -108,8 +108,8 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 ### Decision
 
 - Sprites join the render world and the bindless array, using the overlay's instance format. The per-texture descriptor sets and per-texture samplers go away.
-- **Cut-out sprites** (opaque or alpha-tested) are GPU-culled like meshes, with sort layers mapped to depth.
-- **Blended sprites and blended meshes** keep exact back-to-front order: the visible ones are sorted on the CPU from render-world data, as today, so nothing changes on screen.
+- **Opaque and cut-out sprites** are GPU-culled like meshes and ordered by real depth; Opaque draws exactly as today, and `Cutout` is a new mode that discards transparent texels (Q9, delegated; corrected 2026-11-27 by [B0 contract 4](#4-sprites-aa2-rnd-03-q8-and-q9), since mapping sort layers to depth would have changed what is on screen).
+- **Blended sprites and blended meshes** keep exact back-to-front order: the visible ones are sorted on the CPU from render-world data, as today, so nothing changes on screen. Sort layer and order apply only to them.
 - A GPU sort or order-independent blending only if a measured blended count needs it.
 
 **Why:** both behaviors players see today (hard and soft edges, exact order) stay, the common case becomes GPU-driven, and the overlay work is reused, not replaced.
@@ -227,16 +227,140 @@ The project rule is that 2D runtime testing needs an explicit owner request. Cou
 
 ---
 
+## B0 contracts (2026-11-27)
+
+The renderer and content contracts M6B builds against, written before any B2 code (AA2-DOC-07). Each names the assessment finding it settles; the assessment holds the evidence. All are delegated technical decisions within the owner's FD-18, FD-19, FD-23 and Q8/Q9 answers.
+
+### 1. Fragment ABI v2 and the material record (AA2-RND-01, FD-19)
+
+- **The lit fragment input grows additively** (`Raven/Material.hlsli`): `nointerpolation uint Material` and `float3 WorldPosition` join locations 0-6. Shaders that declare a subset keep compiling, because the interface checker accepts subsets. Accessors hide the layout: `RavenMaterialValue(i)`, `RavenMaterialTexture(i, uv)`, and a `RavenFrame` struct (time, delta, camera position). No shadow slot is reserved: shadow coordinates come later from `WorldPosition` and the frame uniform.
+- **The material record (`GpuMaterialData`)** becomes BaseColor, four texture indices, four sampler indices, flags, and an offset to the material's values. Values live after the fixed record in the same buffer, 0 to 16 `float4` per material as its shader declares (FD-19's variable-size table), so a material pays only for the values it uses. The sampler slots name the single clamp sampler until B3's sampler set. The widening lands before B2's material table; the static asserts, `GetBufferLayouts` and `GpuScene.hlsli` change in the same snippet.
+- **The frame uniform gains `Time`**, and its set and the materials binding become fragment-visible. The fragment checker accepts the new read-only bindings and locations. Color, Unlit, Normals and Wireframe move to the accessors at the start of B4.
+- **Versioning:** the ABI is recorded as v2 in [GpuDrivenDesign.md](GpuDrivenDesign.md) G4. It is engine-private until B4 lets games author shaders; from then on it is part of the game contract.
+- **Checked by** one capture comparison at the M2 tolerance after the port.
+
+### 2. The vertex offset hook (FD-19)
+
+- The engine keeps its vertex shader. A material shader may define `float3 RavenOffset(RavenOffsetInput input)`, called after the object transform, in world space, with the same inputs as the fragment side plus the vertex position and normal.
+- **A shader with an offset must declare `RAVEN_MAX_OFFSET` (metres).** The material loader rejects a shader that defines the function without the bound. Culling grows each such object's bounding sphere by the bound, so an offset can never pop an object out of view.
+- **Two vertex programs:** materials without an offset keep today's vertex path and pipeline; materials with one get a vertex program compiled with the hook. Grouping (contract 3) keys on the pipeline, so plain materials pay nothing.
+- Normals are not re-derived from the offset in v1; a shader that needs them returns its own from an optional `RavenOffsetNormal`.
+
+### 3. Draw grouping, retirement and commands (AA2-RND-02)
+
+- **Group key:** (pipeline key, mesh), where the pipeline key is (material shader, blend class, cull mode, offset or not). The default cull mode stays none (double-sided), as today. Groups live in a hash map, and the group is recomputed when the material or the mesh changes.
+- **Tint-only changes take the cheap path:** a per-slot record of the mesh reference means a `Tint` write never re-resolves the mesh. `Tint` stays on `StaticMeshComponent`, because moving it would lose authored values.
+- **Retirement:** a group whose count reaches zero goes to a free list, and its slot draws an empty command, so group IDs stay stable.
+- **Commands:** each mesh record stores its `CommandIndex`. The plan lays commands out contiguously per pipeline, Cull writes `Commands[mesh.CommandIndex]`, and the frame issues one indirect draw per pipeline range. Debug views draw all ranges with one engine pipeline.
+- **The mesh table is a persistent device buffer,** uploaded only when a group is added or retired or a mesh's revision changes. Mesh hot reload bumps a revision counter (today it relies on the per-frame re-resolve). The command templates are still reset on the GPU every frame, because Cull accumulates instance counts.
+- **Skinning stays out of v1:** the 128-byte object record does not widen. A later per-object vertex-base override would go in a parallel stream.
+- **Order in M6B:** this restructuring is the first render-world work, before B2's material keying, because B2 keys entries on the same group code.
+
+### 4. Sprites (AA2-RND-03, Q8 and Q9)
+
+This corrects the FD-20 draft, which would have changed what players see:
+- **Opaque sprites stay exactly as today:** real depth, depth-written, no alpha test, sort fields ignored.
+- **`Cutout`** is appended to `SpriteBlendMode` (stored ordinals stay valid). It is depth-ordered like Opaque and discards below alpha 0.5.
+- **Opaque and Cutout sprites become render-world objects:** one shared quad mesh group, a material per texture and blend class, and the normal cull and indirect path.
+- **Blended sprites keep their exact back-to-front CPU sort,** now fed from render-world data and drawn with a blend pipeline. Sort layer and order apply only to them.
+- **Sprite sheets (Q8):** `SpriteComponent` gains `Vec4 UvRect` (default 0, 0, 1, 1) and `Vec4 SizePivot` (default size 1, 1, pivot 0.5, 0.5), multiplied with the world transform, so existing sprites look the same. Per-sprite UV and pivot travel in a parallel `SpriteData` stream indexed by slot, so mesh records stay 128 bytes. Its upload is measured at 50k.
+- The overlay's screen-space quad format is not culled on the GPU. Sprites share only fragment helpers with it, through an `.hlsli`. The comments in `Overlay.hpp` and `UIDesign.md` that promise a shared instance format are corrected when B5 lands.
+
+### 5. Uploads and descriptors (AA2-RND-04)
+
+Recorded in full in [RendererDesign.md](RendererDesign.md) when the batch lands:
+- **One per-frame upload batch** is the first texture change in M6B, before mips: one command buffer per frame that signals the timeline semaphore and ends in a transfer-to-fragment barrier. Textures created cleared use `vkCmdClearColorImage` instead of a CPU zero buffer (the 4 MB per glyph page goes). The bindless element is handed out at once, which is safe because the batch is submitted on the same queue before the frame that first samples it.
+- **B3's mip chain** records into the batch's command buffer, after a format-feature check.
+- **Development texture reload** keeps rewriting the element in place. Once the per-upload fence wait is gone, it first waits for the timeline: a rare one-frame stall in development only.
+- **Placeholders and streaming (B6)** never rewrite in place. They take a new element, material and sprite entries switch through one per-asset content-revision event, and the old element is retired through the timeline. This needs contract 6's keyed material map, so it follows B2.
+
+### 6. The material table (AA2-RND-05, FD-18)
+
+- **Keyed by material asset ID,** plus one default entry per distinct inline value of `MaterialComponent` (the additive B2 change). Entries own their texture leases and carry dirty flags and a free list, so a material edit uploads only its entry, through Scatter with the record stride as a parameter.
+- **A freed bindless element is reset to white** before it is reused, so a stale index never samples another texture.
+- **Non-finite values never enter the table:** the render world hides an object whose Tint or inline values are NaN or infinite, logging once per entity; the `.ravenmaterial` parser rejects non-finite values and unknown parameters and keeps the last good version.
+
+### 7. Material shaders as content (AA2-RND-06, AA2-HR-01)
+
+- **`AssetKind::Shader`** is an asset kind (one row in `AssetKinds.hpp`). A game's shaders are compiled by a build rule beside `raven_add_game` into staged `.spv`; players ship SPIR-V only, never DXC.
+- **In development** each shader is watched through the reload service and compiled on its process lane, with last good recovery.
+- **One pipeline per (shader, render state)** is built off the main thread and published and retired on its own; one shader's edit never rebuilds the others. Debug views keep the engine's pipeline bundle.
+- **A missing or failed material shader** draws with the engine's lit pipeline, with one warning.
+- **Pipeline cache:** startup pipeline creation is measured with four shaders; a `VkPipelineCache` in the user-data folder comes only if the numbers ask for it.
+
+### 8. Device limits and bindless classes (AA2-RND-07)
+
+- Device selection reads the Vulkan 1.2 descriptor-indexing limits and rejects a device below the 4,096-texture bindless capacity with a named reason. MoltenVK's portability-subset features are queried and logged once.
+- **Allocation classes** in the bindless array: element 0 white; an engine reserve (64 elements, for glyph pages and engine textures); content for the rest. A full content class returns the placeholder with one log line instead of throwing, so content can never starve the UI.
+- Per-class counts are reported in the resource stats and the B8 measurements.
+
+### 9. Asset sidecars and `raven-project 3` (FD-23)
+
+- **Sidecar** `<file>.ravenasset` beside every imported file, a small text file:
+  ```
+  raven-asset 1
+  id 4f6c2c8e-6c7e-4a51-9a0d-0f8a0b6b2a10
+  kind texture
+  color-space srgb
+  ```
+  Models add one `part <name path> <id>` line per part (B7). Unknown keys are skipped with a warning, like project records.
+- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmaterial`) carry their ID in their header, so they have no sidecar.
+- **`Project.ravenproject` (`raven-project 3`)** keeps only project settings: scene order and startup scene, window title, fixed-step rate, physics limits and layer names. Asset records leave it.
+- **Discovery and reports:** development scans `Content/` at startup, and the reload service's watch picks up new or edited sidecars live. A source without a sidecar gets a new ID, with one log line, and the sidecar is written. A sidecar without its source is reported as an orphan. Two files with one ID (a copied file) are reported, and the copy gets a new ID. Packaging writes one generated index, so players never scan.
+- **Conversion:** `RavenSceneTool upgrade-project` turns a `raven-project 2` file into version 3 plus sidecars, keeping every ID, so scene references survive. The sample generators then write version 3 directly.
+
+### Contract changes (one window, at the start of B2)
+
+Everything that changes the game contract lands in one commit series at the start of B2, so games rebuild once (rule 10 of [CodingRules.md](CodingRules.md)). The rest of M6B is private code.
+
+| Change | Kind | Source |
+| --- | --- | --- |
+| `MaterialComponent` gains `AssetRef<MaterialAsset> Material`; inline fields stay as the default entry | Layout, persisted, additive | FD-18 |
+| `SpriteComponent` gains `UvRect` and `SizePivot`; `SpriteBlendMode` gains `Cutout` | Layout, persisted, additive | Q8, Q9 |
+| UI `Style` gains a font (`AssetRef<FontAsset>`) and weight; `UiText { Key, Args }` beside the string overloads | Layout, not persisted | AA2-MEDIA-05, MEDIA-06 (FD-31) |
+| `ComponentInfo` gains the host-owned flag, replacing the hard-coded list | Layout, not persisted | AA2-ECS-02 steps 1-2 |
+| `FieldKind` ordinals pinned with explicit values | Hash only | AA2-ECS-01 |
+| Dead public APIs deleted | Hash only | AA2-CORE-04 |
+| `/utf-8` for engine targets; hidden visibility for game modules | Hash only (build inputs) | AA2-BLD-04, HR-02 step 1 |
+
+Left for the contract window of the work that builds them, since M6B does not need them: `GameServices::HasUserData` (AA2-GP-05 step 2), per-bus audio pause (MEDIA-07), the picking hit point and source (GP-08), 2D and analog input (GP-10), and moving host headers off the game include path (CORE-03). Each costs one more game rebuild then, which is cheaper than reserving fields for features not yet designed.
+
+FD-16 covers saved data: added fields take defaults that reproduce today's output, nothing is removed or retyped, and quick-saves are memory-only.
+
+### Tracked tests (minimal-tests rule)
+
+One new case only: `SceneFileTests` loads a scene saved before B2 and checks that `MaterialComponent`'s inline values survive the additive change. Everything else in M6B is checked through captures and measurements, as M2 and M3 were.
+
+### Threads and processes
+
+| Work | Where |
+| --- | --- |
+| Render-world sync, material table upkeep, upload batch recording | Main thread, inside Extract and Render (measured; the job system only if FD-27's 100% animated case misses) |
+| Texture decode and mip CPU work for runtime-only IDs (B6) | Job system, background priority |
+| Shader compiles | The reload service's process lane: one DXC process per compile |
+| Pipeline creation for a changed shader | A worker, published on the main thread between frames |
+| Sidecar scan at startup | Main thread once; the reload service afterwards |
+
+### macOS and Linux (M4)
+
+Each contract stays within Vulkan 1.2 with descriptor indexing, which MoltenVK provides. Contract 8 makes a device below the limits fail with a reason instead of later. GPU mip generation needs `VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT` on RGBA8, which the format check covers. Nothing in M6B adds platform code outside the platform layer.
+
+### Sprite budget, set before B5
+
+From M6C measurement 7 (the UI overlay, 0.12-0.17 ms p95 per frame) and the 50k mesh path: 10k sprites, cut-out and blended mixed, must cost at most 1.0 ms of CPU and 1.0 ms of GPU per frame on the laptop in Release. B1 records today's path against the same scene, and B5 must beat it.
+
 ## Step order
 
 Each step leaves nothing to replace. Steps that need an owner decision start after it.
 
+*Revised 2026-11-27 with the B0 contracts:* the render-world grouping moves ahead of material keying, and the upload batch ahead of mips, because each later step builds on the earlier code (AA2-RND-02, RND-04).
+
 | Step | Content | Uses |
 | --- | --- | --- |
-| B1 | **Sprite baseline:** the Samples Gallery's opaque and blended quads captured on today's path (replaces the 2D run, owner 2026-11-26) | The 2D run decision |
-| B2 | **Material files:** `.ravenmaterial`, the `material` project record, `MaterialComponent` referencing it, the material table keyed by asset ID and owning texture leases, hot reload; samples regenerated | FD-18 |
-| B3 | **Textures:** GPU mip generation, the sampler set, per-texture samplers removed | FD-21 |
-| B4 | **Material shaders:** shader assets, the parameter record, draw grouping by (pipeline, mesh), one indirect draw per pipeline, live reload; the render-world sync rewrite and its 0.27 ms | FD-19 |
+| B1 | **Sprite baseline:** the Samples Gallery's opaque and blended quads captured on today's path (replaces the 2D run, owner 2026-11-26), plus the 10k-sprite baseline for the budget | The 2D run decision |
+| B2 | **Contract window and materials:** the contract changes above; `raven-project 3` with sidecars (contract 9); device limits and bindless classes (contract 8); the render-world grouping restructure (contract 3, including the 0.27 ms sync cost); then `.ravenmaterial`, `MaterialComponent` referencing it, and the keyed material table owning its texture leases (contract 6), with hot reload; samples regenerated | FD-18, FD-23 |
+| B3 | **Textures:** the per-frame upload batch first (contract 5), then GPU mip generation into it, the sampler set, and per-texture samplers removed. VMA is vendored here, after the owner approves the download | FD-21, FD-24 |
+| B4 | **Material shaders:** fragment ABI v2 and the vertex offset hook (contracts 1-2), shader assets with their build rule and per-shader pipelines (contract 7), one indirect draw per pipeline range, live reload | FD-19 |
 | B5 | **Sprites on the GPU path:** sprites in the render world on the overlay instance format, cut-out GPU-culled, blended CPU-sorted from the render world | FD-20 |
 | B6 | **Asset resolution:** runtime-only IDs on the job system with placeholders; the per-frame upload batch | FD-22 |
 | B7 | **Multi-object FBX:** sub-asset records, `import-model`, rename reporting, hierarchy instantiation | FD-23 |
