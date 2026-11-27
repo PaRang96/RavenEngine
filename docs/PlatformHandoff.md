@@ -16,6 +16,27 @@ macOS has `CocoaWindow`/`CocoaInput` implementations of the current window/input
 
 Reuse the shared renderer, math, samples, and image decoder. If a shared API needs to change, explain why and assess the impact with the Windows contributor first. Preserve other contributors' changes to shared CMake files.
 
+## Port contract (2026-11-27)
+
+Windows is the head platform, and platform code is only ever encapsulated (planning decision 21). The layer's shape is decided in [PlatformLayerDesign.md](PlatformLayerDesign.md): each area is one header in `RavenEngine/Private/Platform/`, every function lives in `Raven::Platform`, and a port implements the areas in its own folder. Shared code never names an OS: `scripts/CheckPlatformCode.cmake`, a step of Windows CI, fails on an OS macro or OS header outside the platform folders.
+
+| Area | Header | A port implements | Windows | macOS and Linux today | Capability |
+| --- | --- | --- | --- | --- | --- |
+| Process | `PlatformProcess.hpp` | `StartBuildProcess`, `PollBuildProcess`, `DestroyBuildProcess`; `LoadGameLibrary`, `FindGameEntryPoint`, `UnloadGameLibrary`, `ImageContains` | `Win32BuildProcess.cpp`, `Win32GameModule.cpp` | `Fallback/FallbackBuildProcess.cpp`, `Fallback/FallbackGameModule.cpp` | `BuildProcesses`, `GameModuleReload` |
+| Files | `PlatformFiles.hpp` | `ReplaceSavedFile`; `DirectoryWatch` | `Win32AtomicFile.cpp`, `Win32DirectoryWatch.cpp` | `Posix/PosixAtomicFile.cpp` (shared); `Fallback/PollDirectoryWatch.cpp` | `NativeDirectoryWatch` |
+| Paths | `PlatformPaths.hpp` | `GetExecutablePath`, `GetUserDataDirectory` | `Win32Paths.cpp` | `Mac/MacPaths.cpp`, `Linux/LinuxPaths.cpp` | — |
+| Random | `PlatformRandom.hpp` | `FillRandomBytes` | `Win32Random.cpp` | missing: connect it first (M4) | — |
+| Input | `PlatformInput.hpp` | `GetNativeKeyName`; the window's input feeds `InputBuffer` | `Win32Input.cpp` | `Fallback/FallbackKeyNames.cpp` | `NativeKeyNames` |
+| Window | `Public/Raven/Platform/Window.hpp` | `Window::Create` and the `Window` interface below | `Win32Window.cpp` | `Mac/CocoaWindow.mm`, `Linux/XcbWindow.cpp` | — |
+| Capabilities | `PlatformCapabilities.hpp` | `Platform/<OS>/PlatformCapabilitiesOs.hpp`: the values above | all true | all false | — |
+
+**Landing a backend for an area:**
+1. Add the implementation under `Platform/<OS>/`, or under `Platform/Posix/` when macOS and Linux share it.
+2. Remove that area's fallback from the OS's `raven_platform_fallbacks` list in `cmake/RavenPlatform.cmake`.
+3. Set the capability in `Platform/<OS>/PlatformCapabilitiesOs.hpp`, in the same change.
+
+Shared code then picks it up with no edit, because it branches only on the capability.
+
 ## Shared interfaces to check first
 
 [Window.hpp](../RavenEngine/Public/Raven/Platform/Window.hpp) is the declaration authority. Backend headers and implementations must match return types, argument types, references, and `const` exactly.
@@ -36,9 +57,9 @@ Follow [InputProcessing.md](InputProcessing.md) for Windows input ownership and 
 The required path hook in [PlatformPaths.hpp](../RavenEngine/Private/Platform/PlatformPaths.hpp) is:
 
 ```cpp
-namespace Raven
+namespace Raven::Platform
 {
-	std::filesystem::path GetPlatformExecutablePath();
+	std::filesystem::path GetExecutablePath();
 }
 ```
 
@@ -58,9 +79,9 @@ See [EngineModules.md](EngineModules.md), [RuntimeUtilities.md](RuntimeUtilities
 M5 ([HotReloadDesign.md](HotReloadDesign.md)) moved every reload path onto shared code. Each platform supplies only the backends below.
 - **Directory watching:** the reload service ([ReloadService.cpp](../RavenEngine/Private/Core/ReloadService.cpp)) watches assets, scenes, the project, game sources, the game DLL and shaders through `Platform::DirectoryWatch`.
   - Notifications are only wake-ups: the service compares sizes and write times, and reads contents every 2 s as an audit.
-  - The shared `PollDirectoryWatch.cpp` works everywhere as a fallback. FSEvents or inotify only make detection faster.
-- **Build processes:** shader watching ([ShaderLibrary.cpp](../RavenEngine/Private/Renderer/Shaders/ShaderLibrary.cpp)) and game builds run `cmake -P` through `Platform::StartBuildProcess` ([BuildProcess.hpp](../RavenEngine/Private/Platform/BuildProcess.hpp)), which takes UTF-8 arguments. Windows implements it in `Platform/Windows/Win32BuildProcess.cpp`; other systems get `Platform/UnsupportedBuildProcess.cpp`, whose `SupportsBuildProcesses()` is false, so shader watching logs that it is off instead of failing. A POSIX backend replaces that file. The generated `GameBuildConfig.hpp` and `ShaderWatchConfig.hpp` hold their paths as escaped UTF-8 (`raven_utf8_literal`), and `raven_capture_build_environment` records `CC`, `CXX` and `PATH` for non-MSVC toolchains.
-- **Game modules:** the shared `GameModule` builds and activates the DLL. Your loader backend replaces `UnsupportedGameModule.cpp`.
+  - `Platform/Fallback/PollDirectoryWatch.cpp` works everywhere as a fallback. FSEvents or inotify only make detection faster.
+- **Build processes:** shader watching ([ShaderLibrary.cpp](../RavenEngine/Private/Renderer/Shaders/ShaderLibrary.cpp)) and game builds run `cmake -P` through `Platform::StartBuildProcess` ([PlatformProcess.hpp](../RavenEngine/Private/Platform/PlatformProcess.hpp)), which takes UTF-8 arguments. Windows implements it in `Platform/Windows/Win32BuildProcess.cpp`; other systems get `Platform/Fallback/FallbackBuildProcess.cpp` with `Capabilities.BuildProcesses` false, so shader watching logs that it is off instead of failing. A POSIX backend replaces that fallback (port contract above). The generated `GameBuildConfig.hpp` and `ShaderWatchConfig.hpp` hold their paths as escaped UTF-8 (`raven_utf8_literal`), and `raven_capture_build_environment` records `CC`, `CXX` and `PATH` for non-MSVC toolchains.
+- **Game modules:** the shared `GameModule` builds and activates the DLL. Your loader backend replaces `Fallback/FallbackGameModule.cpp` and sets `Capabilities.GameModuleReload`.
 - **DXC on your host:** the watcher runs DXC twice per compile, a `-M -MF` dependency pass and then the compile. Check that your DXC build supports `-MF`.
 - **Verify:** `scripts/Test-Windows3DLive.py` drives the Windows executable. Its cases are the checklist for a native port: shader stages, rejections, views, DLL, scene, PNG and FBX.
 
@@ -99,7 +120,7 @@ Generate an asset ID once for a new registration with `Generate()`, and read pre
 
 3. **Verify the existing executable-path hook**
 
-   - [ ] Verify that `Raven::GetPlatformExecutablePath()` in the already-connected `MacPaths.cpp` returns the absolute host executable path.
+   - [ ] Verify that `Raven::Platform::GetExecutablePath()` in the already-connected `MacPaths.cpp` returns the absolute host executable path.
    - [ ] Check Unicode and space-containing paths, different working directories, ContentRoot overrides, and relocation through the shared path checks.
 
 4. **Verify Vulkan / MoltenVK execution**
@@ -142,7 +163,7 @@ cmake --build out/build/macos-release
 
 3. **Verify executable paths**
 
-   - [ ] Verify that `Raven::GetPlatformExecutablePath()` in `LinuxPaths.cpp` returns the absolute host executable path through `/proc/self/exe`. Reuse shared path calculations and file readers. See [proc_pid_exe(5)](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html) for Linux path behavior.
+   - [ ] Verify that `Raven::Platform::GetExecutablePath()` in `LinuxPaths.cpp` returns the absolute host executable path through `/proc/self/exe`. Reuse shared path calculations and file readers. See [proc_pid_exe(5)](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html) for Linux path behavior.
    - [ ] Check executable location, other working directories, Unicode/space-containing paths, case-sensitive Linux filenames, and ContentRoot overrides.
 
 4. **Verify CMake and presets**

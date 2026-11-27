@@ -9,9 +9,9 @@
 #include <system_error>
 #include <vector>
 
-namespace Raven
+namespace Raven::Platform
 {
-	std::filesystem::path GetPlatformExecutablePath()
+	std::filesystem::path GetExecutablePath()
 	{
 		std::vector<wchar_t> buffer(MAX_PATH);
 		for (;;)
@@ -29,7 +29,7 @@ namespace Raven
 		}
 	}
 
-	std::filesystem::path GetPlatformUserDataDirectory()
+	std::filesystem::path GetUserDataDirectory()
 	{
 		PWSTR folder = nullptr;
 		const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &folder);

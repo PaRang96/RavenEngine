@@ -2,7 +2,7 @@
 #define NOMINMAX
 #include <Windows.h>
 
-#include "Platform/AtomicFile.hpp"
+#include "Platform/PlatformFiles.hpp"
 
 #include <chrono>
 #include <system_error>

@@ -3,7 +3,8 @@
 #include "Core/ImporterVersions.hpp"
 #include "Core/PathText.hpp"
 #include "Core/ReloadService.hpp"
-#include "Platform/BuildProcess.hpp"
+#include "Platform/PlatformCapabilities.hpp"
+#include "Platform/PlatformProcess.hpp"
 #include "Raven/Assets/AssetId.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
@@ -308,9 +309,10 @@ namespace Raven
 	void ShaderLibrary::Watch(Check check)
 	{
 		// Live compiles run DXC through a background build process.
-		if (!Platform::SupportsBuildProcesses())
+		if constexpr (!Platform::Capabilities.BuildProcesses)
 		{
-			Log(LogLevel::Warning, "Shaders are not watched: this platform cannot run background builds yet");
+			Log(LogLevel::Warning, std::string("Shaders are not watched: ") + Platform::Capabilities.Name +
+				" cannot run background builds yet");
 			return;
 		}
 		if (IsWatching())

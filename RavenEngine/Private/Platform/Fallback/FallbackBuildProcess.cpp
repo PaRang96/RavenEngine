@@ -1,4 +1,4 @@
-#include "Platform/BuildProcess.hpp"
+#include "Platform/PlatformProcess.hpp"
 
 #include <stdexcept>
 
@@ -9,10 +9,6 @@ namespace Raven::Platform
 	{
 	};
 
-	bool SupportsBuildProcesses() noexcept
-	{
-		return false;
-	}
 
 	BuildProcess* StartBuildProcess(const std::filesystem::path&, const std::vector<std::string>&,
 		const std::filesystem::path&)

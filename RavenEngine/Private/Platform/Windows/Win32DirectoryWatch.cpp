@@ -1,4 +1,4 @@
-#include "Platform/DirectoryWatch.hpp"
+#include "Platform/PlatformFiles.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX

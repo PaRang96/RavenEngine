@@ -1,6 +1,7 @@
 #include "Input/InputRouter.hpp"
 
-#include "Platform/PlatformKeyNames.hpp"
+#include "Platform/PlatformCapabilities.hpp"
+#include "Platform/PlatformInput.hpp"
 #include "Raven/Core/GameSystems.hpp"
 #include "Raven/Core/Log.hpp"
 
@@ -520,7 +521,7 @@ namespace Raven
 			return text;
 		}
 		const Key key = chord.Code.GetKey();
-		if (auto native = Platform::GetNativeKeyName(key); !native.empty())
+		if (auto native = Platform::Capabilities.NativeKeyNames ? Platform::GetNativeKeyName(key) : std::string{}; !native.empty())
 			return text + native;
 		return text + std::string(GetFallbackKeyName(key));
 	}

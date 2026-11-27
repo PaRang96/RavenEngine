@@ -1,6 +1,6 @@
 #include "Platform/Windows/Win32Input.hpp"
 
-#include "Platform/PlatformKeyNames.hpp"
+#include "Platform/PlatformInput.hpp"
 
 #include <array>
 #include <iterator>

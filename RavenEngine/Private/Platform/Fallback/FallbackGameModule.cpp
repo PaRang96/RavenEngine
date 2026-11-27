@@ -1,4 +1,4 @@
-#include "Platform/GameModulePlatform.hpp"
+#include "Platform/PlatformProcess.hpp"
 #include <stdexcept>
 
 namespace Raven::Platform

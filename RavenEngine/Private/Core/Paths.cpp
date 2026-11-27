@@ -71,7 +71,7 @@ namespace Raven
 	{
 		std::filesystem::path GetExecutablePath()
 		{
-			static const auto path = GetPlatformExecutablePath().lexically_normal();
+			static const auto path = Platform::GetExecutablePath().lexically_normal();
 			return path;
 		}
 
@@ -82,7 +82,7 @@ namespace Raven
 
 		std::filesystem::path GetUserDataDirectory()
 		{
-			return GetPlatformUserDataDirectory();
+			return Platform::GetUserDataDirectory();
 		}
 
 		std::filesystem::path GetContentPath(const std::filesystem::path& relativePath)

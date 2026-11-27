@@ -9,6 +9,7 @@ if(WIN32)
     endif()
 elseif(APPLE)
     set(raven_native_directory "Mac")
+    set(raven_platform_fallbacks FallbackBuildProcess FallbackGameModule FallbackKeyNames PollDirectoryWatch)
     target_compile_options(RavenCore PRIVATE
         $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     )
@@ -34,21 +35,26 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-xkb)
     set(raven_native_directory "Linux")
+    set(raven_platform_fallbacks FallbackBuildProcess FallbackGameModule FallbackKeyNames PollDirectoryWatch)
     target_link_libraries(RavenCore PRIVATE PkgConfig::XCB)
 else()
     message(FATAL_ERROR "A window backend is not implemented for this platform yet")
 endif()
 
-set(raven_native_sources "${raven_private_files}")
-list(FILTER raven_native_sources INCLUDE REGEX
-    "/Private/Platform/${raven_native_directory}/.*\\.(cpp|hpp|mm)$")
-target_sources(RavenCore PRIVATE ${raven_native_sources})
+# The platform folders this OS builds (docs/PlatformLayerDesign.md): its own, and shared POSIX
+# code off Windows. Then one fallback per area the OS has no backend for yet, listed in its branch
+# above; a backend that lands removes its entry and sets its capability.
+set(raven_platform_folders "${raven_native_directory}")
 if(NOT WIN32)
-    target_sources(RavenCore PRIVATE
-        "Private/Platform/PollDirectoryWatch.cpp"
-        "Private/Platform/PosixAtomicFile.cpp"
-        "Private/Platform/UnsupportedBuildProcess.cpp"
-        "Private/Platform/UnsupportedGameModule.cpp"
-        "Private/Platform/UnsupportedKeyNames.cpp"
-    )
+    list(APPEND raven_platform_folders Posix)
 endif()
+foreach(folder IN LISTS raven_platform_folders)
+    set(raven_folder_sources "${raven_private_files}")
+    list(FILTER raven_folder_sources INCLUDE REGEX "/Private/Platform/${folder}/.*\\.(cpp|hpp|mm)$")
+    target_sources(RavenCore PRIVATE ${raven_folder_sources})
+endforeach()
+foreach(fallback IN LISTS raven_platform_fallbacks)
+    target_sources(RavenCore PRIVATE "Private/Platform/Fallback/${fallback}.cpp")
+endforeach()
+# Platform/<OS>/PlatformCapabilitiesOs.hpp, included by Platform/PlatformCapabilities.hpp.
+target_include_directories(RavenCore PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Private/Platform/${raven_native_directory}")

@@ -1,8 +1,8 @@
 #include "Raven/Core/GameModule.hpp"
 #include "Raven/Core/GameInstance.hpp"
 #include "Raven/Core/Log.hpp"
-#include "Platform/GameModulePlatform.hpp"
-#include "Platform/BuildProcess.hpp"
+#include "Platform/PlatformCapabilities.hpp"
+#include "Platform/PlatformProcess.hpp"
 #include "Core/ImporterVersions.hpp"
 #include "Core/ReloadService.hpp"
 #include "Core/PathText.hpp"
@@ -737,6 +737,8 @@ namespace Raven
 	{
 		if (!GameBuild::Enabled)
 			throw std::runtime_error("Game modules are disabled or unsupported in this build");
+		if constexpr (!Platform::Capabilities.GameModuleReload)
+			throw std::runtime_error(std::string("Game modules are not implemented on ") + Platform::Capabilities.Name + " yet");
 		m_Impl->Game = &game;
 		m_Impl->Path = std::filesystem::absolute(path);
 		m_Impl->AutoBuild = autoBuild;

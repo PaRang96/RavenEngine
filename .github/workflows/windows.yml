@@ -31,6 +31,10 @@ jobs:
       - name: Vendored libraries unmodified
         run: cmake -P scripts/CheckVendored.cmake
 
+      # Platform code stays inside RavenEngine/Private/Platform/<folder>/ (planning decision 21).
+      - name: Platform code encapsulated
+        run: cmake -P scripts/CheckPlatformCode.cmake
+
       # Provides cl.exe, Ninja and VSINSTALLDIR, which the Windows presets require.
       - uses: ilammy/msvc-dev-cmd@v1
         with:

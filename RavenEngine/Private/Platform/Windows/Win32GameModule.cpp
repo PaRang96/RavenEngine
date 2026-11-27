@@ -2,7 +2,7 @@
 #define NOMINMAX
 #include <Windows.h>
 
-#include "Platform/GameModulePlatform.hpp"
+#include "Platform/PlatformProcess.hpp"
 
 #include <stdexcept>
 #include <system_error>

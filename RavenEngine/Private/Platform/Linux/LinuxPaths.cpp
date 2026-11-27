@@ -3,14 +3,14 @@
 #include <cstdlib>
 #include <stdexcept>
 
-namespace Raven
+namespace Raven::Platform
 {
-	std::filesystem::path GetPlatformExecutablePath()
+	std::filesystem::path GetExecutablePath()
 	{
 		return std::filesystem::read_symlink("/proc/self/exe");
 	}
 
-	std::filesystem::path GetPlatformUserDataDirectory()
+	std::filesystem::path GetUserDataDirectory()
 	{
 		// The XDG base directory rule: an absolute $XDG_DATA_HOME, else ~/.local/share.
 		if (const char* data = std::getenv("XDG_DATA_HOME"); data && *data == '/')

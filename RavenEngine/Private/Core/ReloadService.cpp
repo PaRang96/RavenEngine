@@ -2,7 +2,7 @@
 
 #include "Core/PathText.hpp"
 #include "Core/ReloadTrace.hpp"
-#include "Platform/DirectoryWatch.hpp"
+#include "Platform/PlatformFiles.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
 

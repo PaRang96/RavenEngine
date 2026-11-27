@@ -7,9 +7,9 @@
 #include <stdexcept>
 #include <vector>
 
-namespace Raven
+namespace Raven::Platform
 {
-    std::filesystem::path GetPlatformExecutablePath()
+    std::filesystem::path GetExecutablePath()
     {
         std::uint32_t size = 0;
         _NSGetExecutablePath(nullptr, &size);
@@ -20,7 +20,7 @@ namespace Raven
         return std::filesystem::canonical(buffer.data());
     }
 
-    std::filesystem::path GetPlatformUserDataDirectory()
+    std::filesystem::path GetUserDataDirectory()
     {
         if (const char* home = std::getenv("HOME"); home && *home)
             return std::filesystem::path(home) / "Library" / "Application Support";

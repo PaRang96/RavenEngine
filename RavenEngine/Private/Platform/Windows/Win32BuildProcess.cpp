@@ -3,7 +3,7 @@
 #include <Windows.h>
 
 #include "Core/PathText.hpp"
-#include "Platform/BuildProcess.hpp"
+#include "Platform/PlatformProcess.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -93,10 +93,6 @@ namespace Raven::Platform
 		}
 	};
 
-	bool SupportsBuildProcesses() noexcept
-	{
-		return true;
-	}
 
 	BuildProcess* StartBuildProcess(const std::filesystem::path& executable,
 		const std::vector<std::string>& arguments, const std::filesystem::path& log)

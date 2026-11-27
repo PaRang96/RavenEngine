@@ -216,9 +216,6 @@ int main(int argc, char* argv[])
 			description.Width = presentation.BorderlessSize->first;
 			description.Height = presentation.BorderlessSize->second;
 		}
-#ifdef _MSC_VER
-#pragma warning(suppress : 4996)
-#endif
 		if (const char* trace = std::getenv("RAVEN_FRAME_TRACE"); trace && *trace)
 			config.FrameTracePath = trace;
 		Log(LogLevel::Info, "Game " + game + (develop ? ": edit Games/" + game + "/Source, the module rebuilds on save" :
