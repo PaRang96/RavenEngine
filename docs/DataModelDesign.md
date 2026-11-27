@@ -488,7 +488,7 @@ Structural changes during a view are rejected (`Create` throws), and no sample s
 ### Version policy for Raven formats (2026-11-27, AA2-ECS-01)
 
 - **Readers accept the current version and the one before it.** A version bump ships with a `RavenSceneTool` upgrade path, so older files are converted, never silently dropped.
-- **Each text format states whether it is tolerant or strict:** `raven-project` and `.ravenasset` sidecars skip unknown records with a warning; `.ravensound` and `.ravenmaterial` reject unknown keys, because a misspelt parameter must not draw with a default.
+- **Each text format states whether it is tolerant or strict:** `raven-project` and `.ravenasset` sidecars skip unknown records with a warning; `.ravensound` and `.ravenmat` reject unknown keys, because a misspelt parameter must not draw with a default.
 - **Binary enum values are pinned:** `FieldKind` and every stored enum (`SpriteBlendMode`, `MotionType`, `ColliderShape` and the like) carry explicit values, and new values are appended only. `SceneFile.cpp` asserts that its kind table follows `FieldKind`'s values.
 
 ## FD-15 — Prefabs
