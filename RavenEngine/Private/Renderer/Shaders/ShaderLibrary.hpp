@@ -8,11 +8,32 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <vector>
 
+#include "Raven/Core/Api.hpp"
+
 namespace Raven
 {
+	// One HLSL compile with the build's DXC flags and validator (docs/HotReloadDesign.md, H2), shared by
+	// the engine's programs and material shaders. The include root is the engine shader folder, so
+	// `#include "Raven/Material.hlsli"` works from any source. Development hosts only: it needs the
+	// toolchain the build found. A failed compile returns its diagnostics in Error and the includes DXC
+	// listed before failing.
+	struct CompiledHlsl
+	{
+		std::vector<std::uint32_t> Words;
+		std::vector<std::filesystem::path> Includes;
+		std::string Error;
+		double Milliseconds = 0.0;
+	};
+
+	// scratch is a folder the call may fill with its intermediate files.
+	RAVEN_API CompiledHlsl CompileHlsl(const std::filesystem::path& source, const char* profile, const char* entry,
+		const std::filesystem::path& scratch, std::stop_token stop = {});
+	RAVEN_API std::filesystem::path GetEngineShaderDirectory();
+
 	// Every engine shader program (docs/HotReloadDesign.md, H2). cmake/RavenContent.cmake
 	// compiles the same sources with the same profiles and entry points.
 	enum class ShaderProgram : std::uint8_t

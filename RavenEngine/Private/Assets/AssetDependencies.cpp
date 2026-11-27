@@ -47,10 +47,14 @@ namespace Raven
 			visit(clip, AssetKind::Audio);
 	}
 
-	void ExpandMaterialTextures(const MaterialDefinition& material, const std::function<void(AssetId, AssetKind)>& visit)
+	void ExpandMaterialDependencies(const MaterialDefinition& material, const std::function<void(AssetId, AssetKind)>& visit)
 	{
+		if (material.Shader.IsValid())
+			visit(material.Shader, AssetKind::Shader);
 		for (const auto& texture : material.Textures)
 			if (texture.IsValid())
 				visit(texture, AssetKind::Texture);
+		for (const auto& [name, texture] : material.NamedTextures)
+			visit(texture, AssetKind::Texture);
 	}
 }

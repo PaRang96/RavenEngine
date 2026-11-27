@@ -62,7 +62,8 @@ namespace Raven
 		void RecordPrepare(VkCommandBuffer commands, std::size_t slot, const Mat4& viewProjection) const;
 		// Inside rendering, with the lit pipeline's bindless and frame sets: every pipeline range with
 		// the given pipeline, as debug views draw them. Material shaders (B4) pick one per range.
-		void RecordDraw(VkCommandBuffer commands, std::size_t slot, const VulkanColorPipeline& pipeline,
+		using PipelineFor = std::function<const VulkanColorPipeline&(const DrawPipelineKey&)>;
+		void RecordDraw(VkCommandBuffer commands, std::size_t slot, const PipelineFor& pipelineFor,
 			VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const;
 		// After rendering: copy the commands for the visible-count readback.
 		void RecordReadback(VkCommandBuffer commands, std::size_t slot) const;
@@ -115,6 +116,7 @@ namespace Raven
 			VkDeviceSize ObjectOffset = 0;
 			VkDeviceSize SlotOffset = 0;
 			VkDeviceSize MaterialOffset = 0;
+			VkDeviceSize ValuesOffset = 0;
 			VkBuffer Ring = VK_NULL_HANDLE;
 		};
 
@@ -160,6 +162,8 @@ namespace Raven
 		std::uint64_t m_MeshRevision = 0;
 		std::uint32_t m_MaterialCount = 0;
 		bool m_AllMaterials = false;
+		bool m_UploadValues = false;
+		std::uint64_t m_UploadedValuesRevision = ~0ull;
 		std::vector<std::uint32_t> m_MaterialSlots;
 		std::vector<GpuMaterialData> m_MaterialRecords;
 		bool m_Full = false;

@@ -69,10 +69,10 @@ namespace Raven
 						{
 							scene.UseAsset(catalog, clip, clipKind);
 						});
-				// A material's textures too, so drawing it never loads one.
+				// A material's shader and textures too, so drawing it never loads one.
 				if (kind == AssetKind::Material)
 					if (const auto* lease = scene.FindAsset(id); lease && lease->GetMaterial())
-						ExpandMaterialTextures(*lease->GetMaterial(), [&](AssetId texture, AssetKind textureKind)
+						ExpandMaterialDependencies(*lease->GetMaterial(), [&](AssetId texture, AssetKind textureKind)
 						{
 							scene.UseAsset(catalog, texture, textureKind);
 						});

@@ -21,7 +21,7 @@ namespace Raven
 	struct DecodedAsset
 	{
 		std::vector<std::byte> Bytes;
-		std::variant<FbxMesh, ImageData, PcmClip, SoundEvent, MaterialDefinition> Data;
+		std::variant<FbxMesh, ImageData, PcmClip, SoundEvent, MaterialDefinition, MaterialShader> Data;
 	};
 
 	struct ManagedAsset
@@ -41,6 +41,7 @@ namespace Raven
 		std::shared_ptr<const PcmClip> Clip;
 		std::shared_ptr<const SoundEvent> Sound;
 		std::shared_ptr<const MaterialDefinition> Material;
+		std::shared_ptr<const MaterialShader> Shader;
 		// Bumped by every committed reload, so holders of a lease can tell new contents.
 		std::uint64_t Revision = 0;
 		std::unique_ptr<SettledFileWatch<DecodedAsset>> Watch;

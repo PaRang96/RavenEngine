@@ -72,6 +72,13 @@ namespace Raven
 		return pipelines;
 	}
 
+	std::shared_ptr<const VulkanColorPipeline> VulkanClearPass::LitPipelineFactory::CreateMaterial(
+		std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment) const
+	{
+		return std::make_shared<const VulkanColorPipeline>(m_Device, m_ColorFormat, m_DepthFormat, m_TextureLayout,
+			m_FrameLayout, m_SceneLayout, vertex, fragment, VulkanColorPipeline::Mode::Fill);
+	}
+
 	VulkanClearPass::LitPipelineFactory VulkanClearPass::GetLitPipelineFactory() const
 	{
 		return { m_DeviceOwner, m_ColorFormat, m_DepthFormat, m_BindlessLayout, m_FrameLayout, m_Scene.GetLayout(),
@@ -478,12 +485,19 @@ namespace Raven
 		// Every lit mesh lives in the two pools (R6) and is drawn by the culled indirect commands.
 		const auto& lit = *m_LitPipelines;
 		const auto& filled = view == RenderView::Unlit ? *lit.Unlit : view == RenderView::Normals ? *lit.Normals : *lit.Shaded;
-		m_Scene.RecordDraw(commands, m_FrameIndex, filled, bindlessTextures, frame.FrameSet,
-			meshes.GetVertices(), meshes.GetIndices());
+		// Shaded ranges draw with their material's pipeline (B0 contract 7); debug views draw every range
+		// with their own engine pipeline.
+		const bool materials = view == RenderView::Shaded || view == RenderView::Wireframe;
+		m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey& key) -> const VulkanColorPipeline&
+		{
+			if (materials && key.Shader != 0 && key.Shader <= m_MaterialPipelines.size() && m_MaterialPipelines[key.Shader - 1])
+				return *m_MaterialPipelines[key.Shader - 1];
+			return filled;
+		}, bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
 		// The wireframe view draws the same commands again as lines over the shaded image (H3).
 		if (view == RenderView::Wireframe && lit.Lines)
-			m_Scene.RecordDraw(commands, m_FrameIndex, *lit.Lines, bindlessTextures, frame.FrameSet,
-				meshes.GetVertices(), meshes.GetIndices());
+			m_Scene.RecordDraw(commands, m_FrameIndex, [&](const DrawPipelineKey&) -> const VulkanColorPipeline& { return *lit.Lines; },
+				bindlessTextures, frame.FrameSet, meshes.GetVertices(), meshes.GetIndices());
 		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Opaque,
 			queue.OpaqueBatches);
 		RecordTexturedBatches(commands, instanceBuffer, texturedOffset, m_TexturedPipelines->Transparent,

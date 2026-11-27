@@ -58,6 +58,11 @@ namespace Raven
 		{
 		public:
 			std::shared_ptr<const LitPipelines> Create(const LitShaders& shaders) const;
+			// A material shader's shaded pipeline (B0 contract 7).
+			std::shared_ptr<const VulkanColorPipeline> CreateMaterial(std::span<const std::uint32_t> vertex,
+				std::span<const std::uint32_t> fragment) const;
+			VkFormat GetColorFormat() const noexcept { return m_ColorFormat; }
+			VkFormat GetDepthFormat() const noexcept { return m_DepthFormat; }
 
 		private:
 			friend class VulkanClearPass;
@@ -108,6 +113,11 @@ namespace Raven
 			std::span<const std::uint32_t> fragment, const std::function<bool()>& canPublish = {});
 		void ReplaceDebugLinePipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
 		void ReplaceOverlayPipeline(std::span<const std::uint32_t> vertex, std::span<const std::uint32_t> fragment);
+		// Material pipelines by key minus one; null entries draw with the shaded lit pipeline.
+		void SetMaterialPipelines(std::vector<std::shared_ptr<const VulkanColorPipeline>> pipelines) noexcept
+		{
+			m_MaterialPipelines = std::move(pipelines);
+		}
 		~VulkanClearPass();
 
 		// False requests swapchain recreation. The caller waits for idle before destruction.
@@ -157,6 +167,7 @@ namespace Raven
 		VkFormat m_ColorFormat = VK_FORMAT_UNDEFINED;
 		VkFormat m_DepthFormat = VK_FORMAT_UNDEFINED;
 		std::shared_ptr<const LitPipelines> m_LitPipelines;
+		std::vector<std::shared_ptr<const VulkanColorPipeline>> m_MaterialPipelines;
 		VkDescriptorSetLayout m_TextureLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_BindlessLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FrameLayout = VK_NULL_HANDLE;

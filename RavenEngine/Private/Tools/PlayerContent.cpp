@@ -1,10 +1,13 @@
 #include "Audio/SoundEvent.hpp"
 #include "Renderer/MaterialFile.hpp"
+#include "Renderer/Shaders/ShaderLibrary.hpp"
 #include "PlayerContent.hpp"
 
 #include "Assets/AssetDependencies.hpp"
 #include "Assets/AssetKinds.hpp"
 #include "Assets/AssetPath.hpp"
+#include "Raven/Assets/AssetId.hpp"
+#include "Core/PathText.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/ECS/Component.hpp"
 #include "Raven/Scene/SceneFile.hpp"
@@ -34,12 +37,27 @@ namespace Raven
 			return { reinterpret_cast<const char*>(text.data()), text.size() };
 		}
 
+		// Players ship SPIR-V only (B0 contract 7): a material shader written in HLSL is staged compiled,
+		// beside its source name, and its record names the compiled file.
+		bool CompilesForPlayer(const AssetRecord& asset)
+		{
+			return asset.Kind == AssetKind::Shader && LowercaseExtension(asset.SourcePath) == ".hlsl";
+		}
+
+		std::filesystem::path PlayerPath(const AssetRecord& asset)
+		{
+			auto path = asset.SourcePath.lexically_normal();
+			if (CompilesForPlayer(asset))
+				path += ".spv";
+			return path;
+		}
+
 		void WriteAssetRecord(std::ostream& manifest, const AssetCatalog& catalog, const AssetRecord& asset)
 		{
 			const auto* kind = FindAssetKind(asset.Kind);
 			if (!kind || !kind->SceneDependency || kind->Keyword.empty())
 				throw std::invalid_argument("This kind cannot be included as a player asset: " + asset.Id.ToString());
-			manifest << "asset " << kind->Keyword << ' ' << asset.Id.ToString() << ' ' << std::quoted(ManifestPath(asset.SourcePath));
+			manifest << "asset " << kind->Keyword << ' ' << asset.Id.ToString() << ' ' << std::quoted(ManifestPath(PlayerPath(asset)));
 			// A texture's record also carries its color space.
 			if (asset.Kind == AssetKind::Texture)
 				manifest << ' ' << (catalog.GetTexture({ asset.Id }).ColorSpace == TextureColorSpace::SRGB ? "srgb" : "linear");
@@ -85,7 +103,7 @@ namespace Raven
 			if (record.Kind == AssetKind::Sound)
 				ExpandSoundClips(ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path), require);
 			else if (record.Kind == AssetKind::Material)
-				ExpandMaterialTextures(ParseMaterial(Files::ReadBinary(path, 1024 * 1024), path), require);
+				ExpandMaterialDependencies(ParseMaterial(Files::ReadBinary(path, 1024 * 1024), path), require);
 		}
 
 		// raven-project 3 with a generated index (docs/RenderingContentDesign.md, B0 contract 9): the
@@ -111,10 +129,21 @@ namespace Raven
 			throw std::invalid_argument("Player content destination must be a new directory");
 		for (const auto& id : requiredAssets)
 		{
-			const auto& relative = project.Catalog.Get(id).SourcePath;
-			const auto target = destination / relative.lexically_normal();
+			const auto& record = project.Catalog.Get(id);
+			const auto target = destination / PlayerPath(record);
 			std::filesystem::create_directories(target.parent_path());
-			std::filesystem::copy_file(ResolveAssetPath(source, relative), target,
+			if (CompilesForPlayer(record))
+			{
+				const auto scratch = std::filesystem::temp_directory_path() / ("raven-shader-" + AssetId::Generate().ToString());
+				auto compiled = CompileHlsl(ResolveAssetPath(source, record.SourcePath), "ps_6_0", "PSMain", scratch);
+				std::error_code ignored;
+				std::filesystem::remove_all(scratch, ignored);
+				if (!compiled.Error.empty())
+					throw std::runtime_error("Cannot compile material shader " + PathToUtf8(record.SourcePath) + ": " + compiled.Error);
+				Files::WriteAtomic(target, std::as_bytes(std::span(compiled.Words)));
+				continue;
+			}
+			std::filesystem::copy_file(ResolveAssetPath(source, record.SourcePath), target,
 				std::filesystem::copy_options::skip_existing);
 		}
 		for (const auto& scene : selected)

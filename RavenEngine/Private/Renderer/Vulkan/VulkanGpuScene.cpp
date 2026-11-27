@@ -304,6 +304,9 @@ namespace Raven
 			VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData) > m_Materials.Capacity;
 		m_MaterialSlots.clear();
 		m_MaterialRecords.clear();
+		// The values are small, so any change uploads them whole.
+		m_UploadValues = m_Full || world->ValuesRevision != m_UploadedValuesRevision ||
+			VkDeviceSize{ world->Values.size() } * sizeof(Vec4) > m_Values.Capacity;
 		if (!m_AllMaterials)
 			for (const auto slot : world->DirtyMaterials)
 				if (slot < m_MaterialCount)
@@ -377,6 +380,8 @@ namespace Raven
 		const auto align = VulkanUploadRing::Align;
 		VkDeviceSize bytes = align((m_AllMaterials ? VkDeviceSize{ m_MaterialCount } : m_MaterialRecords.size()) *
 			sizeof(GpuMaterialData));
+		if (m_UploadValues)
+			bytes += align(world->Values.size() * sizeof(Vec4));
 		if (m_UploadMeshes)
 			bytes += align(m_MeshTable.size() * sizeof(MeshEntry));
 		if (m_UploadTemplates)
@@ -397,7 +402,8 @@ namespace Raven
 			return;
 		// Rebuilt every frame, so replacing them needs no copy.
 		Reserve(m_Visible, VkDeviceSize{ m_ObjectCount } * sizeof(std::uint32_t), 0);
-		Reserve(m_Values, 0, 0);
+		if (Reserve(m_Values, VkDeviceSize{ m_World->Values.size() } * sizeof(Vec4), 0))
+			m_UploadedValuesRevision = ~0ull;
 		Reserve(m_Commands, VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand),
 			VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 		// Plan uploads these whenever they must grow; a replaced one is forgotten until committed.
@@ -423,6 +429,8 @@ namespace Raven
 		slot.MeshOffset = m_UploadMeshes ? ring.Push(Bytes(m_MeshTable)) : 0;
 		slot.TemplateOffset = m_UploadTemplates ? ring.Push(Bytes(m_TemplateRecords)) : 0;
 		auto* world = m_World;
+		slot.ValuesOffset = m_UploadValues ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Values.data()),
+			world->Values.size() * sizeof(Vec4))) : 0;
 		slot.MaterialOffset = m_AllMaterials ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Materials.data()),
 			std::size_t{ m_MaterialCount } * sizeof(GpuMaterialData))) : ring.Push(Bytes(m_MaterialRecords));
 		if (m_Full)
@@ -496,6 +504,8 @@ namespace Raven
 			const VkBufferCopy region{ 0, 0, commandBytes };
 			vkCmdCopyBuffer(commands, m_Templates.Buffer->Get(), m_Commands.Buffer->Get(), 1, &region);
 		}
+		if (m_UploadValues)
+			copy(slot.ValuesOffset, m_Values, 0, VkDeviceSize{ m_World->Values.size() } * sizeof(Vec4));
 		if (m_AllMaterials)
 			copy(slot.MaterialOffset, m_Materials, 0, VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData));
 		else if (!m_MaterialSlots.empty())
@@ -545,23 +555,31 @@ namespace Raven
 			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_READ_BIT_KHR);
 	}
 
-	void VulkanGpuScene::RecordDraw(VkCommandBuffer commands, std::size_t slotIndex, const VulkanColorPipeline& pipeline,
+	void VulkanGpuScene::RecordDraw(VkCommandBuffer commands, std::size_t slotIndex, const PipelineFor& pipelineFor,
 		VkDescriptorSet textures, VkDescriptorSet frame, VkBuffer vertices, VkBuffer indices) const
 	{
 		if (!m_World || m_CommandCount == 0)
 			return;
-		pipeline.Bind(commands, textures);
-		pipeline.BindFrame(commands, frame);
-		pipeline.BindScene(commands, m_Slots.at(slotIndex).Set);
 		const VkDeviceSize offset = 0;
 		vkCmdBindVertexBuffers(commands, 0, 1, &vertices, &offset);
 		vkCmdBindIndexBuffer(commands, indices, 0, VK_INDEX_TYPE_UINT32);
 		// One command per group, one draw per pipeline range; groups with nothing visible have zero
-		// instances (Q4).
+		// instances (Q4). Every lit pipeline shares one layout, so the sets bind with each pipeline.
+		const VulkanColorPipeline* bound = nullptr;
 		for (const auto& range : m_Ranges)
+		{
+			const auto& pipeline = pipelineFor(range.Pipeline);
+			if (&pipeline != bound)
+			{
+				pipeline.Bind(commands, textures);
+				pipeline.BindFrame(commands, frame);
+				pipeline.BindScene(commands, m_Slots.at(slotIndex).Set);
+				bound = &pipeline;
+			}
 			vkCmdDrawIndexedIndirect(commands, m_Commands.Buffer->Get(),
 				VkDeviceSize{ range.First } * sizeof(VkDrawIndexedIndirectCommand), range.Count,
 				sizeof(VkDrawIndexedIndirectCommand));
+		}
 	}
 
 	void VulkanGpuScene::RecordReadback(VkCommandBuffer commands, std::size_t slotIndex) const
@@ -585,6 +603,8 @@ namespace Raven
 		// Only a frame that recorded its copies holds them; one without commands copied nothing.
 		if (m_CommandCount != 0)
 		{
+			if (m_UploadValues)
+				m_UploadedValuesRevision = m_World->ValuesRevision;
 			m_PendingMaterials = false;
 			m_UploadedLayout = m_World->LayoutRevision;
 			m_UploadedCounts = m_World->CountRevision;

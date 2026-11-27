@@ -20,7 +20,8 @@ namespace Raven
 	// A sound event plays its clips, so they are its dependencies.
 	RAVEN_API void ExpandSoundClips(const SoundEvent& event, const std::function<void(AssetId, AssetKind)>& visit);
 
-	// A material samples its textures, so they are its dependencies (docs/RenderingContentDesign.md, FD-18).
-	RAVEN_API void ExpandMaterialTextures(const MaterialDefinition& material,
+	// A material samples its textures and draws with its shader, so they are its dependencies
+	// (docs/RenderingContentDesign.md, FD-18, FD-19).
+	RAVEN_API void ExpandMaterialDependencies(const MaterialDefinition& material,
 		const std::function<void(AssetId, AssetKind)>& visit);
 }

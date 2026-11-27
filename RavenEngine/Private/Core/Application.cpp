@@ -22,6 +22,7 @@
 #include "Raven/Core/Log.hpp"
 #include "Raven/Core/Paths.hpp"
 #include "Raven/Renderer/RenderWorld.hpp"
+#include "Renderer/MaterialFile.hpp"
 #include "Raven/Scene/Scene.hpp"
 #include "Raven/Scene/SceneFile.hpp"
 
@@ -729,6 +730,11 @@ namespace Raven
 								return {};
 							const auto* lease = scene.TryUseAsset(catalog, mesh.Id, AssetKind::Mesh);
 							return lease ? lease->GetMesh() : MeshHandle{};
+						}, [&](const AssetLease& lease) -> std::uint32_t
+						{
+							// A material shader draws with its own pipeline (B0 contract 7).
+							const auto* shader = lease.GetMaterialShader();
+							return shader ? renderer.UseMaterialShader(lease.GetId(), shader->Words, lease.GetRevision()) : 0u;
 						});
 					});
 				}

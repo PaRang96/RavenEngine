@@ -1,0 +1,8 @@
+raven-material 1
+id 8f9c513a-9588-4a1b-b3db-f316fa659d54
+# The Puzzle floor: diagonal stripes over the UV grid, drawn by Shaders/Stripes.hlsl.
+lit
+shader 5e83a259-c330-4cee-b4bf-ec5ff879df19
+texture Pattern 7a590cee-ec82-4a27-927f-860e64619c19
+value StripeColor 0.95 0.95 0.95 0.35
+value Width 0.25 0 0 0

@@ -20,6 +20,7 @@ namespace Raven
 	struct ManagedAsset;
 	struct SoundEvent;
 	struct MaterialDefinition;
+	struct MaterialShader;
 
 	// Host-owned lease. It must die before the renderer; it is never retained in ECS data.
 	class AssetLease
@@ -35,6 +36,8 @@ namespace Raven
 		RAVEN_API const SoundEvent* GetSoundEvent() const noexcept;
 		// A material asset's parsed contents; null for other kinds.
 		RAVEN_API const MaterialDefinition* GetMaterial() const noexcept;
+		// A material shader asset's compiled program and parameters; null for other kinds.
+		RAVEN_API const MaterialShader* GetMaterialShader() const noexcept;
 		// Changes with every reload committed to the asset; holders compare it to notice new contents.
 		RAVEN_API std::uint64_t GetRevision() const noexcept;
 

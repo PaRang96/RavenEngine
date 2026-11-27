@@ -36,7 +36,33 @@ lit
 base-color 1 1 1 1
 texture base-color 7a590cee-ec82-4a27-927f-860e64619c19
 ```
-`base-color` is a linear multiplier (four numbers, 0 to 64); the texture slot is `base-color` until B4's material shaders name more. Unknown, repeated or non-finite settings reject the file and name the line; while the game runs the last good version stays.
+`base-color` is a linear multiplier (four numbers, 0 to 64). Unknown, repeated or non-finite settings reject the file and name the line; while the game runs the last good version stays.
+
+**Material shaders.** A material can draw with its own fragment shader, an `.hlsl` file in the game's content (a sidecar gives it an ID). The shader includes `Raven/Material.hlsli`, declares its parameters as one struct, and the material file sets them by name:
+```hlsl
+#include "Raven/Material.hlsli"
+struct StripesMaterial
+{
+	RavenRepeatTexture Pattern;   // a texture that tiles; RavenClampTexture clamps at the edges
+	float4 StripeColor;
+	float4 Width;
+};
+RAVEN_MATERIAL_PARAMETERS(StripesMaterial)
+
+float4 PSMain(RavenFragmentInput input) : SV_Target0
+{
+	const StripesMaterial parameters = RavenGetParameters(input);
+	float3 albedo = input.Color * RavenSample(parameters.Pattern, input.UV).rgb;
+	return float4(RavenApplyLighting(input, albedo), 1.0);
+}
+```
+```text
+shader 5e83a259-c330-4cee-b4bf-ec5ff879df19
+texture Pattern 7a590cee-ec82-4a27-927f-860e64619c19
+value StripeColor 0.95 0.95 0.95 0.35
+value Width 0.25 0 0 0
+```
+A shader has at most 16 values and 4 textures; `RavenGetFrame()` gives the time and camera position, and `input.WorldPosition` the surface's position. Saving the shader or the material updates every object using them while the game runs; a shader that fails to compile, or a name the shader does not declare, keeps the last good version or the engine's lit shader and logs why. Players ship the compiled SPIR-V only. `Games/Samples/Content/Shaders/Stripes.hlsl` is the sample.
 
 **Rejected.** The catalog rejects:
 - duplicate or nil identities and unsupported settings;

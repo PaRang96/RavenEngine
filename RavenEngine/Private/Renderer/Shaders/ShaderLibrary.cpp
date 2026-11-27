@@ -190,49 +190,22 @@ namespace Raven
 			const auto& desc = Describe(m_Program);
 			// Another host's sweep may have removed a folder that sat unused for an hour.
 			std::filesystem::create_directories(m_Scratch);
-			const auto output = m_Scratch / "candidate.spv";
-			const auto dependencies = m_Scratch / "dependencies.d";
-			const auto log = m_Scratch / "compile.log";
-			using namespace ShaderWatchConfig;
-			const auto utf8 = [](const std::filesystem::path& path) { return PathToUtf8(path); };
-			const std::vector<std::string> arguments{
-				"-DDXC=" + utf8(Dxc), "-DVALIDATOR=" + utf8(Validator),
-				std::string("-DOPTIMIZATION=") + Optimization, std::string("-DPROFILE=") + desc.Profile,
-				std::string("-DENTRY=") + desc.Entry, "-DSOURCE=" + utf8(m_Source),
-				"-DOUTPUT=" + utf8(output), "-DINCLUDE=" + utf8(m_Source.parent_path()),
-				"-DDEPENDENCIES=" + utf8(dependencies), "-P", utf8(CompileScript)
-			};
-			std::error_code ignored;
-			std::filesystem::remove(dependencies, ignored);
-			const auto start = Clock::now();
-			std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)> process(
-				Platform::StartBuildProcess(CMake, arguments, log), &Platform::DestroyBuildProcess);
-			int exitCode = 0;
-			while (!Platform::PollBuildProcess(*process, exitCode))
-			{
-				if (stop.stop_requested())
-					throw std::runtime_error("shader compile cancelled");
-				std::this_thread::sleep_for(std::chrono::milliseconds(2));
-			}
+			auto compiled = CompileHlsl(m_Source, desc.Profile, desc.Entry, m_Scratch, stop);
 			// Includes join the inputs, so editing one recompiles this program (H2). DXC lists them
 			// before compiling, so a program whose compile fails still follows its includes.
-			if (std::filesystem::exists(dependencies))
-				FollowIncludes(dependencies);
-			if (exitCode != 0)
-				throw std::runtime_error("compiler or validator exited with " + std::to_string(exitCode) +
-					"\n" + ReadDiagnostics(log));
-			const std::chrono::duration<double, std::milli> compileTime = Clock::now() - start;
-			auto words = ToWords(Files::ReadBinary(output, MaxOutputBytes));
-			m_Library.m_Check(m_Program, words);
-			const auto description = std::to_string(words.size()) + " SPIR-V words";
-			m_Pending = Candidate{ m_Program, std::move(words), compileTime.count() };
+			FollowIncludes(compiled.Includes);
+			if (!compiled.Error.empty())
+				throw std::runtime_error(compiled.Error);
+			m_Library.m_Check(m_Program, compiled.Words);
+			const auto description = std::to_string(compiled.Words.size()) + " SPIR-V words";
+			m_Pending = Candidate{ m_Program, std::move(compiled.Words), compiled.Milliseconds };
 			return description;
 		}
 
-		void FollowIncludes(const std::filesystem::path& dependencies)
+		void FollowIncludes(const std::vector<std::filesystem::path>& includes)
 		{
 			std::vector<ReloadInput> inputs{ ReloadInput{ m_Source, ReadSource } };
-			for (const auto& path : ParseDependencies(dependencies))
+			for (const auto& path : includes)
 				if (std::filesystem::absolute(path).lexically_normal() != m_Source)
 					inputs.push_back(ReloadInput{ std::filesystem::absolute(path).lexically_normal(), ReadSource });
 			std::vector<std::filesystem::path> paths;
@@ -276,6 +249,55 @@ namespace Raven
 		std::unique_ptr<ReloadSubscription> m_Subscription;
 	};
 
+	CompiledHlsl CompileHlsl(const std::filesystem::path& source, const char* profile, const char* entry,
+		const std::filesystem::path& scratch, std::stop_token stop)
+	{
+		if constexpr (!Platform::Capabilities.BuildProcesses)
+			throw std::runtime_error(std::string("Shaders cannot be compiled on ") + Platform::Capabilities.Name + " yet");
+		std::filesystem::create_directories(scratch);
+		const auto output = scratch / "candidate.spv";
+		const auto dependencies = scratch / "dependencies.d";
+		const auto log = scratch / "compile.log";
+		using namespace ShaderWatchConfig;
+		const auto utf8 = [](const std::filesystem::path& path) { return PathToUtf8(path); };
+		const std::vector<std::string> arguments{
+			"-DDXC=" + utf8(Dxc), "-DVALIDATOR=" + utf8(Validator),
+			std::string("-DOPTIMIZATION=") + Optimization, std::string("-DPROFILE=") + profile,
+			std::string("-DENTRY=") + entry, "-DSOURCE=" + utf8(std::filesystem::absolute(source)),
+			"-DOUTPUT=" + utf8(output), "-DINCLUDE=" + utf8(GetEngineShaderDirectory()),
+			"-DDEPENDENCIES=" + utf8(dependencies), "-P", utf8(CompileScript)
+		};
+		std::error_code ignored;
+		std::filesystem::remove(dependencies, ignored);
+		std::filesystem::remove(output, ignored);
+		const auto start = Clock::now();
+		std::unique_ptr<Platform::BuildProcess, decltype(&Platform::DestroyBuildProcess)> process(
+			Platform::StartBuildProcess(CMake, arguments, log), &Platform::DestroyBuildProcess);
+		int exitCode = 0;
+		while (!Platform::PollBuildProcess(*process, exitCode))
+		{
+			if (stop.stop_requested())
+				throw std::runtime_error("shader compile cancelled");
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		CompiledHlsl result;
+		if (std::filesystem::exists(dependencies))
+			result.Includes = ParseDependencies(dependencies);
+		if (exitCode != 0)
+		{
+			result.Error = "compiler or validator exited with " + std::to_string(exitCode) + "\n" + ReadDiagnostics(log);
+			return result;
+		}
+		result.Milliseconds = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+		result.Words = ToWords(Files::ReadBinary(output, MaxOutputBytes));
+		return result;
+	}
+
+	std::filesystem::path GetEngineShaderDirectory()
+	{
+		return std::filesystem::path(ShaderWatchConfig::SourceDirectory);
+	}
+
 	ShaderLibrary::ShaderLibrary(const std::filesystem::path& compiledDirectory)
 	{
 		for (std::size_t index = 0; index < m_Words.size(); ++index)
@@ -318,7 +340,7 @@ namespace Raven
 		if (IsWatching())
 			return;
 		m_Check = std::move(check);
-		const std::filesystem::path directory(ShaderWatchConfig::SourceDirectory);
+		const auto directory = GetEngineShaderDirectory();
 		for (std::size_t index = 0; index < m_Words.size(); ++index)
 			m_Programs.push_back(std::make_unique<Program>(*this, static_cast<ShaderProgram>(index),
 				directory / Programs[index].Source));

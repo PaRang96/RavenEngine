@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Raven
@@ -92,6 +93,13 @@ namespace Raven
 		std::array<AssetLease, 4> Textures;
 		// The material lease's revision the record was built from; a reload changes it.
 		std::uint64_t Revision = 0;
+		// The material shader and the revision its parameters were packed from (B0 contract 7).
+		AssetLease ShaderLease;
+		std::uint64_t ShaderRevision = 0;
+		std::uint32_t ShaderKey = 0;
+		// The parameter block in State::Values, in float4 units, aligned to its own size.
+		std::uint32_t ValueOffset = 0;
+		std::uint32_t ValueCount = 0;
 		// Objects using the entry; the last one frees it.
 		std::uint32_t Users = 0;
 		bool Live = false;
@@ -176,6 +184,13 @@ namespace Raven
 		std::vector<std::uint8_t> MaterialDirtyFlags;
 		// Entities already reported for non-finite values, so each is logged once.
 		std::vector<ECS::Entity> ReportedValues;
+		// Every material's parameter block (B0 contract 7); any change bumps the revision, and the
+		// renderer uploads them whole. Wasted counts the float4s left behind by moved blocks.
+		std::vector<Vec4> Values;
+		std::uint64_t ValuesRevision = 0;
+		std::size_t WastedValues = 0;
+		// Materials whose shader parameters were reported, by ID and revision, so each is logged once.
+		std::vector<std::pair<AssetId, std::uint64_t>> ReportedMaterials;
 
 		// Draw groups by (pipeline, mesh) (B0 contract 3). A group whose count reaches zero is
 		// retired to the free list and reused for the next new key, so the IDs objects hold stay

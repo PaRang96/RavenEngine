@@ -42,8 +42,10 @@ namespace Raven
 	{
 	public:
 		RenderWorldSync(RenderWorld::State& state, ECS::Registry& registry,
-			const RenderWorld::AssetResolver& resolveAsset, const RenderWorld::MeshResolver& resolveMesh)
+			const RenderWorld::AssetResolver& resolveAsset, const RenderWorld::MeshResolver& resolveMesh,
+			const RenderWorld::ShaderResolver& resolveShader)
 			: m_State(state), m_Registry(registry), m_Resolve(resolveAsset), m_ResolveMesh(resolveMesh),
+			  m_ResolveShader(resolveShader),
 			  m_Meshes(registry.GetPool(ECS::ComponentTraits<ECS::StaticMeshComponent>::Info)),
 			  m_Worlds(registry.GetPool(ECS::ComponentTraits<ECS::WorldTransformComponent>::Info)),
 			  m_Materials(registry.GetPool(ECS::ComponentTraits<ECS::MaterialComponent>::Info)),
@@ -68,6 +70,10 @@ namespace Raven
 			state.DirtyMaterials.clear();
 			state.MaterialDirtyFlags.clear();
 			state.ReportedValues.clear();
+			state.Values.clear();
+			++state.ValuesRevision;
+			state.WastedValues = 0;
+			state.ReportedMaterials.clear();
 			state.Groups.clear();
 			state.FreeGroups.clear();
 			state.GroupOfKey.clear();
@@ -113,14 +119,20 @@ namespace Raven
 			for (std::uint32_t slot = 0; slot < state.MaterialEntries.size(); ++slot)
 			{
 				const auto& entry = state.MaterialEntries[slot];
-				if (!entry.Live || !entry.Asset.IsValid() || entry.Lease.GetRevision() == entry.Revision)
+				const bool shaderReloaded = entry.ShaderLease.GetId().IsValid() &&
+					entry.ShaderLease.GetRevision() != entry.ShaderRevision;
+				if (!entry.Live || !entry.Asset.IsValid() || (entry.Lease.GetRevision() == entry.Revision && !shaderReloaded))
 					continue;
 				const auto wasLit = state.Materials[slot].Flags & GpuMaterialLit;
+				const auto wasKey = entry.ShaderKey;
 				BuildMaterial(slot);
-				if ((state.Materials[slot].Flags & GpuMaterialLit) != wasLit)
+				// Lighting decides the normal matrix, and the shader decides the draw group.
+				const bool relit = (state.Materials[slot].Flags & GpuMaterialLit) != wasLit;
+				const bool regroup = state.MaterialEntries[slot].ShaderKey != wasKey;
+				if (relit || regroup)
 					for (std::uint32_t object = 0; object < state.Objects.size(); ++object)
 						if (state.Objects[object].Material == slot)
-							Write(object, false, false, false);
+							Write(object, false, false, false, regroup);
 			}
 		}
 
@@ -253,12 +265,118 @@ namespace Raven
 		}
 
 		// Fills a slot's record from its file or inline values, leasing the textures it samples.
+		// Reports a material whose shader parameters cannot be used, once per material revision.
+		void ReportMaterial(const MaterialEntry& entry, const std::string& problem)
+		{
+			auto& reported = m_State.ReportedMaterials;
+			const std::pair key{ entry.Asset, entry.Revision };
+			if (std::find(reported.begin(), reported.end(), key) != reported.end())
+				return;
+			reported.push_back(key);
+			Log(LogLevel::Warning, "Material " + entry.Asset.ToString() + " draws with the engine's lit shader: " + problem);
+		}
+
+		// Puts a material's parameter block in State::Values, aligned to its own size so shaders index
+		// it as one struct; any change uploads the values again (B0 contract 7).
+		void PlaceValues(MaterialEntry& entry, const std::vector<Vec4>& block)
+		{
+			auto& state = m_State;
+			const auto count = static_cast<std::uint32_t>(block.size());
+			if (entry.ValueCount != count)
+			{
+				state.WastedValues += entry.ValueCount;
+				entry.ValueOffset = 0;
+				entry.ValueCount = count;
+				if (count != 0)
+				{
+					const auto offset = (state.Values.size() + count - 1) / count * count;
+					state.Values.resize(offset + count);
+					entry.ValueOffset = static_cast<std::uint32_t>(offset);
+				}
+			}
+			std::copy(block.begin(), block.end(), state.Values.begin() + entry.ValueOffset);
+			++state.ValuesRevision;
+			// Blocks left behind by moved materials are reclaimed once they outweigh the live ones.
+			if (state.WastedValues > 1024 && state.WastedValues * 2 > state.Values.size())
+				CompactValues();
+		}
+
+		void CompactValues()
+		{
+			auto& state = m_State;
+			std::vector<Vec4> packed;
+			for (std::uint32_t slot = 0; slot < state.MaterialEntries.size(); ++slot)
+			{
+				auto& entry = state.MaterialEntries[slot];
+				if (!entry.Live || entry.ValueCount == 0)
+					continue;
+				const auto offset = (packed.size() + entry.ValueCount - 1) / entry.ValueCount * entry.ValueCount;
+				packed.resize(offset + entry.ValueCount);
+				std::copy_n(state.Values.begin() + entry.ValueOffset, entry.ValueCount, packed.begin() + offset);
+				entry.ValueOffset = static_cast<std::uint32_t>(offset);
+				state.Materials[slot].ValueOffset = entry.ValueOffset;
+				state.MarkMaterialDirty(slot);
+			}
+			state.Values = std::move(packed);
+			state.WastedValues = 0;
+			++state.ValuesRevision;
+		}
+
+		// Packs a shader material's parameters in the shader's order, checking the file's names against
+		// the shader's. Returns the problem, or an empty string.
+		std::string PackParameters(const MaterialDefinition& definition, const MaterialShader& shader,
+			std::vector<Vec4>& block, std::array<AssetId, MaterialDefinition::TextureSlots>& textures,
+			std::array<std::uint32_t, MaterialDefinition::TextureSlots>& samplers)
+		{
+			const auto find = [&](const std::string& name, MaterialParameter::Kind kind) -> const MaterialParameter*
+			{
+				for (const auto& parameter : shader.Parameters)
+					if (parameter.Name == name && (parameter.Type == MaterialParameter::Kind::Value) == (kind == MaterialParameter::Kind::Value))
+						return &parameter;
+				return nullptr;
+			};
+			for (const auto& [name, value] : definition.Values)
+				if (!find(name, MaterialParameter::Kind::Value))
+					return "value " + name + " is not a value of its shader";
+			for (const auto& [name, texture] : definition.NamedTextures)
+				if (!find(name, MaterialParameter::Kind::ClampTexture))
+					return "texture " + name + " is not a texture of its shader";
+			block.assign(shader.Parameters.size(), Vec4{});
+			textures = {};
+			samplers = {};
+			std::size_t texture = 0;
+			for (std::size_t index = 0; index < shader.Parameters.size(); ++index)
+			{
+				const auto& parameter = shader.Parameters[index];
+				if (parameter.Type == MaterialParameter::Kind::Value)
+				{
+					for (const auto& [name, value] : definition.Values)
+						if (name == parameter.Name)
+							block[index] = value;
+					continue;
+				}
+				for (const auto& [name, id] : definition.NamedTextures)
+					if (name == parameter.Name)
+						textures[texture] = id;
+				samplers[texture] = parameter.Type == MaterialParameter::Kind::RepeatTexture ? 1u : 0u;
+				++texture;
+			}
+			return {};
+		}
+
+		// Fills a slot's record from its file or inline values, leasing the textures it samples and, for a
+		// shader material, its shader with a packed parameter block.
 		void BuildMaterial(std::uint32_t slot)
 		{
 			auto& state = m_State;
 			auto& entry = state.MaterialEntries[slot];
 			GpuMaterialData record;
 			std::array<AssetId, MaterialDefinition::TextureSlots> textures{};
+			std::array<std::uint32_t, MaterialDefinition::TextureSlots> samplers{};
+			std::vector<Vec4> block;
+			entry.ShaderLease = {};
+			entry.ShaderRevision = 0;
+			entry.ShaderKey = 0;
 			if (entry.Asset.IsValid())
 			{
 				const auto& definition = *entry.Lease.GetMaterial();
@@ -266,6 +384,27 @@ namespace Raven
 				textures = definition.Textures;
 				record.Flags = definition.Lit ? GpuMaterialLit : 0u;
 				entry.Revision = entry.Lease.GetRevision();
+				if (definition.Shader.IsValid())
+				{
+					const auto* lease = m_Resolve ? m_Resolve(definition.Shader, AssetKind::Shader) : nullptr;
+					const auto* shader = lease ? lease->GetMaterialShader() : nullptr;
+					auto shaderTextures = textures;
+					std::string problem = shader ? PackParameters(definition, *shader, block, shaderTextures, samplers)
+						: "its shader " + definition.Shader.ToString() + " cannot be used";
+					if (problem.empty())
+					{
+						entry.ShaderLease = *lease;
+						entry.ShaderRevision = lease->GetRevision();
+						entry.ShaderKey = m_ResolveShader ? m_ResolveShader(*lease) : 0u;
+						textures = shaderTextures;
+					}
+					else
+					{
+						block.clear();
+						samplers = {};
+						ReportMaterial(entry, problem);
+					}
+				}
 			}
 			else
 			{
@@ -282,7 +421,19 @@ namespace Raven
 					entry.Textures[index] = *lease;
 					record.Textures[index] = lease->GetTexture().GetBindlessIndex();
 				}
+				record.Samplers[index] = samplers[index];
 			}
+			// A texture parameter's first word is its bindless element.
+			if (const auto* shader = entry.ShaderLease.GetMaterialShader())
+			{
+				std::size_t texture = 0;
+				for (std::size_t index = 0; index < shader->Parameters.size(); ++index)
+					if (shader->Parameters[index].Type != MaterialParameter::Kind::Value)
+						std::memcpy(&block[index].X, &record.Textures[texture++], sizeof(std::uint32_t));
+			}
+			PlaceValues(entry, block);
+			record.ValueOffset = entry.ValueOffset;
+			record.ValueCount = entry.ValueCount;
 			state.Materials[slot] = record;
 			state.MarkMaterialDirty(slot);
 		}
@@ -348,6 +499,7 @@ namespace Raven
 				state.MaterialOfAsset.erase(entry.Asset);
 			else
 				state.MaterialOfInline.erase(entry.Inline);
+			state.WastedValues += entry.ValueCount;
 			entry = {};
 			try
 			{
@@ -369,7 +521,7 @@ namespace Raven
 		}
 
 		// Only an added object or a changed mesh component resolves its mesh reference.
-		void Write(std::uint32_t slot, bool added, bool materialChanged, bool meshChanged)
+		void Write(std::uint32_t slot, bool added, bool materialChanged, bool meshChanged, bool regroup = false)
 		{
 			auto& state = m_State;
 			const auto entity = state.Entities[slot];
@@ -380,15 +532,17 @@ namespace Raven
 			bool nonFinite = !added && !materialChanged && (object.Flags & GpuObjectNonFinite) != 0;
 			const auto material = added || materialChanged ? AcquireMaterial(entity, nonFinite) : object.Material;
 			auto group = object.Group;
-			if (added || materialChanged || meshChanged)
+			if (added || materialChanged || meshChanged || regroup)
 			{
 				// A write that kept the mesh reference (a Tint edit) reuses the resolved handle.
 				auto& reference = state.MeshRefs[slot];
 				const bool resolve = added || !(reference == mesh.Mesh);
 				const auto handle = resolve ? (m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{})
 					: state.Groups[object.Group].Key.Mesh;
-				// B4 derives the pipeline from the material's shader and blend class.
-				group = FindGroup({ DrawPipelineKey{}, handle });
+				// The material's shader picks the pipeline (B0 contract 7).
+				DrawPipelineKey pipeline;
+				pipeline.Shader = state.MaterialEntries[material].ShaderKey;
+				group = FindGroup({ pipeline, handle });
 				reference = mesh.Mesh;
 			}
 			if (added)
@@ -430,6 +584,7 @@ namespace Raven
 		RenderWorld::State& m_State;
 		ECS::Registry& m_Registry;
 		const RenderWorld::AssetResolver& m_Resolve;
+		const RenderWorld::ShaderResolver& m_ResolveShader;
 		const RenderWorld::MeshResolver& m_ResolveMesh;
 		const Pool m_Meshes;
 		const Pool m_Worlds;
@@ -463,11 +618,12 @@ namespace Raven
 		return m_State->Objects.size();
 	}
 
-	void RenderWorld::Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh)
+	void RenderWorld::Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
+		const ShaderResolver& resolveShader)
 	{
 		try
 		{
-			SyncUnchecked(scene, resolveAsset, resolveMesh);
+			SyncUnchecked(scene, resolveAsset, resolveMesh, resolveShader);
 		}
 		catch (...)
 		{
@@ -478,7 +634,8 @@ namespace Raven
 		}
 	}
 
-	void RenderWorld::SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh)
+	void RenderWorld::SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
+		const ShaderResolver& resolveShader)
 	{
 		auto& state = *m_State;
 		auto& registry = scene.m_Registry;
@@ -505,7 +662,7 @@ namespace Raven
 		const auto since = state.Since;
 		state.Since = registry.AdvanceChangeTick();
 
-		RenderWorldSync sync(state, registry, resolveAsset, resolveMesh);
+		RenderWorldSync sync(state, registry, resolveAsset, resolveMesh, resolveShader);
 		if (rebuild)
 		{
 			sync.Rebuild();

@@ -8,6 +8,7 @@
 #include "Raven/Renderer/MeshHandle.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -28,6 +29,9 @@ namespace Raven
 		// (FD-06). Called only for new material keys and for material files that reloaded; the world
 		// keeps copies of the leases it uses (docs/RenderingContentDesign.md, B0 contract 6).
 		using AssetResolver = std::function<const AssetLease*(AssetId, AssetKind)>;
+		// The drawing context's pipeline key for a leased material shader (B0 contract 7); 0 draws with
+		// the engine's lit pipeline. Called for new materials and when a material or its shader reloads.
+		using ShaderResolver = std::function<std::uint32_t(const AssetLease&)>;
 		// Maps a mesh reference to geometry of the drawing context; a null handle draws nothing.
 		// Called only for new objects and changed mesh components.
 		using MeshResolver = std::function<MeshHandle(ECS::Entity, AssetRef<MeshAsset>)>;
@@ -38,7 +42,8 @@ namespace Raven
 		// After Scene::UpdateWorldTransforms, on the rendering thread, outside view iteration.
 		// A different scene, or a journal resync, rebuilds the world once. If it throws, the
 		// world is cleared and the next Sync rebuilds.
-		RAVEN_API void Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh);
+		RAVEN_API void Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
+			const ShaderResolver& resolveShader = {});
 		// Drops every object and forgets the scene; the next Sync rebuilds.
 		RAVEN_API void Clear() noexcept;
 		RAVEN_API std::size_t GetObjectCount() const noexcept;
@@ -51,7 +56,8 @@ namespace Raven
 		State& GetState() noexcept { return *m_State; }
 
 	private:
-		void SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh);
+		void SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
+			const ShaderResolver& resolveShader);
 
 		std::unique_ptr<State> m_State;
 	};

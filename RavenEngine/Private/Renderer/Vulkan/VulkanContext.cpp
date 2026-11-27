@@ -17,6 +17,7 @@
 #include "Renderer/Vulkan/VulkanShaderModule.hpp"
 #include "Renderer/Shaders/ShaderLibrary.hpp"
 #include "Renderer/Vulkan/ShaderInterface.hpp"
+#include "Renderer/Vulkan/LitShaderInterfaces.hpp"
 #include "Renderer/Vulkan/VulkanFrameData.hpp"
 #include "Core/PathText.hpp"
 #include "Core/FrameTrace.hpp"
@@ -200,6 +201,23 @@ namespace Raven
 		// Lit candidates waiting for the build in progress.
 		std::vector<ShaderLibrary::Candidate> m_LitQueued;
 		std::optional<LitPipelineBuild> m_LitBuild;
+		// Material shader pipelines by key minus one (B0 contract 7).
+		struct MaterialPipeline
+		{
+			AssetId Shader;
+			std::uint64_t Revision = 0;
+			std::vector<std::uint32_t> Words;
+			std::shared_ptr<const VulkanColorPipeline> Pipeline;
+			// What the pipeline was built from; a difference rebuilds it.
+			std::uint64_t BuiltRevision = 0;
+			std::uint64_t BuiltVertex = 0;
+			VkFormat BuiltColor = VK_FORMAT_UNDEFINED;
+			bool Attempted = false;
+		};
+		std::vector<MaterialPipeline> m_MaterialPipelines;
+		// Changes whenever the lit vertex shader is replaced, which every material pipeline uses.
+		std::uint64_t m_LitVertexGeneration = 1;
+		void UpdateMaterialPipelines();
 		// Pipelines kept across swapchain recreation while attachment formats match (R2).
 		std::optional<VulkanClearPass::Pipelines> m_RetainedPipelines;
 	};
@@ -353,35 +371,6 @@ namespace Raven
 			return library.Get(program);
 		}
 
-		// The frame uniform's members (Raven/Frame.hlsli).
-		std::vector<std::uint32_t> FrameOffsets()
-		{
-			return { offsetof(FrameUniformData, ViewProjection), offsetof(FrameUniformData, View),
-				offsetof(FrameUniformData, CameraPosition), offsetof(FrameUniformData, Ambient),
-				offsetof(FrameUniformData, LightDirection), offsetof(FrameUniformData, LightColor),
-				offsetof(FrameUniformData, Time) };
-		}
-
-		// RavenFragmentInput in Raven/Material.hlsli, version 2 (B0 contract 1).
-		std::vector<ShaderStageVariable> LitStageVariables()
-		{
-			return { { 0, 3 }, { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 3 }, { 5, 3 }, { 6, 1, true }, { 7, 1, true }, { 8, 3 } };
-		}
-
-		// The fixed interfaces reloaded shaders are checked against (docs/HotReloadDesign.md, H2).
-		ShaderInterface LitVertexInterface()
-		{
-			ShaderInterface result;
-			result.Inputs = { { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 2 } };
-			result.Outputs = LitStageVariables();
-			result.Buffers.push_back({ 1, 0, 0, FrameOffsets() });
-			// The vertex stage sees the objects, visible slots and materials of the scene set.
-			for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
-				if (buffer.Binding <= 2)
-					result.Buffers.push_back(std::move(buffer));
-			return result;
-		}
-
 		// Developer debug lines (FD-32 collider view): DebugLineVertex in, the frame uniform at set 0.
 		ShaderInterface DebugLineVertexInterface()
 		{
@@ -400,23 +389,6 @@ namespace Raven
 			result.Outputs = { { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 4 }, { 7, 2, true } };
 			// The push constant is the framebuffer size.
 			result.PushConstantOffsets = { 0 };
-			return result;
-		}
-
-		// Lit fragment shaders (Raven/Material.hlsli): any subset of the inputs, the bindless textures,
-		// the sampler set, the frame uniform, and the materials with their values.
-		ShaderInterface LitFragmentInterface()
-		{
-			ShaderInterface result;
-			result.Kind = ShaderInterface::Stage::Fragment;
-			result.Inputs = LitStageVariables();
-			result.Outputs = { { 0, 4 } };
-			result.Buffers.push_back({ 1, 0, 0, FrameOffsets() });
-			for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
-				if (buffer.Binding == RavenSceneMaterialsBinding || buffer.Binding == RavenSceneMaterialValuesBinding)
-					result.Buffers.push_back(std::move(buffer));
-			using Kind = ShaderImageBinding::Kind;
-			result.Images = { { 0, 0, Kind::TextureArray }, { 0, 1, Kind::SamplerArray, 2 } };
 			return result;
 		}
 
@@ -586,6 +558,9 @@ namespace Raven
 					m_ClearPass->UseLitPipelines(std::move(result.Pipelines));
 					m_ShaderReports.push_back({ "Lit", ProgramNames(build.Shaders), Triggers(build.Shaders),
 						MaxCompile(build.Shaders), result.BuildMs });
+					for (const auto& candidate : build.Shaders)
+						if (candidate.Program == ShaderProgram::LitVertex)
+							++m_LitVertexGeneration;
 					for (auto& candidate : build.Shaders)
 						m_Shaders.Set(candidate.Program, std::move(candidate.Words),
 							std::chrono::duration<double, std::milli>(result.BuildMs));
@@ -625,6 +600,49 @@ namespace Raven
 		{
 			Log(LogLevel::Warning, std::string("Cannot replace lit pipelines: ") + error.what());
 		}
+	}
+
+	void VulkanContext::Impl::UpdateMaterialPipelines()
+	{
+		if (m_MaterialPipelines.empty() || !m_ClearPass)
+			return;
+		const auto factory = m_ClearPass->GetLitPipelineFactory();
+		const auto vertex = m_Shaders.Get(ShaderProgram::LitVertex);
+		std::vector<std::shared_ptr<const VulkanColorPipeline>> published;
+		published.reserve(m_MaterialPipelines.size());
+		for (auto& entry : m_MaterialPipelines)
+		{
+			const bool current = entry.Attempted && entry.BuiltRevision == entry.Revision &&
+				entry.BuiltVertex == m_LitVertexGeneration && entry.BuiltColor == factory.GetColorFormat();
+			if (!current)
+			{
+				entry.Attempted = true;
+				entry.BuiltRevision = entry.Revision;
+				entry.BuiltVertex = m_LitVertexGeneration;
+				entry.BuiltColor = factory.GetColorFormat();
+				try
+				{
+					const auto start = std::chrono::steady_clock::now();
+					auto pipeline = factory.CreateMaterial(vertex, entry.Words);
+					const std::chrono::duration<double, std::milli> time = std::chrono::steady_clock::now() - start;
+					// Submitted frames may still draw with the previous pipeline (R3).
+					if (entry.Pipeline)
+						m_Timeline.Retire(std::move(entry.Pipeline));
+					entry.Pipeline = std::move(pipeline);
+					Log(LogLevel::Info, "Material shader pipeline built: " + entry.Shader.ToString() + " in " +
+						std::to_string(time.count()) + " ms");
+				}
+				catch (const std::exception& error)
+				{
+					// The last good pipeline keeps drawing; a new shader draws with the engine's lit pipeline.
+					Log(LogLevel::Warning, "Cannot build the pipeline of material shader " + entry.Shader.ToString() +
+						"; it draws with " + (entry.Pipeline ? "its last good version" : "the engine's lit shader") + ": " +
+						error.what());
+				}
+			}
+			published.push_back(entry.Pipeline);
+		}
+		m_ClearPass->SetMaterialPipelines(std::move(published));
 	}
 
 	void VulkanContext::Impl::ResetSwapchain()
@@ -741,6 +759,7 @@ namespace Raven
 			metrics->DrawCalls = m_GpuScene.GetDrawCount() * (m_View == RenderView::Wireframe ? 2 : 1) +
 				m_DrawQueue.OpaqueBatches.size() + m_DrawQueue.TransparentBatches.size();
 		preparation.End();
+		UpdateMaterialPipelines();
 		// The batch goes first on the queue, so this frame samples what it filled.
 		m_Uploads.Submit();
 		if (!m_ClearPass->Draw(*m_Swapchain,
@@ -871,6 +890,24 @@ namespace Raven
 		a.Owner->SwapData(*b.Owner);
 		++m_Impl->m_MeshRevision;
 		return true;
+	}
+
+	std::uint32_t VulkanContext::UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision)
+	{
+		auto& pipelines = m_Impl->m_MaterialPipelines;
+		auto found = std::find_if(pipelines.begin(), pipelines.end(),
+			[&](const Impl::MaterialPipeline& entry) { return entry.Shader == shader; });
+		if (found == pipelines.end())
+		{
+			pipelines.push_back({ shader, revision, std::vector<std::uint32_t>(words.begin(), words.end()) });
+			return static_cast<std::uint32_t>(pipelines.size());
+		}
+		if (found->Revision != revision)
+		{
+			found->Revision = revision;
+			found->Words.assign(words.begin(), words.end());
+		}
+		return static_cast<std::uint32_t>(found - pipelines.begin()) + 1;
 	}
 
 	bool VulkanContext::SwapTextureContents(TextureHandle left, TextureHandle right) noexcept

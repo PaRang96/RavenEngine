@@ -5,6 +5,10 @@
 #include "Assets/ManagedAsset.hpp"
 #include "Assets/PngFileWatch.hpp"
 #include "Audio/AudioClip.hpp"
+#include "Core/ImporterVersions.hpp"
+#include "Raven/Assets/AssetId.hpp"
+#include "Renderer/Shaders/ShaderLibrary.hpp"
+#include "Renderer/Vulkan/LitShaderInterfaces.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Core/PathText.hpp"
 #include "Raven/Assets/AssetCatalog.hpp"
@@ -14,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -25,6 +30,33 @@ namespace Raven
 		std::vector<std::byte> ReadAsset(const std::filesystem::path& path)
 		{
 			return Files::ReadBinary(path, 64 * 1024 * 1024);
+		}
+
+		// A material shader (B0 contract 7): compiled from its HLSL in development, or loaded as the SPIR-V a
+		// player build staged; either way checked against the lit fragment interface and reflected.
+		MaterialShader DecodeShader(std::span<const std::byte> bytes, const std::filesystem::path& path)
+		{
+			MaterialShader shader;
+			if (LowercaseExtension(path) == ".spv")
+			{
+				if (bytes.size() % sizeof(std::uint32_t) != 0)
+					throw std::runtime_error(PathToUtf8(path) + " is not SPIR-V");
+				shader.Words.resize(bytes.size() / sizeof(std::uint32_t));
+				std::memcpy(shader.Words.data(), bytes.data(), bytes.size());
+			}
+			else
+			{
+				const auto scratch = std::filesystem::temp_directory_path() / ("raven-shader-" + AssetId::Generate().ToString());
+				auto compiled = CompileHlsl(path, "ps_6_0", "PSMain", scratch);
+				std::error_code ignored;
+				std::filesystem::remove_all(scratch, ignored);
+				if (!compiled.Error.empty())
+					throw std::runtime_error("Cannot compile material shader " + PathToUtf8(path) + ": " + compiled.Error);
+				shader.Words = std::move(compiled.Words);
+			}
+			CheckShaderInterface(shader.Words, LitFragmentInterface());
+			shader.Parameters = ReadMaterialParameters(shader.Words);
+			return shader;
 		}
 
 		DecodedAsset DecodeAsset(std::span<const std::byte> bytes, const std::filesystem::path& path)
@@ -42,6 +74,8 @@ namespace Raven
 				result.Data = ParseSoundEvent(bytes, path);
 			else if (extension == ".ravenmaterial")
 				result.Data = ParseMaterial(bytes, path);
+			else if (extension == ".hlsl" || extension == ".spv")
+				result.Data = DecodeShader(bytes, path);
 			else
 				throw std::invalid_argument("Unsupported managed asset extension: " + extension);
 			return result;
@@ -71,6 +105,7 @@ namespace Raven
 		Clip.swap(candidate.Clip);
 		Sound.swap(candidate.Sound);
 		Material.swap(candidate.Material);
+		Shader.swap(candidate.Shader);
 		++Revision;
 		std::swap(Record, candidate.Record);
 		std::swap(ColorSpace, candidate.ColorSpace);
@@ -119,19 +154,22 @@ namespace Raven
 						" in its header, not " + id.ToString());
 				result->Material = std::make_shared<const MaterialDefinition>(std::move(material));
 			}
+			else if (record.Kind == AssetKind::Shader)
+				result->Shader = std::make_shared<const MaterialShader>(std::get<MaterialShader>(std::move(decoded->Data)));
 			else
 				throw std::invalid_argument("Asset kind cannot be acquired by a scene");
 			result->Bytes = std::move(decoded->Bytes);
 			// Content watching covers textures, and with them audio clips, sound events (C8) and materials.
 			const bool sound = record.Kind == AssetKind::Audio || record.Kind == AssetKind::Sound;
 			const bool material = record.Kind == AssetKind::Material;
+			const bool shader = record.Kind == AssetKind::Shader;
 			if ((record.Kind == AssetKind::Mesh && WatchMeshes) ||
-				((record.Kind == AssetKind::Texture || sound || material) && WatchTextures))
+				((record.Kind == AssetKind::Texture || sound || material || shader) && WatchTextures))
 			{
 				const bool mesh = record.Kind == AssetKind::Mesh;
 				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, AssetKindName(record.Kind),
 					mesh ? ImporterVersion::Fbx : sound ? ImporterVersion::Audio : material ? ImporterVersion::Material
-					: ImporterVersion::Png, ReadAsset, DecodeAsset, result->Bytes);
+					: shader ? ImporterVersion::Hlsl : ImporterVersion::Png, ReadAsset, DecodeAsset, result->Bytes);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
 			}
 			return result;
@@ -297,6 +335,11 @@ namespace Raven
 	const MaterialDefinition* AssetLease::GetMaterial() const noexcept
 	{
 		return m_Asset ? m_Asset->Material.get() : nullptr;
+	}
+
+	const MaterialShader* AssetLease::GetMaterialShader() const noexcept
+	{
+		return m_Asset ? m_Asset->Shader.get() : nullptr;
 	}
 
 	std::uint64_t AssetLease::GetRevision() const noexcept

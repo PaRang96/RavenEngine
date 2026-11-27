@@ -5,6 +5,7 @@
 #include "Raven/Renderer/ColorVertex.hpp"
 #include "Raven/Renderer/DebugLines.hpp"
 #include "Raven/Renderer/Overlay.hpp"
+#include "Raven/Assets/AssetId.hpp"
 #include "Raven/Renderer/MeshHandle.hpp"
 #include "Raven/Renderer/SceneLighting.hpp"
 #include "Raven/Renderer/PerspectiveCamera.hpp"
@@ -72,6 +73,11 @@ namespace Raven
 		RAVEN_API MeshHandle CreateManagedMesh(std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices);
 		RAVEN_API TextureHandle CreateManagedTexture(const TextureDesc& description, TextureUse use = TextureUse::Content);
+		// A material shader's pipeline (docs/RenderingContentDesign.md, B0 contract 7): returns the key that
+		// draws with it, the same for one asset across its reloads. The pipeline is built before the next
+		// frame from the engine's lit vertex shader and these fragment words, and rebuilt when revision
+		// changes; until it exists, or when it cannot be built, the key draws with the engine's lit pipeline.
+		RAVEN_API std::uint32_t UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision);
 		RAVEN_API const VulkanTexture* ResolveTexture(TextureHandle texture) const noexcept;
 		RAVEN_API bool ReleaseMesh(MeshHandle mesh) noexcept;
 		RAVEN_API bool ReleaseTexture(TextureHandle texture) noexcept;

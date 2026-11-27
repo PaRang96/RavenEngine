@@ -43,6 +43,8 @@ namespace
 	const AssetId PaintMaterial = AssetId::Parse("b4946988-0380-4c4c-a812-0534e5287ca2");
 	const AssetId GridMaterial = AssetId::Parse("5ca26efa-0438-4103-8bcd-93ac6f13d59f");
 	const AssetId SignalMaterial = AssetId::Parse("5035a9fe-7513-48b9-8b15-42664830e0cf");
+	// Content/Materials/Stripes, which draws with the sample material shader Content/Shaders/Stripes.hlsl.
+	const AssetId StripesMaterial = AssetId::Parse("8f9c513a-9588-4a1b-b3db-f316fa659d54");
 
 	ECS::MaterialComponent Material(bool lit, AssetId texture = {})
 	{
@@ -173,10 +175,13 @@ namespace
 		SampleSceneBuilder scene;
 		const auto paint = Material(true);
 		const auto signal = Material(false);
+		// The floor shows the sample material shader; its inline values are the paint fallback.
+		auto stripes = paint;
+		stripes.Material.Id = StripesMaterial;
 		const auto mesh = [&](const std::string& id, Vec3 position, Vec3 scale, Vec4 color, bool sphere = false)
 		{
 			scene.Mesh(id, sphere ? Sphere : Cube, Pose(position, scale), color,
-				id.starts_with("switch") || id == "goal" ? signal : paint);
+				id.starts_with("switch") || id == "goal" ? signal : id == "floor" ? stripes : paint);
 		};
 		scene.Group("rig", Pose({ 0, 10, 0 }));
 		scene.Group("assembly-a", Pose({ -2, 9, 0 }));

@@ -58,7 +58,7 @@ namespace Raven
 		{ AssetKind::Material, "material", "material", { ".ravenmaterial" }, Detail::AssetTag<MaterialAsset>(), true, true },
 		{ AssetKind::Skeleton, "skeleton", {}, {}, Detail::AssetTag<SkeletonAsset>(), false },
 		{ AssetKind::Animation, "animation", {}, {}, Detail::AssetTag<AnimationAsset>(), false },
-		{ AssetKind::Shader, "shader", {}, {}, Detail::AssetTag<ShaderAsset>(), false },
+		{ AssetKind::Shader, "shader", "shader", { ".hlsl", ".spv" }, Detail::AssetTag<ShaderAsset>(), true },
 		{ AssetKind::Scene, "scene", "scene", { ".ravenscene" }, Detail::AssetTag<SceneAsset>(), false, true },
 		{ AssetKind::Audio, "audio", "audio", { ".wav", ".flac", ".mp3", ".ogg" }, Detail::AssetTag<AudioAsset>(), true },
 		{ AssetKind::Sound, "sound event", "sound", { ".ravensound" }, Detail::AssetTag<SoundAsset>(), true, true },
