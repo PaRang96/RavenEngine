@@ -135,12 +135,24 @@ namespace Raven
 			if (CompilesForPlayer(record))
 			{
 				const auto scratch = std::filesystem::temp_directory_path() / ("raven-shader-" + AssetId::Generate().ToString());
-				auto compiled = CompileHlsl(ResolveAssetPath(source, record.SourcePath), "ps_6_0", "PSMain", scratch);
+				const auto shaderSource = ResolveAssetPath(source, record.SourcePath);
+				auto compiled = CompileHlsl(shaderSource, "ps_6_0", "PSMain", scratch);
+				CompiledHlsl vertex;
+				if (compiled.Error.empty() && DeclaresVertexOffset(Files::ReadBinary(shaderSource, 1024 * 1024)))
+					vertex = CompileOffsetVertex(shaderSource, scratch / "vertex");
 				std::error_code ignored;
 				std::filesystem::remove_all(scratch, ignored);
-				if (!compiled.Error.empty())
-					throw std::runtime_error("Cannot compile material shader " + PathToUtf8(record.SourcePath) + ": " + compiled.Error);
+				if (!compiled.Error.empty() || !vertex.Error.empty())
+					throw std::runtime_error("Cannot compile material shader " + PathToUtf8(record.SourcePath) + ": " +
+						compiled.Error + vertex.Error);
 				Files::WriteAtomic(target, std::as_bytes(std::span(compiled.Words)));
+				// The vertex offset's program sits beside it as <source>.vert.spv (B0 contract 2).
+				if (!vertex.Words.empty())
+				{
+					auto vertexTarget = target;
+					vertexTarget.replace_extension(".vert.spv");
+					Files::WriteAtomic(vertexTarget, std::as_bytes(std::span(vertex.Words)));
+				}
 				continue;
 			}
 			std::filesystem::copy_file(ResolveAssetPath(source, record.SourcePath), target,

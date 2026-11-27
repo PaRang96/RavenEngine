@@ -51,10 +51,12 @@ namespace Raven
 			// touch a descriptor a pending frame reads (update-after-bind, unused while pending).
 			const std::array<VkDescriptorSetLayoutBinding, 2> bindless
 			{
+				// Vertex programs see them too: a material's vertex offset may sample a texture (B0
+				// contract 2), and Material.hlsli declares them in every lit program.
 				VkDescriptorSetLayoutBinding{ 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-					BindlessCapacity, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+					BindlessCapacity, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
 				VkDescriptorSetLayoutBinding{ 1, VK_DESCRIPTOR_TYPE_SAMPLER,
-					static_cast<std::uint32_t>(SamplerCount), VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
+					static_cast<std::uint32_t>(SamplerCount), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr }
 			};
 			const std::array<VkDescriptorBindingFlags, 2> flags
 			{

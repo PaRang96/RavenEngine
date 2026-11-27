@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -77,4 +78,8 @@ namespace Raven
 	// read from the compiled shader; empty when it declares none. Throws std::invalid_argument when the
 	// struct breaks the rules: only float4 and Raven*Texture members, at most 16 values and 4 textures.
 	std::vector<MaterialParameter> ReadMaterialParameters(std::span<const std::uint32_t> words);
+
+	// The bound a material's vertex program declares (RAVEN_OFFSET_BOUND, specialization constant 1),
+	// or nothing when it declares none (B0 contract 2).
+	std::optional<float> ReadOffsetBound(std::span<const std::uint32_t> words);
 }

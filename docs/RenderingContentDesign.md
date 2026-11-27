@@ -468,6 +468,15 @@ Contract 6 and contract 1's record step, built:
 - **Checked:** the 9 tests; in Debug with validation, a material value edit and a shader edit each reloaded live and changed the image, a broken shader was rejected keeping the last good, an unknown value name was reported and fell back, and restoring both files restored the image exactly, with no validation message; a `public-preview` player with no HLSL loaded Puzzle and built the shader's pipeline from its SPIR-V.
 - **Known limit:** a material shader's watch follows its own file only; editing an engine include such as `Raven/Material.hlsli` recompiles engine programs but not material shaders until they are saved or the scene reloads.
 
+### B4, parts 3 and 4 — sampler choice and the vertex offset hook (2026-11-27)
+
+- **Per-material sampler choice (from B3):** delivered by the texture-naming decision: each texture parameter's type (`RavenClampTexture`, `RavenRepeatTexture`) picks its sampler, and the material record's sampler slots carry it for `RavenMaterialTexture`.
+- **The hook (contract 2):** a material shader defines `RAVEN_OFFSET_BOUND` (metres) and `float3 RavenOffset(RavenOffsetInput input)` (`RavenOffsetInput`: local and world position and normal, UV, color, material slot); `RAVEN_OFFSET_NORMAL` with `RavenOffsetNormal` returns new normals. The engine's lit vertex program (`Color.vert.hlsl`) runs it after the object transform and clamps it to the bound. Such a shader also gets a vertex program, compiled from its source followed by `Color.vert.hlsl` (`CompileOffsetVertex`), checked against the lit vertex interface; its bound is read back from specialization constant 1 and must be above 0 and at most 100 m. Players get it from `stage-player` as `<source>.vert.spv`. Materials without the hook keep the engine's vertex program, and their captures are bit-identical.
+- **Culling:** draw groups carry the bound, the mesh table passes it in `Center.w`, and `Cull.comp.hlsl` grows each object's world-space extent by it, so an offset never moves a vertex outside the bounds culling tests.
+- **Bindless stage visibility:** textures and samplers are visible to vertex programs too, because `Material.hlsli` declares them in every lit program and Debug compiles keep unused declarations; this was found in Debug, where the stricter vertex check had rejected the engine's own lit vertex program and the offset program. A hook may sample with `SampleLevel`.
+- **Sample:** `Content/Shaders/Wave.hlsl` with `Content/Materials/Wave.ravenmaterial` on a decorative sphere in the Physics scene: vertical waves (an offset along split normals would crack a mesh at its seams, which the first version of the sample showed).
+- **Checked:** the 9 tests; all six captures unchanged; in Debug with validation the sphere's offset animated, a bound of 500 m was rejected keeping the last good version, a new bound reloaded, and no validation message appeared.
+
 ## Measurements
 
 | # | Measurement | Gate |

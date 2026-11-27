@@ -97,11 +97,39 @@ float4 RavenSample(RavenRepeatTexture parameter, float2 uv)
 //   ... const GlowMaterial parameters = RavenGetParameters(input);
 #define RAVEN_MATERIAL_PARAMETERS(Type) \
 	[[vk::binding(RAVEN_SCENE_MATERIAL_VALUES, 2)]] StructuredBuffer<Type> RavenParameterBlocks; \
+	Type RavenGetParametersOf(uint materialSlot) \
+	{ \
+		const MaterialData material = RavenMaterials[materialSlot]; \
+		return RavenParameterBlocks[material.ValueOffset / max(material.ValueCount, 1u)]; \
+	} \
 	Type RavenGetParameters(RavenFragmentInput input) \
 	{ \
-		const MaterialData material = RavenMaterials[input.Material]; \
-		return RavenParameterBlocks[material.ValueOffset / max(material.ValueCount, 1u)]; \
+		return RavenGetParametersOf(input.Material); \
 	}
+
+// The vertex offset hook (B0 contract 2): a material shader that moves its vertices defines the
+// largest distance it moves them, then the function, before or after this include:
+//
+//   #define RAVEN_OFFSET_BOUND 0.25    // metres; culling grows the object's bounds by it
+//   float3 RavenOffset(RavenOffsetInput input) { return float3(0, 0, sin(input.WorldPosition.x) * 0.2); }
+//
+// The engine runs it after the object transform, in world space, and clamps the result to the bound.
+// It may read the material's values with RavenGetParametersOf(input.Material), the time with
+// RavenGetFrame(), and textures with SampleLevel (the vertex stage has no implicit mip level). Normals are not re-derived; define RAVEN_OFFSET_NORMAL and
+// float3 RavenOffsetNormal(RavenOffsetInput input, float3 normal) to return new ones.
+struct RavenOffsetInput
+{
+	// The vertex in the mesh's own space.
+	float3 Position;
+	float3 Normal;
+	// After the object transform, before the offset.
+	float3 WorldPosition;
+	float3 WorldNormal;
+	float2 UV;
+	// Vertex color times the object tint and material base color.
+	float3 Color;
+	uint Material;
+};
 
 // One 16-byte member of the material's parameter block, in declaration order; zero past them.
 float4 RavenMaterialValue(RavenFragmentInput input, uint index)

@@ -18,11 +18,11 @@ namespace Raven
 			OpEntryPoint = 15, OpExecutionMode = 16, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23,
 			OpTypeImage = 25, OpTypeSampler = 26, OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30,
 			OpTypePointer = 32, OpConstant = 43, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72,
-			OpName = 5, OpMemberName = 6
+			OpName = 5, OpMemberName = 6, OpSpecConstant = 50
 		};
 		enum Decoration : std::uint32_t
 		{
-			ArrayStride = 6, BuiltIn = 11, Location = 30, Binding = 33, DescriptorSet = 34, Offset = 35
+			SpecId = 1, ArrayStride = 6, BuiltIn = 11, Location = 30, Binding = 33, DescriptorSet = 34, Offset = 35
 		};
 		enum StorageClass : std::uint32_t
 		{
@@ -45,6 +45,8 @@ namespace Raven
 			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> MemberOffsets;
 			// 32-bit integer constants, for array lengths.
 			std::unordered_map<std::uint32_t, std::uint32_t> Constants;
+			// 32-bit specialization constants by result ID, as raw words.
+			std::unordered_map<std::uint32_t, std::uint32_t> SpecConstants;
 			// Debug names, which DXC keeps for buffer element types and their members.
 			std::unordered_map<std::uint32_t, std::string> Names;
 			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::string>> MemberNames;
@@ -148,6 +150,10 @@ namespace Raven
 						module.MemberNames[instruction[1]][instruction[2]].assign(text,
 							strnlen(text, (size - 3) * sizeof(std::uint32_t)));
 					}
+					break;
+				case OpSpecConstant:
+					if (size == 4)
+						module.SpecConstants[instruction[2]] = instruction[3];
 					break;
 				case OpConstant:
 					if (size == 4)
@@ -468,5 +474,18 @@ namespace Raven
 				return parameters;
 		}
 		return {};
+	}
+
+	std::optional<float> ReadOffsetBound(std::span<const std::uint32_t> words)
+	{
+		const auto module = Parse(words);
+		for (const auto& [id, value] : module.SpecConstants)
+			if (module.Decorated(id, SpecId) == 1u)
+			{
+				float bound = 0.0f;
+				std::memcpy(&bound, &value, sizeof(bound));
+				return bound;
+			}
+		return std::nullopt;
 	}
 }

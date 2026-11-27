@@ -1,6 +1,7 @@
 #include "Renderer/MaterialFile.hpp"
 
 #include "Core/PathText.hpp"
+#include "Raven/Core/Files.hpp"
 
 #include <cmath>
 #include <locale>
@@ -8,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace Raven
 {
@@ -122,5 +124,22 @@ namespace Raven
 		if (!material.Shader.IsValid() && (!material.NamedTextures.empty() || !material.Values.empty()))
 			throw std::runtime_error(PathToUtf8(path) + ": named textures and values need a shader line");
 		return material;
+	}
+
+	bool DeclaresVertexOffset(std::span<const std::byte> source)
+	{
+		const std::string_view text(reinterpret_cast<const char*>(source.data()), source.size());
+		return text.find("RAVEN_OFFSET_BOUND") != std::string_view::npos;
+	}
+
+	CompiledHlsl CompileOffsetVertex(const std::filesystem::path& source, const std::filesystem::path& scratch)
+	{
+		std::filesystem::create_directories(scratch);
+		const auto wrapper = scratch / "offset-vertex.hlsl";
+		const auto path = std::filesystem::absolute(source).generic_u8string();
+		const std::string text = "#include \"" + std::string(reinterpret_cast<const char*>(path.data()), path.size()) +
+			"\"\n#include \"Color.vert.hlsl\"\n";
+		Files::WriteAtomic(wrapper, std::as_bytes(std::span(text.data(), text.size())));
+		return CompileHlsl(wrapper, "vs_6_0", "VSMain", scratch / "compile");
 	}
 }

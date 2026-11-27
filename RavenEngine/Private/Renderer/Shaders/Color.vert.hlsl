@@ -1,12 +1,18 @@
-#include "GpuScene.hlsli"
+// The engine's lit vertex program (docs/GpuDrivenDesign.md, G5). A material shader that defines
+// RAVEN_OFFSET_BOUND also gets a vertex program compiled from its own source followed by this file,
+// which moves each vertex by the material's RavenOffset (docs/RenderingContentDesign.md, B0 contract 2).
 
-#include "Raven/Frame.hlsli"
+#include "Raven/Material.hlsli"
 
-[[vk::binding(0, 1)]] ConstantBuffer<FrameData> Frame;
 // GPU-driven objects (docs/GpuDrivenDesign.md, G5): culling wrote this draw's visible slots.
 [[vk::binding(RAVEN_SCENE_OBJECTS, 2)]] StructuredBuffer<ObjectData> Objects;
 [[vk::binding(RAVEN_SCENE_VISIBLE, 2)]] StructuredBuffer<uint> Visible;
-[[vk::binding(RAVEN_SCENE_MATERIALS, 2)]] StructuredBuffer<MaterialData> Materials;
+
+#ifdef RAVEN_OFFSET_BOUND
+// The declared bound, kept in the compiled program as specialization constant 1 so the engine reads
+// it for culling; the offset is clamped to it, so a vertex never leaves the bounds culling assumes.
+[[vk::constant_id(1)]] const float RavenOffsetBound = RAVEN_OFFSET_BOUND;
+#endif
 
 struct VertexInput
 {
@@ -35,19 +41,38 @@ struct VertexOutput
 VertexOutput VSMain(VertexInput input, uint instance : SV_InstanceID)
 {
 	const ObjectData object = Objects[Visible[instance]];
-	const MaterialData material = Materials[object.Material];
+	const MaterialData material = RavenMaterials[object.Material];
 	VertexOutput output;
 	const float4 local = float4(input.Position, 1.0);
-	const float3 world = float3(dot(object.World[0], local), dot(object.World[1], local), dot(object.World[2], local));
-	output.Position = Frame.ViewProjection[0] * world.x + Frame.ViewProjection[1] * world.y
-		+ Frame.ViewProjection[2] * world.z + Frame.ViewProjection[3];
-	output.Color = input.Color * object.Tint.rgb * material.BaseColor.rgb;
-	output.UV = input.UV;
+	float3 world = float3(dot(object.World[0], local), dot(object.World[1], local), dot(object.World[2], local));
 	output.Normal = object.Normal[0].xyz * input.Normal.x + object.Normal[1].xyz * input.Normal.y
 		+ object.Normal[2].xyz * input.Normal.z;
-	output.AmbientAndLit = float4(Frame.Ambient.rgb, (material.Flags & 1u) != 0 ? 1.0 : 0.0);
-	output.LightDirection = Frame.LightDirection.xyz;
-	output.LightColor = Frame.LightColor.rgb;
+	output.Color = input.Color * object.Tint.rgb * material.BaseColor.rgb;
+#ifdef RAVEN_OFFSET_BOUND
+	RavenOffsetInput hook;
+	hook.Position = input.Position;
+	hook.Normal = input.Normal;
+	hook.WorldPosition = world;
+	hook.WorldNormal = output.Normal;
+	hook.UV = input.UV;
+	hook.Color = output.Color;
+	hook.Material = object.Material;
+	float3 offset = RavenOffset(hook);
+	const float length2 = dot(offset, offset);
+	if (length2 > RavenOffsetBound * RavenOffsetBound)
+		offset *= RavenOffsetBound * rsqrt(length2);
+	world += offset;
+#ifdef RAVEN_OFFSET_NORMAL
+	// Normals are not re-derived from the offset; a shader that needs them returns its own.
+	output.Normal = RavenOffsetNormal(hook, output.Normal);
+#endif
+#endif
+	output.Position = RavenFrameData.ViewProjection[0] * world.x + RavenFrameData.ViewProjection[1] * world.y
+		+ RavenFrameData.ViewProjection[2] * world.z + RavenFrameData.ViewProjection[3];
+	output.UV = input.UV;
+	output.AmbientAndLit = float4(RavenFrameData.Ambient.rgb, (material.Flags & 1u) != 0 ? 1.0 : 0.0);
+	output.LightDirection = RavenFrameData.LightDirection.xyz;
+	output.LightColor = RavenFrameData.LightColor.rgb;
 	output.Texture = material.Textures.x;
 	output.Material = object.Material;
 	output.WorldPosition = world;

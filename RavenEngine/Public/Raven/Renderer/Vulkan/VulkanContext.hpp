@@ -77,7 +77,9 @@ namespace Raven
 		// draws with it, the same for one asset across its reloads. The pipeline is built before the next
 		// frame from the engine's lit vertex shader and these fragment words, and rebuilt when revision
 		// changes; until it exists, or when it cannot be built, the key draws with the engine's lit pipeline.
-		RAVEN_API std::uint32_t UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision);
+		// A material with a vertex offset passes its own vertex program (B0 contract 2); empty uses the engine's.
+		RAVEN_API std::uint32_t UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision,
+			std::span<const std::uint32_t> vertexWords = {});
 		RAVEN_API const VulkanTexture* ResolveTexture(TextureHandle texture) const noexcept;
 		RAVEN_API bool ReleaseMesh(MeshHandle mesh) noexcept;
 		RAVEN_API bool ReleaseTexture(TextureHandle texture) noexcept;

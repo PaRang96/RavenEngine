@@ -29,10 +29,13 @@ namespace Raven
 		result.Inputs = { { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 2 } };
 		result.Outputs = LitStageVariables();
 		result.Buffers.push_back({ 1, 0, 0, FrameOffsets() });
-		// The vertex stage sees the objects, visible slots and materials of the scene set.
+		// The vertex stage sees the objects, visible slots and materials of the scene set, and a material's
+		// vertex offset may read its values (B0 contract 2).
 		for (auto& buffer : VulkanGpuScene::GetBufferLayouts(2))
-			if (buffer.Binding <= 2)
+			if (buffer.Binding <= 2 || buffer.Binding == RavenSceneMaterialValuesBinding)
 				result.Buffers.push_back(std::move(buffer));
+		using Kind = ShaderImageBinding::Kind;
+		result.Images = { { 0, 0, Kind::TextureArray }, { 0, 1, Kind::SamplerArray, 2 } };
 		return result;
 	}
 

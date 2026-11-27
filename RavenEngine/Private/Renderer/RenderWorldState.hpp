@@ -143,6 +143,8 @@ namespace Raven
 		DrawGroupKey Key;
 		// Live objects; a retired group has none and sits on the free list.
 		std::uint32_t Count = 0;
+		// How far its material's vertex offset may move a vertex, in metres; culling grows by it.
+		float OffsetBound = 0.0f;
 		bool Live = false;
 	};
 

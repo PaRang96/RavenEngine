@@ -3,6 +3,7 @@
 #include "Raven/Assets/AssetRecord.hpp"
 #include "Raven/Core/Api.hpp"
 #include "Raven/Math/Transform.hpp"
+#include "Renderer/Shaders/ShaderLibrary.hpp"
 #include "Renderer/Vulkan/ShaderInterface.hpp"
 
 #include <array>
@@ -51,7 +52,16 @@ namespace Raven
 	{
 		std::vector<std::uint32_t> Words;
 		std::vector<MaterialParameter> Parameters;
+		// With a vertex offset (B0 contract 2): its vertex program and the bound it declares, in metres.
+		std::vector<std::uint32_t> VertexWords;
+		float OffsetBound = 0.0f;
 	};
+
+	// Whether a material shader's source declares a vertex offset, so it also builds a vertex program.
+	RAVEN_API bool DeclaresVertexOffset(std::span<const std::byte> source);
+	// The vertex program of a material shader with an offset: the engine's lit vertex program after the
+	// shader's own source. Development hosts only; scratch receives the generated source.
+	RAVEN_API CompiledHlsl CompileOffsetVertex(const std::filesystem::path& source, const std::filesystem::path& scratch);
 
 	// Exported for the content tools, which stage a material's textures with it.
 	RAVEN_API MaterialDefinition ParseMaterial(std::span<const std::byte> bytes, const std::filesystem::path& path);

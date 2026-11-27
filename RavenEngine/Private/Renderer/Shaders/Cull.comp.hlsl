@@ -31,8 +31,10 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 		return;
 	const float4 local = float4(mesh.Center.xyz, 1.0);
 	const float3 center = float3(dot(object.World[0], local), dot(object.World[1], local), dot(object.World[2], local));
+	// Center.w is the world-space bound of a material's vertex offset (B0 contract 2).
 	const float3 extent = float3(dot(abs(object.World[0].xyz), mesh.HalfExtent.xyz),
-		dot(abs(object.World[1].xyz), mesh.HalfExtent.xyz), dot(abs(object.World[2].xyz), mesh.HalfExtent.xyz));
+		dot(abs(object.World[1].xyz), mesh.HalfExtent.xyz), dot(abs(object.World[2].xyz), mesh.HalfExtent.xyz)) +
+		mesh.Center.w;
 	[unroll]
 	for (uint plane = 0; plane < 6; ++plane)
 	{

@@ -734,7 +734,8 @@ namespace Raven
 						{
 							// A material shader draws with its own pipeline (B0 contract 7).
 							const auto* shader = lease.GetMaterialShader();
-							return shader ? renderer.UseMaterialShader(lease.GetId(), shader->Words, lease.GetRevision()) : 0u;
+							return shader ? renderer.UseMaterialShader(lease.GetId(), shader->Words, lease.GetRevision(),
+								shader->VertexWords) : 0u;
 						});
 					});
 				}

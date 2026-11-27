@@ -207,6 +207,8 @@ namespace Raven
 			AssetId Shader;
 			std::uint64_t Revision = 0;
 			std::vector<std::uint32_t> Words;
+			// The material's vertex program when it moves vertices; empty for the engine's.
+			std::vector<std::uint32_t> VertexWords;
 			std::shared_ptr<const VulkanColorPipeline> Pipeline;
 			// What the pipeline was built from; a difference rebuilds it.
 			std::uint64_t BuiltRevision = 0;
@@ -612,8 +614,10 @@ namespace Raven
 		published.reserve(m_MaterialPipelines.size());
 		for (auto& entry : m_MaterialPipelines)
 		{
+			// Only materials on the engine's vertex program follow its reloads.
 			const bool current = entry.Attempted && entry.BuiltRevision == entry.Revision &&
-				entry.BuiltVertex == m_LitVertexGeneration && entry.BuiltColor == factory.GetColorFormat();
+				(!entry.VertexWords.empty() || entry.BuiltVertex == m_LitVertexGeneration) &&
+				entry.BuiltColor == factory.GetColorFormat();
 			if (!current)
 			{
 				entry.Attempted = true;
@@ -623,7 +627,8 @@ namespace Raven
 				try
 				{
 					const auto start = std::chrono::steady_clock::now();
-					auto pipeline = factory.CreateMaterial(vertex, entry.Words);
+					auto pipeline = factory.CreateMaterial(entry.VertexWords.empty() ? vertex
+						: std::span<const std::uint32_t>(entry.VertexWords), entry.Words);
 					const std::chrono::duration<double, std::milli> time = std::chrono::steady_clock::now() - start;
 					// Submitted frames may still draw with the previous pipeline (R3).
 					if (entry.Pipeline)
@@ -892,20 +897,23 @@ namespace Raven
 		return true;
 	}
 
-	std::uint32_t VulkanContext::UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision)
+	std::uint32_t VulkanContext::UseMaterialShader(AssetId shader, std::span<const std::uint32_t> words, std::uint64_t revision,
+		std::span<const std::uint32_t> vertexWords)
 	{
 		auto& pipelines = m_Impl->m_MaterialPipelines;
 		auto found = std::find_if(pipelines.begin(), pipelines.end(),
 			[&](const Impl::MaterialPipeline& entry) { return entry.Shader == shader; });
 		if (found == pipelines.end())
 		{
-			pipelines.push_back({ shader, revision, std::vector<std::uint32_t>(words.begin(), words.end()) });
+			pipelines.push_back({ shader, revision, std::vector<std::uint32_t>(words.begin(), words.end()),
+				std::vector<std::uint32_t>(vertexWords.begin(), vertexWords.end()) });
 			return static_cast<std::uint32_t>(pipelines.size());
 		}
 		if (found->Revision != revision)
 		{
 			found->Revision = revision;
 			found->Words.assign(words.begin(), words.end());
+			found->VertexWords.assign(vertexWords.begin(), vertexWords.end());
 		}
 		return static_cast<std::uint32_t>(found - pipelines.begin()) + 1;
 	}

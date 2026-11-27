@@ -45,6 +45,8 @@ namespace
 	const AssetId SignalMaterial = AssetId::Parse("5035a9fe-7513-48b9-8b15-42664830e0cf");
 	// Content/Materials/Stripes, which draws with the sample material shader Content/Shaders/Stripes.hlsl.
 	const AssetId StripesMaterial = AssetId::Parse("8f9c513a-9588-4a1b-b3db-f316fa659d54");
+	// Content/Materials/Wave, whose shader moves vertices (B0 contract 2).
+	const AssetId WaveMaterial = AssetId::Parse("16184a05-0ae8-4951-8b23-90ee998fc660");
 
 	ECS::MaterialComponent Material(bool lit, AssetId texture = {})
 	{
@@ -241,6 +243,10 @@ namespace
 
 		scene.Mesh("floor", Cube, Pose({ 0, 10, -.25f }, { 16, 16, .5f }), { .55f, .6f, .68f, 1 }, grid);
 		scene.Physics("floor", box);
+		// A decorative sphere with no collider, drawn by the sample shader that moves its vertices.
+		auto wave = paint;
+		wave.Material.Id = WaveMaterial;
+		scene.Mesh("jelly", Sphere, Pose({ -1.5f, 5.5f, 1.2f }, { 1.6f, 1.6f, 1.6f }), { 1, 1, 1, 1 }, wave);
 		// Low walls keep rolling spheres on the floor.
 		const std::pair<const char*, ECS::TransformComponent> walls[]{
 			{ "wall-near", Pose({ 0, 2.15f, .3f }, { 16, .3f, .6f }) },

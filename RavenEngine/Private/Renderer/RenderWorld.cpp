@@ -128,7 +128,7 @@ namespace Raven
 				BuildMaterial(slot);
 				// Lighting decides the normal matrix, and the shader decides the draw group.
 				const bool relit = (state.Materials[slot].Flags & GpuMaterialLit) != wasLit;
-				const bool regroup = state.MaterialEntries[slot].ShaderKey != wasKey;
+				const bool regroup = state.MaterialEntries[slot].ShaderKey != wasKey || shaderReloaded;
 				if (relit || regroup)
 					for (std::uint32_t object = 0; object < state.Objects.size(); ++object)
 						if (state.Objects[object].Material == slot)
@@ -201,11 +201,19 @@ namespace Raven
 		}
 
 		// The group of a key, adding one (from the free list first) for a new key.
-		std::uint32_t FindGroup(const DrawGroupKey& key)
+		std::uint32_t FindGroup(const DrawGroupKey& key, float offsetBound = 0.0f)
 		{
 			auto& state = m_State;
 			if (const auto found = state.GroupOfKey.find(key); found != state.GroupOfKey.end())
+			{
+				// A reloaded shader can change its bound; the mesh table carries it to culling.
+				if (state.Groups[found->second].OffsetBound != offsetBound)
+				{
+					state.Groups[found->second].OffsetBound = offsetBound;
+					++state.LayoutRevision;
+				}
 				return found->second;
+			}
 			std::uint32_t group;
 			if (!state.FreeGroups.empty())
 				group = state.FreeGroups.back();
@@ -217,7 +225,7 @@ namespace Raven
 			state.GroupOfKey.emplace(key, group);
 			if (!state.FreeGroups.empty() && state.FreeGroups.back() == group)
 				state.FreeGroups.pop_back();
-			state.Groups[group] = { key, 0, true };
+			state.Groups[group] = { key, 0, offsetBound, true };
 			++state.LayoutRevision;
 			return group;
 		}
@@ -540,9 +548,13 @@ namespace Raven
 				const auto handle = resolve ? (m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{})
 					: state.Groups[object.Group].Key.Mesh;
 				// The material's shader picks the pipeline (B0 contract 7).
+				const auto& entry = state.MaterialEntries[material];
+				const auto* shader = entry.ShaderLease.GetMaterialShader();
+				const float bound = shader ? shader->OffsetBound : 0.0f;
 				DrawPipelineKey pipeline;
-				pipeline.Shader = state.MaterialEntries[material].ShaderKey;
-				group = FindGroup({ pipeline, handle });
+				pipeline.Shader = entry.ShaderKey;
+				pipeline.Offset = bound > 0.0f ? 1 : 0;
+				group = FindGroup({ pipeline, handle }, bound);
 				reference = mesh.Mesh;
 			}
 			if (added)

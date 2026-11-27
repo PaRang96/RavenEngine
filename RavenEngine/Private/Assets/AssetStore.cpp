@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <stdexcept>
@@ -37,25 +38,52 @@ namespace Raven
 		MaterialShader DecodeShader(std::span<const std::byte> bytes, const std::filesystem::path& path)
 		{
 			MaterialShader shader;
+			const auto toWords = [&](std::span<const std::byte> spirv)
+			{
+				if (spirv.size() % sizeof(std::uint32_t) != 0)
+					throw std::runtime_error(PathToUtf8(path) + " is not SPIR-V");
+				std::vector<std::uint32_t> words(spirv.size() / sizeof(std::uint32_t));
+				std::memcpy(words.data(), spirv.data(), spirv.size());
+				return words;
+			};
 			if (LowercaseExtension(path) == ".spv")
 			{
-				if (bytes.size() % sizeof(std::uint32_t) != 0)
-					throw std::runtime_error(PathToUtf8(path) + " is not SPIR-V");
-				shader.Words.resize(bytes.size() / sizeof(std::uint32_t));
-				std::memcpy(shader.Words.data(), bytes.data(), bytes.size());
+				shader.Words = toWords(bytes);
+				// A player build stages a vertex offset's program beside it (B0 contract 2).
+				auto vertex = path;
+				vertex.replace_extension(".vert.spv");
+				if (std::filesystem::is_regular_file(vertex))
+					shader.VertexWords = toWords(Files::ReadBinary(vertex, 4 * 1024 * 1024));
 			}
 			else
 			{
 				const auto scratch = std::filesystem::temp_directory_path() / ("raven-shader-" + AssetId::Generate().ToString());
+				const auto cleanup = [&] { std::error_code ignored; std::filesystem::remove_all(scratch, ignored); };
 				auto compiled = CompileHlsl(path, "ps_6_0", "PSMain", scratch);
-				std::error_code ignored;
-				std::filesystem::remove_all(scratch, ignored);
+				CompiledHlsl vertex;
+				if (compiled.Error.empty() && DeclaresVertexOffset(bytes))
+					vertex = CompileOffsetVertex(path, scratch / "vertex");
+				cleanup();
 				if (!compiled.Error.empty())
 					throw std::runtime_error("Cannot compile material shader " + PathToUtf8(path) + ": " + compiled.Error);
+				if (!vertex.Error.empty())
+					throw std::runtime_error("Cannot compile the vertex offset of material shader " + PathToUtf8(path) + ": " +
+						vertex.Error);
 				shader.Words = std::move(compiled.Words);
+				shader.VertexWords = std::move(vertex.Words);
 			}
 			CheckShaderInterface(shader.Words, LitFragmentInterface());
 			shader.Parameters = ReadMaterialParameters(shader.Words);
+			if (!shader.VertexWords.empty())
+			{
+				CheckShaderInterface(shader.VertexWords, LitVertexInterface());
+				const auto bound = ReadOffsetBound(shader.VertexWords);
+				// The bound grows culling bounds, so it has to be a real, modest distance.
+				if (!bound || !std::isfinite(*bound) || *bound <= 0.0f || *bound > 100.0f)
+					throw std::runtime_error("Material shader " + PathToUtf8(path) +
+						" needs RAVEN_OFFSET_BOUND between 0 and 100 metres with its RavenOffset");
+				shader.OffsetBound = *bound;
+			}
 			return shader;
 		}
 

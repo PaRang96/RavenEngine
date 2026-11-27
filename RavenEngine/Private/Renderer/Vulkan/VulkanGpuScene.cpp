@@ -114,7 +114,7 @@ namespace Raven
 			bindings[Visible].stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
 			// Material shaders read their records and values (B0 contract 1).
 			bindings[Materials].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-			bindings[MaterialValues].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+			bindings[MaterialValues].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			VkDescriptorSetLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 			layoutInfo.bindingCount = Count;
@@ -345,7 +345,9 @@ namespace Raven
 					entry.IndexCount = mesh->Ranges.IndexCount;
 					entry.FirstIndex = mesh->Ranges.FirstIndex;
 					entry.VertexOffset = mesh->Ranges.VertexOffset;
-					entry.Center = { mesh->LocalBounds.Center.X, mesh->LocalBounds.Center.Y, mesh->LocalBounds.Center.Z, 0.0f };
+					// W carries the group's vertex offset bound to culling (B0 contract 2).
+					entry.Center = { mesh->LocalBounds.Center.X, mesh->LocalBounds.Center.Y, mesh->LocalBounds.Center.Z,
+						group.OffsetBound };
 					entry.HalfExtent = { mesh->LocalBounds.HalfExtent.X, mesh->LocalBounds.HalfExtent.Y,
 						mesh->LocalBounds.HalfExtent.Z, 0.0f };
 				}

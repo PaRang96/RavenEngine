@@ -1,0 +1,7 @@
+raven-material 1
+id 16184a05-0ae8-4951-8b23-90ee998fc660
+# The jelly sphere in the Physics scene: waves of height, drawn by Shaders/Wave.hlsl.
+lit
+shader c961191d-2676-476f-9e2b-4c939d08d2c6
+value Wave 0.12 2 3 0
+value Tint 0.4 0.9 0.7 1

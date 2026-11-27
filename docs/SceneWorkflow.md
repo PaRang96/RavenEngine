@@ -62,7 +62,7 @@ texture Pattern 7a590cee-ec82-4a27-927f-860e64619c19
 value StripeColor 0.95 0.95 0.95 0.35
 value Width 0.25 0 0 0
 ```
-A shader has at most 16 values and 4 textures; `RavenGetFrame()` gives the time and camera position, and `input.WorldPosition` the surface's position. Saving the shader or the material updates every object using them while the game runs; a shader that fails to compile, or a name the shader does not declare, keeps the last good version or the engine's lit shader and logs why. Players ship the compiled SPIR-V only. `Games/Samples/Content/Shaders/Stripes.hlsl` is the sample.
+A shader has at most 16 values and 4 textures; `RavenGetFrame()` gives the time and camera position, and `input.WorldPosition` the surface's position. A shader can also move its vertices: define `RAVEN_OFFSET_BOUND` (the largest distance, in metres) and `float3 RavenOffset(RavenOffsetInput input)`, as `Games/Samples/Content/Shaders/Wave.hlsl` does; the engine clamps the offset to the bound and culls with it. Offset along a direction that depends only on position, since a mesh keeps separate copies of a point where its normals or UVs split. Saving the shader or the material updates every object using them while the game runs; a shader that fails to compile, or a name the shader does not declare, keeps the last good version or the engine's lit shader and logs why. Players ship the compiled SPIR-V only. `Games/Samples/Content/Shaders/Stripes.hlsl` is the sample.
 
 **Rejected.** The catalog rejects:
 - duplicate or nil identities and unsupported settings;
