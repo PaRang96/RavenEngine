@@ -56,7 +56,7 @@ Status: **draft for the owner's decision (2026-11-27).** [Planning decision 21](
 | **New platform starts from** | Generic defaults, per function | A base class (`Os_Posix`), per class | Fallback files, per area, and a shared `Posix` folder |
 | **Capabilities** | `Platform::Properties`, constexpr | Virtual queries | `Platform::Capabilities`, constexpr, one header per OS |
 | **Runtime cost** | None (static, inlinable) | One virtual call per use (negligible for these calls) | None (direct calls) |
-| **Change now** | Rewrite every interface header and caller (about 10 headers, 30 call sites) | Same, plus a global object | Rename and move about 12 files, add one header and one CI check; callers keep their calls |
+| **Change now** | Rewrite every interface header and caller (eight headers and about 20 call sites) | Same, plus a global object | Rename and move about 12 files, add one header and one CI check; callers keep their calls |
 | **Strength** | Familiar to Unreal developers; per-function defaults | Runtime choice of backend; easy to fake in tests | Keeps what works, takes the shared points of all three, and is the cheapest to keep checked |
 | **Weakness** | Name-hiding pitfalls; buys inlining Raven does not need, since time, atomics and threads come from the standard library | A process-wide singleton, and virtual dispatch for calls that never change at runtime | Per-area fallbacks instead of per-function defaults, so a port adds whole files |
 
