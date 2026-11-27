@@ -86,6 +86,10 @@ Game code lives in its game root, outside the engine (`Games/Samples/Source`, `G
 
 This is a trusted local development workflow for Windows/MSVC/single-config Ninja. Engine public-header or build-contract changes are rejected until the host is rebuilt and restarted. Module-owned persistent objects and untrusted plugins are outside this example. Game-only builds reuse the compiler/SDK environment captured during host configuration; runtime watching does not require a developer shell. See [EngineModules.md](docs/EngineModules.md) for ownership, compatibility, build logs and validation limits.
 
+## Coding rules
+
+Every change follows [docs/CodingRules.md](docs/CodingRules.md), eleven rules adopted by the owner on 2026-11-27.
+
 ## macOS/Linux contributor work
 
 See the [platform contributor handoff](docs/PlatformHandoff.md) for work order and verification criteria against the current Windows implementation. The [macOS build guide](docs/MacOSBuild.md) documents dependencies and commands. Cocoa framebuffer support, executable paths, and keyboard/mouse input are implemented; earlier Debug checks confirmed rendering and Space/scroll/R controls. The Linux X11/XCB backend and Debug/Release presets are also merged. The current asset system's `Platform::FillRandomBytes` is implemented only on Windows, so macOS/Linux contributors must add that hook and its CMake connection before verifying current Debug/Release builds and both samples. Platform work can proceed alongside Windows ECS development. Mark support complete only after verifying native execution of the current code on each OS.

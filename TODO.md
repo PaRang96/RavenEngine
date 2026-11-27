@@ -178,12 +178,13 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
   - AA2-BLD-01 decided 2026-11-27 (owner): CMake 3.28 is the floor ([planning decision 20](ROADMAP.md#planning-decisions-2026-11-24)); the laptop's PATH now leads with Visual Studio's CMake 4.3.1.
   - Not checked by hand yet: a manual `BuildGame.cmake` build offered through the build stamp. Arena's crate feel and fall-out route are dropped: Arena is not a release target, so its quality is not reviewed (owner, 2026-11-27).
 - [ ] Joint review of M6A, M6C and the review amendments, item by item (owner, from 2026-11-27): 1 FD-47, 2 FD-48, 3 FD-31 and the UIDesign.md review, 4 audio (planning decision 6), 5 coding rules R1–R15, 6 acceptance and the push.
+  - Item 5 decided 2026-11-27: the coding rules are condensed to eleven in the tracked [docs/CodingRules.md](docs/CodingRules.md), so every contributor sees them; AGENTS.md (local) points there.
   - Item 4 decided 2026-11-27: audio (planning decision 6) confirmed for what is built: the engine mixer, sound events, buses and miniaudio on Windows. miniaudio on macOS and Linux stays provisional until M4 verifies it. Streaming stays the next audio step.
   - Item 3 decided 2026-11-27: FD-31 approved in full. Fonts and the `UiText` seam go in B2's contract window; UIDesign.md section 5 comes to the owner before the rebindable UI keys ([GameServicesDesign.md](docs/GameServicesDesign.md#fd-31--text-and-ui)).
   - Item 2 decided 2026-11-27: FD-48 confirmed. Level 1 for v1; level 2 is the target for the milestone that brings multiplayer, which is not a current target, so only the rule "engine changes keep level 2 reachable" is recorded now ([GameServicesDesign.md](docs/GameServicesDesign.md#fd-48--determinism-level)).
   - Item 1 decided 2026-11-27: FD-47 confirmed for its built part (control phase, input stream, `MoverComponent`, character backend for tens to a few hundred characters); the crowd backend is decided at its own milestone ([GameServicesDesign.md](docs/GameServicesDesign.md#fd-47--movement-and-control)).
 - [ ] B0 contracts in this note before B2 (architecture assessment, AA2-DOC-07 and AA2-RND-01..07), now including the FD-19 vertex offset hook and the FD-23 sidecar format.
-- [ ] Adopt the proposed coding rules R1–R15 of the code-quality assessment (section 7) into AGENTS.md, as part of the joint review.
+- [x] Adopt the proposed coding rules R1–R15 of the code-quality assessment (section 7), as part of the joint review. *Done 2026-11-27 (owner, option B): condensed to eleven rules in the tracked [docs/CodingRules.md](docs/CodingRules.md), which AGENTS.md and the README point to.*
 - [ ] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4).
 
 ## M6A — Host and data model (implemented 2026-11-24, pending review)
