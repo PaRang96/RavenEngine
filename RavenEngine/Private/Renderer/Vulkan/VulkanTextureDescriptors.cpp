@@ -100,11 +100,14 @@ namespace Raven
 			samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 			samplerInfo.magFilter = VK_FILTER_LINEAR;
 			samplerInfo.minFilter = VK_FILTER_LINEAR;
-			samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+			// The one sampler every texture shares (FD-21): linear, blending between mip levels, so
+			// textures with a mip chain stay smooth in the distance and single-level ones sample as
+			// before. A repeat sampler and the per-material choice come with B4's fragment ABI.
+			samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 			samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 			samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 			samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.maxLod = 0.0f;
+			samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
 			CheckDescriptorResult(vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_Sampler),
 				"vkCreateSampler (bindless textures)");
 			const VkDescriptorImageInfo sampler{ m_Sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED };
@@ -148,8 +151,7 @@ namespace Raven
 
 	VkDescriptorSet VulkanTextureDescriptors::CreateBinding(VulkanTexture& texture, TextureUse use)
 	{
-		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE ||
-			texture.GetSampler() == VK_NULL_HANDLE)
+		if (texture.GetDevice() != m_Device || texture.GetView() == VK_NULL_HANDLE)
 			throw std::invalid_argument("Texture descriptors require a texture from the same device");
 		auto page = std::find_if(m_Pages.begin(), m_Pages.end(), [](const Page& value)
 		{
@@ -282,7 +284,8 @@ namespace Raven
 	{
 		const VkDescriptorImageInfo image{ VK_NULL_HANDLE, texture.GetView(),
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-		const VkDescriptorImageInfo sampler{ texture.GetSampler(), VK_NULL_HANDLE,
+		// Per-texture sets name the shared sampler too; textures no longer own one.
+		const VkDescriptorImageInfo sampler{ m_Sampler, VK_NULL_HANDLE,
 			VK_IMAGE_LAYOUT_UNDEFINED };
 		std::array<VkWriteDescriptorSet, 2> writes{};
 		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

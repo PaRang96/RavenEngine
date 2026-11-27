@@ -24,7 +24,8 @@ namespace Raven
 	{
 		std::uint32_t Width = 0;
 		std::uint32_t Height = 0;
-		// Rows are tightly packed RGBA8 bytes; creation consumes the entire span.
+		// Rows are tightly packed RGBA8 bytes; creation consumes the entire span. An empty span creates
+		// the texture cleared to transparent black on the GPU, with no pixels sent.
 		std::span<const std::byte> Pixels;
 		TextureColorSpace ColorSpace = TextureColorSpace::SRGB;
 	};

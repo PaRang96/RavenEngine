@@ -2,6 +2,7 @@
 
 #include "Renderer/Vulkan/VulkanInstance.hpp"
 #include "Renderer/Vulkan/VulkanMemory.hpp"
+#include "Renderer/Vulkan/VulkanUploadBatch.hpp"
 #include "Renderer/Vulkan/VulkanDebugMessenger.hpp"
 #include "Renderer/Vulkan/VulkanSurface.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
@@ -168,6 +169,8 @@ namespace Raven
 		const VulkanTexture* m_WhiteTexture = nullptr;
 		// Outlives the pass and swapchain; retired resources drop before the stores above (R3).
 		VulkanFrameTimeline m_Timeline;
+		// Texture contents created between frames, submitted just before the next one (B0 contract 5).
+		VulkanUploadBatch m_Uploads;
 		// GPU-driven lit meshes (docs/GpuDrivenDesign.md, G2/G5); the pass borrows it.
 		VulkanGpuScene m_GpuScene;
 		// Bumped when managed mesh contents are swapped or released; the GPU scene's resident mesh
@@ -217,6 +220,7 @@ namespace Raven
 		  m_TextureDescriptors(m_Device),
 		  m_FrameLayout(m_Device),
 		  m_Timeline(m_Device),
+		  m_Uploads(m_Device, m_PhysicalDevice.QueueFamilies.Graphics.value(), m_Timeline),
 		  m_GpuScene(m_Device, m_PhysicalDevice, m_Timeline,
 			  m_Shaders.Get(ShaderProgram::Scatter), m_Shaders.Get(ShaderProgram::Cull))
 	{
@@ -615,7 +619,9 @@ namespace Raven
 	{
 		CollectResources();
 		const auto index = ReserveResourceSlot(m_Textures);
-		auto texture = std::make_shared<VulkanTexture>(m_Device, m_PhysicalDevice, description);
+		auto texture = std::make_shared<VulkanTexture>(m_Device, m_PhysicalDevice, description, m_Uploads);
+		// The batch references the image until the GPU has run it.
+		m_Uploads.Keep(texture);
 		texture->SetDescriptorSet(m_TextureDescriptors.CreateBinding(*texture, use));
 		auto& slot = m_Textures[index];
 		slot.Owner = std::move(texture);
@@ -687,6 +693,8 @@ namespace Raven
 			metrics->DrawCalls = m_GpuScene.GetDrawCount() * (m_View == RenderView::Wireframe ? 2 : 1) +
 				m_DrawQueue.OpaqueBatches.size() + m_DrawQueue.TransparentBatches.size();
 		preparation.End();
+		// The batch goes first on the queue, so this frame samples what it filled.
+		m_Uploads.Submit();
 		if (!m_ClearPass->Draw(*m_Swapchain,
 			m_Device.GetGraphicsQueue(), m_Device.GetPresentQueue(),
 			m_DrawQueue, m_MeshPool, m_TextureDescriptors.GetBindlessSet(), metrics, m_View))
@@ -825,6 +833,16 @@ namespace Raven
 		auto& b = m_Impl->m_Textures[static_cast<std::size_t>(right.m_Index)];
 		if (!a.Managed || !b.Managed)
 			return false;
+		// Frames already submitted may sample the element being rewritten; without the old per-upload
+		// fence wait, wait for them here: a rare one-frame stall in development (B0 contract 5).
+		try
+		{
+			m_Impl->m_Timeline.Wait(m_Impl->m_Timeline.GetNextValue() - 1);
+		}
+		catch (...)
+		{
+			return false;
+		}
 		a.Owner->SwapImage(*b.Owner);
 		m_Impl->m_TextureDescriptors.WriteBinding(*a.Owner, *a.Owner);
 		m_Impl->m_TextureDescriptors.WriteBinding(*b.Owner, *b.Owner);

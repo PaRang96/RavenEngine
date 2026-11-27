@@ -2,9 +2,11 @@
 
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
+#include "Renderer/Vulkan/VulkanUploadBatch.hpp"
 #include "Raven/Core/Log.hpp"
 
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -17,101 +19,10 @@ namespace Raven
 		{
 			CheckVulkanResult(result, operation);
 		}
-
-		class TextureUpload
-		{
-		public:
-			TextureUpload(VkDevice device, VkQueue queue, std::uint32_t family)
-				: m_Device(device), m_Queue(queue)
-			{
-				try
-				{
-					VkCommandPoolCreateInfo poolInfo{};
-					poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-					poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-					poolInfo.queueFamilyIndex = family;
-					VkCommandPool pool = VK_NULL_HANDLE;
-					CheckTextureResult(vkCreateCommandPool(m_Device, &poolInfo, nullptr, &pool),
-						"vkCreateCommandPool (texture upload)");
-					m_Pool = pool;
-
-					VkCommandBufferAllocateInfo allocation{};
-					allocation.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-					allocation.commandPool = m_Pool;
-					allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-					allocation.commandBufferCount = 1;
-					CheckTextureResult(vkAllocateCommandBuffers(m_Device, &allocation, &m_CommandBuffer),
-						"vkAllocateCommandBuffers (texture upload)");
-					VkFenceCreateInfo fenceInfo{};
-					fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-					VkFence fence = VK_NULL_HANDLE;
-					CheckTextureResult(vkCreateFence(m_Device, &fenceInfo, nullptr, &fence),
-						"vkCreateFence (texture upload)");
-					m_Fence = fence;
-					VkCommandBufferBeginInfo beginInfo{};
-					beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-					beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-					CheckTextureResult(vkBeginCommandBuffer(m_CommandBuffer, &beginInfo),
-						"vkBeginCommandBuffer (texture upload)");
-				}
-				catch (...)
-				{
-					Destroy();
-					throw;
-				}
-			}
-
-			~TextureUpload() { Destroy(); }
-			TextureUpload(const TextureUpload&) = delete;
-			TextureUpload& operator=(const TextureUpload&) = delete;
-
-			VkCommandBuffer Get() const { return m_CommandBuffer; }
-
-			void SubmitAndWait()
-			{
-				CheckTextureResult(vkEndCommandBuffer(m_CommandBuffer), "vkEndCommandBuffer (texture upload)");
-				VkSubmitInfo submission{};
-				submission.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-				submission.commandBufferCount = 1;
-				submission.pCommandBuffers = &m_CommandBuffer;
-				CheckTextureResult(vkQueueSubmit(m_Queue, 1, &submission, m_Fence), "vkQueueSubmit (texture upload)");
-				m_Submitted = true;
-				const VkResult result = vkWaitForFences(m_Device, 1, &m_Fence, VK_TRUE,
-					std::numeric_limits<std::uint64_t>::max());
-				if (result == VK_SUCCESS)
-					m_Submitted = false;
-				CheckTextureResult(result, "vkWaitForFences (texture upload)");
-			}
-
-		private:
-			void Destroy() noexcept
-			{
-				// A failed fence wait must not release a pending command pool or staging buffer.
-				if (m_Submitted)
-				{
-					const VkResult result = vkQueueWaitIdle(m_Queue);
-					if (result != VK_SUCCESS)
-						Log(LogLevel::Error, "vkQueueWaitIdle failed during texture upload cleanup: " +
-							std::to_string(result));
-					m_Submitted = false;
-				}
-				if (m_Fence != VK_NULL_HANDLE)
-					vkDestroyFence(m_Device, m_Fence, nullptr);
-				if (m_Pool != VK_NULL_HANDLE)
-					vkDestroyCommandPool(m_Device, m_Pool, nullptr);
-			}
-
-			VkDevice m_Device;
-			VkQueue m_Queue;
-			VkCommandPool m_Pool = VK_NULL_HANDLE;
-			VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
-			VkFence m_Fence = VK_NULL_HANDLE;
-			bool m_Submitted = false;
-		};
 	}
 
 	VulkanTexture::VulkanTexture(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
-		const TextureDesc& description)
+		const TextureDesc& description, VulkanUploadBatch& uploads)
 		: m_Device(device.Get()), m_Memory(&device.GetMemory()), m_Extent{ description.Width, description.Height }
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
@@ -122,9 +33,9 @@ namespace Raven
 			description.Height > physicalDevice.Properties.limits.maxImageDimension2D)
 			throw std::invalid_argument("Texture dimensions are zero or exceed maxImageDimension2D");
 		const auto pixelCount = std::uint64_t{ description.Width } * description.Height;
-		if (pixelCount > std::numeric_limits<std::size_t>::max() / 4 ||
-			!description.Pixels.data() || description.Pixels.size() != static_cast<std::size_t>(pixelCount) * 4)
-			throw std::invalid_argument("Texture pixels must contain exactly Width * Height * 4 RGBA8 bytes");
+		if (pixelCount > std::numeric_limits<std::size_t>::max() / 4 || (!description.Pixels.empty() &&
+			(!description.Pixels.data() || description.Pixels.size() != static_cast<std::size_t>(pixelCount) * 4)))
+			throw std::invalid_argument("Texture pixels must be empty or contain exactly Width * Height * 4 RGBA8 bytes");
 		switch (description.ColorSpace)
 		{
 		case TextureColorSpace::Linear:
@@ -181,26 +92,21 @@ namespace Raven
 			CheckTextureResult(vkCreateImageView(m_Device, &viewInfo, nullptr, &view), "vkCreateImageView (texture)");
 			m_View = view;
 
-			VkSamplerCreateInfo samplerInfo{};
-			samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-			samplerInfo.magFilter = VK_FILTER_LINEAR;
-			samplerInfo.minFilter = VK_FILTER_LINEAR;
-			samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-			samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-			samplerInfo.maxLod = 0.0f;
-			VkSampler sampler = VK_NULL_HANDLE;
-			CheckTextureResult(vkCreateSampler(m_Device, &samplerInfo, nullptr, &sampler), "vkCreateSampler (texture)");
-			m_Sampler = sampler;
-
-			const VulkanBuffer staging(device, physicalDevice, description.Pixels, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-			TextureUpload upload(m_Device, device.GetGraphicsQueue(), physicalDevice.QueueFamilies.Graphics.value());
+			// Everything that can fail comes before the first recorded command, so a failure never
+			// leaves the batch naming a destroyed image.
+			std::shared_ptr<const VulkanBuffer> staging;
+			if (!description.Pixels.empty())
+			{
+				staging = std::make_shared<const VulkanBuffer>(device, physicalDevice, description.Pixels,
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+				uploads.Keep(staging);
+			}
+			const auto commands = uploads.Record();
 			const auto barrier2 = device.GetCommands().PipelineBarrier2;
 			VkImageMemoryBarrier2KHR barrier{};
 			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
 			barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE_KHR;
-			barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
 			barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
 			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -214,22 +120,32 @@ namespace Raven
 			dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
 			dependency.imageMemoryBarrierCount = 1;
 			dependency.pImageMemoryBarriers = &barrier;
-			barrier2(upload.Get(), &dependency);
+			barrier2(commands, &dependency);
 
-			VkBufferImageCopy copy{};
-			copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			copy.imageSubresource.layerCount = 1;
-			copy.imageExtent = imageInfo.extent;
-			vkCmdCopyBufferToImage(upload.Get(), staging.Get(), m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+			if (staging)
+			{
+				VkBufferImageCopy copy{};
+				copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				copy.imageSubresource.layerCount = 1;
+				copy.imageExtent = imageInfo.extent;
+				vkCmdCopyBufferToImage(commands, staging->Get(), m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+			}
+			else
+			{
+				// Created cleared: the GPU writes transparent black, and no zero buffer is sent.
+				const VkClearColorValue clear{};
+				vkCmdClearColorImage(commands, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1,
+					&barrier.subresourceRange);
+			}
 
-			barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT_KHR;
+			// The batch's closing barrier makes the writes visible; this one sets the sampled layout.
+			barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
 			barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
 			barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
 			barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR;
 			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			barrier2(upload.Get(), &dependency);
-			upload.SubmitAndWait();
+			barrier2(commands, &dependency);
 		}
 		catch (...)
 		{
@@ -251,7 +167,6 @@ namespace Raven
 		swap(m_Image, other.m_Image);
 		swap(m_Allocation, other.m_Allocation);
 		swap(m_View, other.m_View);
-		swap(m_Sampler, other.m_Sampler);
 		swap(m_Format, other.m_Format);
 		swap(m_Extent, other.m_Extent);
 	}
@@ -263,11 +178,6 @@ namespace Raven
 
 	void VulkanTexture::Destroy() noexcept
 	{
-		if (m_Sampler != VK_NULL_HANDLE)
-		{
-			vkDestroySampler(m_Device, m_Sampler, nullptr);
-			m_Sampler = VK_NULL_HANDLE;
-		}
 		if (m_View != VK_NULL_HANDLE)
 		{
 			vkDestroyImageView(m_Device, m_View, nullptr);
