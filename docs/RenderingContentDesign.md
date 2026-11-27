@@ -2,6 +2,7 @@
 
 Status:
 - **Decided (2026-11-26).** The five decisions that needed the owner (they change what designers or players see, or the scope) are settled; they are listed in [Decisions for the owner](#decisions-for-the-owner). The technical decisions are delegated and recorded in [Delegated decisions](#delegated-decisions), judged by business alignment and expandability.
+- **Accepted (2026-11-28).** The owner accepted M6B as built in the joint review, including the delegated decisions recorded in B4–B8 ([exit check](#b8--exit-check-2026-11-28)). FD-27's every-object-moving budget stays open as its own follow-up.
 - M6C (the previous stage) was accepted with M6A and the review amendments in the owner's joint review on 2026-11-27 ([GameServicesDesign.md](GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).
 
 This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDecisions.md#6-m6b--rendering-and-content) for M6B, the assessment's steps M6-9 and M6-10. Every "Today" statement was re-checked against the code at `0f593d6` on 2026-11-26.
@@ -545,7 +546,7 @@ No regression: M6B is at or below M6C in every set, and every frame took under 5
 5. *Met.* All six measurements are recorded above and in B5; no regression at 50k; Assemblies, Benchmark-500, Collection, Gallery and Perspective are within the M2 tolerance of B3's baseline, and Puzzle differs by its intended Stripes floor (B4), so the capture baseline stays `m6b-b4-reference`.
 6. *Met.* The CI-equivalent check (fresh clone, vendored check, Debug and Release with warnings as errors, CPU tests) passes on the final commit.
 
-**For the joint review:** FD-27 (measurement 2) is the one target M6B leaves missed, as B2 found; the follow-up is in TODO. Nothing is pushed.
+**Joint review (2026-11-28):** the owner accepted M6B as built, with the delegated decisions above and in B4–B7. FD-27 (measurement 2) is the one target M6B leaves missed, as B2 found; the follow-up is in TODO.
 
 ## Measurements
 

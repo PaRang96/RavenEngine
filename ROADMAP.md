@@ -217,14 +217,14 @@ M6 runs in three stages with their own exits and reviews (planning decision 5). 
 
 **Exit:** a game defines a component the host never compiles, authors it in a scene file, and edits one of its fields while running, with no restart. The save/load round trip runs in CI. Spawning and despawning 1k entities per frame among 100k stays within budget. M6B changes the public contract again, so M4 ports against the end of M6B (planning decision 9).
 
-### M6B — Rendering and content
+### M6B — Rendering and content · *done on Windows 2026-11-28 (owner review)*
 
-Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, textures, asset loading, multi-object FBX) before it starts. Design note: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026-11-26), with five owner decisions and the rest delegated.
+Decide FD-18 to FD-23 (materials, shader interface, transparency and sprites, textures, asset loading, multi-object FBX) before it starts. Design note: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (decided 2026-11-26), with five owner decisions and the rest delegated. Implemented B1–B8 on 2026-11-27/28 and accepted as built in the owner's joint review on 2026-11-28 ([exit check](docs/RenderingContentDesign.md#b8--exit-check-2026-11-28)); FD-27's every-object-moving budget is the one target left open.
 
-- [ ] M6-9: draw grouping by (pipeline, mesh), material identity with texture leases, and per-material shaders: a material references a shader asset, and GPU-culled commands are drawn with one pipeline per shader. *Owner decision Q3, 2026-11-23; see [HotReloadDesign.md](docs/HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3).*
-- [ ] M6-9: move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, checked against a Samples Gallery baseline (the 2D run was dropped, planning decision 18). *Moved from M3 (owner decision Q5, 2026-11-22).*
-- [ ] M6-10: a per-frame upload batch, and import of multi-object FBX files with stable sub-asset identities.
-- [ ] Asynchronous asset resolution with placeholders.
+- [x] M6-9: draw grouping by (pipeline, mesh), material identity with texture leases, and per-material shaders: a material references a shader asset, and GPU-culled commands are drawn with one pipeline per shader. *Owner decision Q3, 2026-11-23; see [HotReloadDesign.md](docs/HotReloadDesign.md#h3--debug-views-and-general-use-shaders-q3).*
+- [x] M6-9: move sprites, and later transparent objects, onto the render world, GPU culling and bindless textures in one pass, checked against a Samples Gallery baseline (the 2D run was dropped, planning decision 18). *Moved from M3 (owner decision Q5, 2026-11-22).*
+- [x] M6-10: a per-frame upload batch, and import of multi-object FBX files with stable sub-asset identities.
+- [x] Asynchronous asset resolution with placeholders.
 
 **Exit:** sprites and one custom material shader run on the GPU-driven path. A multi-object FBX imports with stable IDs. The Gallery's sprites match their baseline captures.
 

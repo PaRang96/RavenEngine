@@ -147,7 +147,7 @@ Order (owner, 2026-11-25): the owner's review of C1–C6 and a commit, then C9 w
 - [x] C9: the arena game and the developer quick-save (FD-46, FD-33). *First part done 2026-11-25: `Games/Arena` (craft through the input stream, drones, cells, platform, crates, runs, best score in the profile, Esc pause through a game-requested simulation pause), the Ctrl+F5/Ctrl+F9 quick-save, and measurement 3 completed ([record](docs/GameServicesDesign.md#c9--arena-game-and-the-developer-quick-save-first-part-2026-11-25)). Second part done 2026-11-25: HUD, pause menu, key-binding screen with saved rebinding, five preview entries and six sound events ([record](docs/GameServicesDesign.md#c9-second-part--hud-menus-key-bindings-and-sounds-2026-11-25)).*
 - [x] C10: the determinism check and the exit check; record measurements 5 and 6. *Done 2026-11-25, accepted 2026-11-27: the `DeterminismCheck` test, physics rebuilt on every scene start, the game PCH with the engine's game headers, Arena split by object; measurement 5 meets the M5 targets and measurement 6 shows no regression; every exit item passes ([record](docs/GameServicesDesign.md#c10--determinism-check-and-the-exit-check-2026-11-25), [exit results](docs/GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).*
 
-## M6B — Rendering and content (current)
+## M6B — Rendering and content (done 2026-11-28, owner review)
 
 Build mode (owner, 2026-11-27): the whole of M6B is implemented directly, starting with the platform layer, verified step by step, with one joint review at the end; nothing is pushed without the owner's approval.
 
@@ -198,7 +198,7 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
 - [x] B5: sprites on the GPU path. *Done 2026-11-27: sprites are render-world objects; opaque and cut-out ones are GPU-culled, blended ones CPU-sorted into one instanced draw; `UvRect`, `SizePivot` and `Cutout` work; the CPU textured path and per-texture descriptors are gone ([record](docs/RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27)).*
 - [x] B6: async assets with placeholders. *Done 2026-11-28: runtime-only IDs decode on the job system and publish between frames with placeholders, and mesh uploads joined the per-frame upload batch ([record](docs/RenderingContentDesign.md#b6--runtime-only-assets-load-in-the-background-2026-11-28)).*
 - [x] B7: multi-object FBX with part tables in sidecars. *Done 2026-11-28: parts with stable IDs, reported renames with `rename-part`, hierarchy instantiation for generators and the Cart sample ([record](docs/RenderingContentDesign.md#b7--models-with-parts-2026-11-28)).*
-- [ ] B8: exit check with measurements, then the joint review. *Exit check done 2026-11-28: every item met, all six measurements recorded, no 50k regression against M6C ([record](docs/RenderingContentDesign.md#b8--exit-check-2026-11-28)); the joint review is next.*
+- [x] B8: exit check with measurements, then the joint review. *Exit check done 2026-11-28: every item met, all six measurements recorded, no 50k regression against M6C ([record](docs/RenderingContentDesign.md#b8--exit-check-2026-11-28)). Accepted as built in the owner's joint review on 2026-11-28, with the delegated decisions of B4–B8.*
 
 ## M6A — Host and data model (done 2026-11-27, owner review)
 
