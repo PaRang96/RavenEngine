@@ -198,7 +198,7 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
 - [x] B5: sprites on the GPU path. *Done 2026-11-27: sprites are render-world objects; opaque and cut-out ones are GPU-culled, blended ones CPU-sorted into one instanced draw; `UvRect`, `SizePivot` and `Cutout` work; the CPU textured path and per-texture descriptors are gone ([record](docs/RenderingContentDesign.md#b5--sprites-on-the-gpu-path-2026-11-27)).*
 - [x] B6: async assets with placeholders. *Done 2026-11-28: runtime-only IDs decode on the job system and publish between frames with placeholders, and mesh uploads joined the per-frame upload batch ([record](docs/RenderingContentDesign.md#b6--runtime-only-assets-load-in-the-background-2026-11-28)).*
 - [x] B7: multi-object FBX with part tables in sidecars. *Done 2026-11-28: parts with stable IDs, reported renames with `rename-part`, hierarchy instantiation for generators and the Cart sample ([record](docs/RenderingContentDesign.md#b7--models-with-parts-2026-11-28)).*
-- [ ] B8: exit check with measurements, then the joint review.
+- [ ] B8: exit check with measurements, then the joint review. *Exit check done 2026-11-28: every item met, all six measurements recorded, no 50k regression against M6C ([record](docs/RenderingContentDesign.md#b8--exit-check-2026-11-28)); the joint review is next.*
 
 ## M6A — Host and data model (done 2026-11-27, owner review)
 

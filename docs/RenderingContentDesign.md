@@ -511,6 +511,42 @@ Contract 6 and contract 1's record step, built:
 - **Checked:** the 9 tests; all six captures unchanged; the Debug live reload check with validation; the two carts in the Physics scene line up; a renamed copy imported with two parts added and two reported (exit 2), and two `rename-part` calls restored the old IDs; in Debug with validation, a running Physics scene whose model was re-exported with renamed wheels reported both, kept drawing the last good wheels, and after `rename-part` republished the project with no further failure and no validation message; a packaged player with only the Physics scene read the part records from its index and drew both carts.
 - **Not done:** materials and textures from the FBX file (parts take the entity's material, as meshes always have), skinning, and tangents (FD-26 notes they join with PBR).
 
+### B8 — exit check (2026-11-28)
+
+**Measurement 1, the 50k steady state** (`Benchmark-Windows3D.py scale --meshes 50000 --case auto-fifo`, Release, 165 Hz FIFO, 20% animated, scattered). A same-day A/B against a clean worktree of `473d96d`, the last commit before M6B's code, each build running its own benchmark script, three runs per set, in the order B8, M6C, M6C, B8:
+
+| Set | FPS | CPU preparation p50 / p95 | World pass p50 | Render-world sync p50 | GPU p50 |
+| --- | --- | --- | --- | --- | --- |
+| M6C, two sets | 164.6–165.4 | 2.82–3.12 / 3.41–3.66 ms | 1.37–1.52 ms | 0.91–1.00 ms | 2.41–2.47 ms |
+| **M6B, two sets** | **165.0** | **2.71–2.88 / 3.19–3.36 ms** | **1.36–1.42 ms** | **0.86–0.90 ms** | **2.46–2.47 ms** |
+
+No regression: M6B is at or below M6C in every set, and every frame took under 5 ms of CPU. The draw count is 4 (2 mesh commands, the opaque sprites' command and the blended draw) where M6C counted 6.
+
+**Measurement 2, every object moving (FD-27):** 121.2–124.9 FPS; CPU preparation 7.82–8.09 ms p50 and 8.71–9.00 ms p95, of which the world pass is 4.09–4.21 ms and the sync 2.31–2.41 ms. Unchanged since B2 part 4 (8.57–9.04 ms p95), still missing the 3.5 ms budget: FD-27's next step, tightening the single-threaded world pass and sync and then using the job system, is the open follow-up in TODO.
+
+**Measurement 3, the render-world sync at 50k animated:** 0.86–0.90 ms p50, against M6A's 0.90–0.93 ms; the 0.27 ms was explained in B2 part 4 (change locality).
+
+**Measurement 4, material and shader edits** (the live check, which gained a material file step and a material shader step with a rejected broken save; Release without layers, save to publication): material file 136 ms, material shader 238 ms, a broken material shader rejected in 200 ms with the last good kept, all within M5's 300 ms shader target; engine shaders 212–286 ms after the first edit of the run (472 ms, the same first-edit effect M5 recorded at 432 ms); PNG 222 ms and FBX 124 ms, within M5's no-regression records (640 and 141–173 ms). The Debug live check with validation passed with the same steps.
+
+**Measurement 5, sprites:** recorded in B5: 10k sprites cost 0.60 ms CPU p50 and 0.82 ms p95 and about 0 ms GPU, within the 1.0 ms budgets.
+
+**Measurement 6, mips and texture memory.** Two diagnostics were added for it and stay in the frame trace: `upload_gpu_ns`, the GPU time of the upload batches that completed since the previous frame (timestamps around each batch), and `gpu_memory_bytes`, the device memory allocated through the memory seam. A probe loaded a 2048 x 2048 texture at runtime (B6's background path), in Release without layers:
+- **Memory:** device memory grew by 21.3 MiB: 16 MiB for the image and exactly a third more for its 11 mip levels.
+- **GPU:** the one batch holding the copy and the mip chain took 2.0–2.3 ms in the last two runs and 6.7–7.4 ms in the first two; it runs once per texture, before the frame that first draws it.
+- **CPU, main thread:** publishing took 3.0 ms as a player runs (no file watching) and 5.1 ms in development, against 25.1 ms first measured. Two fixes came from it: starting a development watch hashed the whole file on the main thread, so the hash is now computed where the file is decoded, on a worker (`ReloadOptions::BaselineHashes`); and every asset kept a copy of its file's bytes next to the watch's own, so assets now keep only the size and hash, which also halves the memory watched content costs. The sample textures are 64 x 64, so the samples' own mip work is negligible.
+
+**Pipeline creation (contract 7):** with two material shaders, the four lit views and the three sprite pipelines, a material shader's pipeline builds in 0.2–2.4 ms and engine pipelines publish in 0.1–0.7 ms when the driver's own shader cache is warm; the 36–40 ms of B4 is the first build on a cold cache. *Delegated decision:* no `VkPipelineCache` and no off-thread pipeline creation yet: the driver cache covers repeat runs on the test laptop, and cold builds happen at scene load. Both come back if a measured scene, another vendor's driver or runtime-loaded shaders (B6) show a stall.
+
+**Exit checklist:**
+1. *Met.* Sprites run on the GPU path (B5) and two material shaders (Stripes, Wave) draw through their own pipelines (B4).
+2. *Met.* The Cart model imports with stable part IDs, and a re-export with renamed parts is reported, with `rename-part` restoring the IDs (B7).
+3. *Met for the sprites.* Against B1's captures the Gallery differs in 0.29% of pixels beyond 2/255, all on textured meshes (the far edge of the floor and the sphere's rim), from B3's mip maps, which changed every textured scene by design; no sprite pixel differs by more than 2/255. Against B3's baseline the Gallery passes.
+4. *Met.* The live check reloads material files and material shaders, rejects a broken one keeping the last good, and B7's probe re-exported a model live.
+5. *Met.* All six measurements are recorded above and in B5; no regression at 50k; Assemblies, Benchmark-500, Collection, Gallery and Perspective are within the M2 tolerance of B3's baseline, and Puzzle differs by its intended Stripes floor (B4), so the capture baseline stays `m6b-b4-reference`.
+6. *Met.* The CI-equivalent check (fresh clone, vendored check, Debug and Release with warnings as errors, CPU tests) passes on the final commit.
+
+**For the joint review:** FD-27 (measurement 2) is the one target M6B leaves missed, as B2 found; the follow-up is in TODO. Nothing is pushed.
+
 ## Measurements
 
 | # | Measurement | Gate |
