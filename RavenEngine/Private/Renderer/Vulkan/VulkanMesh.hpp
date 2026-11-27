@@ -11,7 +11,7 @@
 
 namespace Raven
 {
-	class VulkanFrameTimeline;
+	class VulkanUploadBatch;
 
 	// Device-local vertex and index pools shared by every lit mesh (docs/RendererDesign.md, R6).
 	// Rendering thread only. Draws bind both pools once and select a mesh by its ranges.
@@ -27,13 +27,12 @@ namespace Raven
 		};
 
 		VulkanMeshPool(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice);
-		// The owner waits for device idle and drops every mesh and retired resource first.
-		~VulkanMeshPool();
 
-		// Copies through a staging buffer on the graphics queue. Barriers order the copy after earlier
-		// use of the pools and before later vertex input; the submission signals the timeline, which
-		// retires the staging buffer and any outgrown pool buffer. A failure leaves the pools unchanged.
-		Ranges Upload(VulkanFrameTimeline& timeline, std::span<const ColorVertex> vertices,
+		// Copies through a staging buffer, recorded into the per-frame upload batch with no submission or
+		// wait of its own (B0 contract 5; FD-22): a barrier orders the copy after earlier use of the pools,
+		// the batch's closing barrier before later vertex input, and the batch keeps the staging buffer
+		// and any outgrown pool buffer until the GPU has run it. A failure leaves the pools unchanged.
+		Ranges Upload(VulkanUploadBatch& uploads, std::span<const ColorVertex> vertices,
 			std::span<const std::uint32_t> indices);
 		// Only once the GPU no longer reads the ranges, which retirement of the mesh data ensures (R3).
 		void Free(const Ranges& ranges) noexcept;
@@ -64,14 +63,13 @@ namespace Raven
 	private:
 		const VulkanDevice& m_DeviceOwner;
 		const VulkanPhysicalDevice& m_PhysicalDevice;
-		VkCommandPool m_CommandPool = VK_NULL_HANDLE;
 		Pool m_Vertices;
 		Pool m_Indices;
 	};
 
 	struct VulkanMeshData
 	{
-		VulkanMeshData(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
+		VulkanMeshData(VulkanMeshPool& pool, VulkanUploadBatch& uploads,
 			std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices);
 		// Returns the ranges to the pool; the mesh data is retired until the GPU is done with it.
 		~VulkanMeshData();
@@ -93,9 +91,7 @@ namespace Raven
 	class VulkanMesh
 	{
 	public:
-		VulkanMesh(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
-			std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices);
-		void Replace(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
+		VulkanMesh(VulkanMeshPool& pool, VulkanUploadBatch& uploads,
 			std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices);
 
 		void SwapData(VulkanMesh& other) noexcept { m_Data.swap(other.m_Data); }

@@ -22,6 +22,7 @@
 namespace Raven
 {
 	class GameInstance;
+	class JobSystem;
 	class PickWorld;
 	class RenderWorld;
 	class VulkanContext;
@@ -99,6 +100,8 @@ namespace Raven
 		void SetPhysics(const PhysicsQueries* physics) noexcept { m_Physics = physics; }
 		// The host's text stack and UI contexts (docs/UIDesign.md): the game's, which systems declare into,
 		// and the developer overlay's. Without them, systems get a UI that draws nothing.
+		// Runtime-only asset IDs load on these workers (docs/RenderingContentDesign.md, FD-22); they outlive the session.
+		void SetWorkers(JobSystem* workers) noexcept;
 		void SetUi(Text::TextSystem* text, UI::UiContext* game, UI::UiContext* developer);
 		// The host's pick world (FD-34). Without one, nothing is picked.
 		void SetPicking(PickWorld* picking) noexcept { m_Picking = picking; }

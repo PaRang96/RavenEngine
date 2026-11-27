@@ -646,7 +646,8 @@ namespace Raven
 		std::span<const std::uint32_t> indices, bool managed)
 	{
 		const auto index = ReserveResourceSlot(m_Meshes);
-		auto owner = std::make_shared<VulkanMesh>(m_MeshPool, m_Timeline, vertices, indices);
+		// The copies go into the frame's upload batch (FD-22).
+		auto owner = std::make_shared<VulkanMesh>(m_MeshPool, m_Uploads, vertices, indices);
 		auto& slot = m_Meshes[index];
 		slot.Owner = std::move(owner);
 		++slot.Generation;

@@ -66,6 +66,7 @@ namespace Raven
 			std::fill(state.SpriteSlotOfIndex.begin(), state.SpriteSlotOfIndex.end(), RenderWorld::State::NoSlot);
 			state.SpriteCount = 0;
 			state.Blended.clear();
+			state.PendingMeshes.clear();
 			state.NextSequence = 0;
 			state.Dirty.clear();
 			state.DirtyFlags.clear();
@@ -160,9 +161,16 @@ namespace Raven
 			for (std::uint32_t slot = 0; slot < state.MaterialEntries.size(); ++slot)
 			{
 				const auto& entry = state.MaterialEntries[slot];
+				if (!entry.Live)
+					continue;
 				const bool shaderReloaded = entry.ShaderLease.GetId().IsValid() &&
 					entry.ShaderLease.GetRevision() != entry.ShaderRevision;
-				if (!entry.Live || !entry.Asset.IsValid() || (entry.Lease.GetRevision() == entry.Revision && !shaderReloaded))
+				const bool reloaded = entry.Asset.IsValid() && entry.Lease.GetRevision() != entry.Revision;
+				// A texture that arrived from a background load, or reloaded, takes its element (FD-22).
+				bool retextured = false;
+				for (std::size_t index = 0; index < entry.Textures.size(); ++index)
+					retextured = retextured || entry.Textures[index].GetRevision() != entry.TextureRevisions[index];
+				if (!reloaded && !shaderReloaded && !retextured)
 					continue;
 				const auto wasLit = state.Materials[slot].Flags & GpuMaterialLit;
 				const auto wasKey = entry.ShaderKey;
@@ -175,6 +183,28 @@ namespace Raven
 						if (state.Objects[object].Material == slot && !state.Sources[object].Sprite)
 							Write(object, false, false, false, regroup);
 			}
+		}
+
+		// Rewrites the objects whose mesh was loading in the background once it has arrived; one whose load
+		// failed draws nothing, like any unusable mesh (FD-22).
+		void RetryPendingMeshes()
+		{
+			auto& state = m_State;
+			std::erase_if(state.PendingMeshes, [&](Entity entity)
+			{
+				const auto index = IndexOf(entity);
+				const auto slot = index < state.SlotOfIndex.size() ? state.SlotOfIndex[index] : RenderWorld::State::NoSlot;
+				if (slot == RenderWorld::State::NoSlot || !(state.Entities[slot] == entity) || !state.Sources[slot].MeshPending)
+					return true;
+				const auto* lease = m_Resolve ? m_Resolve(state.MeshRefs[slot].Id, AssetKind::Mesh) : nullptr;
+				if (lease && lease->GetLoadState() == AssetLoadState::Loading)
+					return false;
+				state.Sources[slot].MeshPending = false;
+				// Forgetting the resolved reference makes the write resolve it again.
+				state.MeshRefs[slot] = {};
+				Write(slot, false, false, true);
+				return true;
+			});
 		}
 
 		// Rewrites objects whose mesh, world transform or material changed after since.
@@ -483,16 +513,33 @@ namespace Raven
 			entry.ShaderLease = {};
 			entry.ShaderRevision = 0;
 			entry.ShaderKey = 0;
-			if (entry.Asset.IsValid())
+			const auto* file = entry.Asset.IsValid() ? entry.Lease.GetMaterial() : nullptr;
+			if (entry.Asset.IsValid() && !file)
 			{
-				const auto& definition = *entry.Lease.GetMaterial();
+				// A material file loading in the background draws white, lit and untextured until it
+				// arrives (FD-22).
+				record.BaseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+				record.Flags = GpuMaterialLit;
+				entry.Revision = entry.Lease.GetRevision();
+			}
+			else if (file)
+			{
+				const auto& definition = *file;
 				record.BaseColor = definition.BaseColor;
 				textures = definition.Textures;
 				record.Flags = definition.Lit ? GpuMaterialLit : 0u;
 				entry.Revision = entry.Lease.GetRevision();
-				if (definition.Shader.IsValid())
+				const auto* loading = definition.Shader.IsValid() && m_Resolve ? m_Resolve(definition.Shader, AssetKind::Shader)
+					: nullptr;
+				if (loading && loading->GetLoadState() == AssetLoadState::Loading)
 				{
-					const auto* lease = m_Resolve ? m_Resolve(definition.Shader, AssetKind::Shader) : nullptr;
+					// The engine's lit shader draws until the shader arrives; its revision event regroups.
+					entry.ShaderLease = *loading;
+					entry.ShaderRevision = loading->GetRevision();
+				}
+				else if (definition.Shader.IsValid())
+				{
+					const auto* lease = loading;
 					const auto* shader = lease ? lease->GetMaterialShader() : nullptr;
 					auto shaderTextures = textures;
 					std::string problem = shader ? PackParameters(definition, *shader, block, shaderTextures, samplers)
@@ -522,11 +569,13 @@ namespace Raven
 			{
 				entry.Textures[index] = {};
 				// Bindless element 0 is the context's white texture (G4).
+				// A texture still loading samples white until it arrives (FD-22).
 				if (const auto* lease = textures[index].IsValid() && m_Resolve ? m_Resolve(textures[index], AssetKind::Texture) : nullptr)
 				{
 					entry.Textures[index] = *lease;
-					record.Textures[index] = lease->GetTexture().GetBindlessIndex();
+					record.Textures[index] = lease->IsReady() ? lease->GetTexture().GetBindlessIndex() : 0u;
 				}
+				entry.TextureRevisions[index] = entry.Textures[index].GetRevision();
 				record.Samplers[index] = samplers[index];
 			}
 			// A texture parameter's first word is its bindless element.
@@ -559,7 +608,7 @@ namespace Raven
 				if (const auto found = state.MaterialOfAsset.find(component.Material.Id); found != state.MaterialOfAsset.end())
 					slot = found->second;
 				else if (const auto* lease = m_Resolve ? m_Resolve(component.Material.Id, AssetKind::Material) : nullptr;
-					lease && lease->GetMaterial())
+					lease && (lease->GetMaterial() || lease->GetLoadState() == AssetLoadState::Loading))
 				{
 					slot = NewMaterial();
 					auto& entry = state.MaterialEntries[slot];
@@ -655,6 +704,16 @@ namespace Raven
 				const bool resolve = added || !(reference == mesh.Mesh);
 				const auto handle = resolve ? (m_ResolveMesh ? m_ResolveMesh(entity, mesh.Mesh) : MeshHandle{})
 					: state.Groups[object.Group].Key.Mesh;
+				// A mesh loading in the background draws nothing and is retried until it arrives (FD-22).
+				if (resolve)
+				{
+					const auto* lease = handle.IsNull() && mesh.Mesh.IsValid() && m_Resolve ? m_Resolve(mesh.Mesh.Id, AssetKind::Mesh)
+						: nullptr;
+					const bool pending = lease && lease->GetLoadState() == AssetLoadState::Loading;
+					if (pending && !state.Sources[slot].MeshPending)
+						state.PendingMeshes.push_back(entity);
+					state.Sources[slot].MeshPending = pending;
+				}
 				// The material's shader picks the pipeline (B0 contract 7).
 				const auto& entry = state.MaterialEntries[material];
 				const auto* shader = entry.ShaderLease.GetMaterialShader();
@@ -871,6 +930,8 @@ namespace Raven
 			for (const auto& entry : batch.Entries)
 				sync.Reconcile(entry.Target);
 		sync.ApplyTicks(since);
+		if (!state.PendingMeshes.empty())
+			sync.RetryPendingMeshes();
 		sync.RefreshMaterials();
 	}
 }

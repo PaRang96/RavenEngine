@@ -71,10 +71,13 @@ namespace Raven
 
 		// Full affine position; rotation-only ancestor chain ignores scale/reflection for axes.
 		RAVEN_API CameraView GetCameraView(ECS::Entity entity, float aspect) const;
+		// Loads now: scene load preloads every reference this way.
 		RAVEN_API const AssetLease& UseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
 		// Non-throwing form for game-written references: a data error (nil or unregistered ID,
-		// wrong kind, missing file, a decode or upload failure) returns null and logs once per asset.
-		// A skipped asset stays skipped until the scene reloads.
+		// wrong kind, missing file) returns null and logs once per asset, and a skipped asset stays
+		// skipped until the scene reloads. An asset the scene does not hold yet loads in the background
+		// (docs/RenderingContentDesign.md, FD-22): the lease is Loading until then, and a failed decode
+		// leaves it Failed, logged once.
 		RAVEN_API const AssetLease* TryUseAsset(const AssetCatalog& catalog, AssetId id, AssetKind kind);
 		RAVEN_API const AssetLease& GetAsset(AssetId id) const;
 		// True for a live entity this scene owns.

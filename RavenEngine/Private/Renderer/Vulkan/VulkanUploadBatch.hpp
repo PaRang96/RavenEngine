@@ -11,10 +11,11 @@ namespace Raven
 {
 	class VulkanFrameTimeline;
 
-	// The per-frame upload batch (docs/RenderingContentDesign.md, B0 contract 5): texture contents
-	// created between frames are recorded into one command buffer, with no wait, and submitted on
-	// the graphics queue just before the next frame. It signals the frame timeline and ends in a
-	// transfer-to-fragment barrier, so the frame that first samples a texture finds it filled.
+	// The per-frame upload batch (docs/RenderingContentDesign.md, B0 contract 5): texture contents and
+	// mesh pool ranges created between frames are recorded into one command buffer, with no wait, and
+	// submitted on the graphics queue just before the next frame. It signals the frame timeline and ends
+	// in a transfer-to-shader and vertex-input barrier, so the frame that first draws with them finds
+	// them filled.
 	class VulkanUploadBatch
 	{
 	public:

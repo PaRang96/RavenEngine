@@ -6,6 +6,7 @@
 #include "Assets/PngFileWatch.hpp"
 #include "Audio/AudioClip.hpp"
 #include "Core/ImporterVersions.hpp"
+#include "Core/JobSystem.hpp"
 #include "Raven/Assets/AssetId.hpp"
 #include "Renderer/Shaders/ShaderLibrary.hpp"
 #include "Renderer/Vulkan/LitShaderInterfaces.hpp"
@@ -16,10 +17,12 @@
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -126,10 +129,17 @@ namespace Raven
 
 	void ManagedAsset::Commit(ManagedAsset& candidate) noexcept
 	{
-		if (!Mesh.IsNull())
+		// A loaded asset's contents are rewritten in place; one that had none (a background load arriving)
+		// takes the candidate's resources, a new mesh and a new bindless element (B0 contract 5).
+		if (!Mesh.IsNull() && !candidate.Mesh.IsNull())
 			Renderer.SwapMeshContents(Mesh, candidate.Mesh);
-		if (!Texture.IsNull())
+		else
+			std::swap(Mesh, candidate.Mesh);
+		if (!Texture.IsNull() && !candidate.Texture.IsNull())
 			Renderer.SwapTextureContents(Texture, candidate.Texture);
+		else
+			std::swap(Texture, candidate.Texture);
+		State = AssetLoadState::Ready;
 		Clip.swap(candidate.Clip);
 		Sound.swap(candidate.Sound);
 		Material.swap(candidate.Material);
@@ -142,11 +152,116 @@ namespace Raven
 		Watch.swap(candidate.Watch);
 	}
 
+	namespace
+	{
+		// One background load (FD-22): the worker reads and decodes the file; the main thread publishes it.
+		struct BackgroundLoad
+		{
+			std::filesystem::path Source;
+			std::optional<DecodedAsset> Decoded;
+			std::string Error;
+			double DecodeMs = 0.0;
+			std::atomic<bool> Done{ false };
+		};
+
+		// Loads still running, so the store can wait for them before it goes away.
+		struct LoadTracker
+		{
+			std::atomic<std::uint32_t> Running{ 0 };
+		};
+
+		struct LoadJob
+		{
+			std::shared_ptr<BackgroundLoad> Load;
+			std::shared_ptr<LoadTracker> Tracker;
+		};
+
+		void RunLoad(void* context, std::uint32_t) noexcept
+		{
+			const std::unique_ptr<LoadJob> job(static_cast<LoadJob*>(context));
+			auto& load = *job->Load;
+			const auto start = std::chrono::steady_clock::now();
+			try
+			{
+				load.Decoded = DecodeAsset(ReadAsset(load.Source), load.Source);
+			}
+			catch (const std::exception& error)
+			{
+				try
+				{
+					load.Error = error.what();
+				}
+				catch (...)
+				{
+				}
+			}
+			catch (...)
+			{
+			}
+			load.DecodeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+			load.Done.store(true, std::memory_order_release);
+			if (job->Tracker->Running.fetch_sub(1, std::memory_order_acq_rel) == 1)
+				job->Tracker->Running.notify_all();
+		}
+	}
+
 	struct AssetStore::Impl
 	{
 		Impl(VulkanContext& renderer, std::filesystem::path root, bool meshes, bool textures)
 			: Renderer(renderer), Root(std::filesystem::absolute(std::move(root))),
 			  WatchMeshes(meshes), WatchTextures(textures) {}
+
+		~Impl()
+		{
+			// Workers hold only the load's own state, but the decoders must finish before the content they
+			// read is torn down with the session.
+			for (auto running = Tracker->Running.load(); running != 0; running = Tracker->Running.load())
+				Tracker->Running.wait(running);
+		}
+
+		// The catalog record of an asset, as Load reads it.
+		static AssetCatalog RecordOf(const ManagedAsset& asset)
+		{
+			AssetCatalog catalog;
+			if (asset.Record.Kind == AssetKind::Texture)
+				catalog.Register(TextureAssetDesc{ asset.Record.Id, asset.Record.SourcePath, asset.ColorSpace });
+			else
+				catalog.Register(asset.Record);
+			return catalog;
+		}
+
+		// Publishes a finished background load into its asset; a failed one is reported once.
+		bool Publish(ManagedAsset& asset, BackgroundLoad& load)
+		{
+			if (asset.State != AssetLoadState::Loading)
+				return false;
+			try
+			{
+				if (!load.Decoded)
+					throw std::runtime_error(load.Error.empty() ? "the decoder failed" : load.Error);
+				const auto start = std::chrono::steady_clock::now();
+				auto candidate = Load(RecordOf(asset), asset.Record.Id, std::move(load.Decoded));
+				asset.Commit(*candidate);
+				const std::chrono::duration<double, std::milli> publish = std::chrono::steady_clock::now() - start;
+				Log(LogLevel::Info, std::format("Loaded {} {} in the background: decode {:.3f} ms, publish {:.3f} ms",
+					AssetKindName(asset.Record.Kind), PathToUtf8(asset.Source), load.DecodeMs, publish.count()));
+				return true;
+			}
+			catch (const std::exception& error)
+			{
+				asset.State = AssetLoadState::Failed;
+				Log(LogLevel::Warning, "Asset " + asset.Record.Id.ToString() + " could not be loaded and keeps its "
+					"placeholder until its scene reloads: " + error.what());
+				return false;
+			}
+		}
+
+		// Finishes a loading asset on the calling thread, for a scene that needs it now.
+		void LoadNow(ManagedAsset& asset)
+		{
+			auto candidate = Load(RecordOf(asset), asset.Record.Id);
+			asset.Commit(*candidate);
+		}
 
 		std::shared_ptr<ManagedAsset> Load(const AssetCatalog& catalog, AssetId id,
 			std::optional<DecodedAsset> decoded = std::nullopt)
@@ -208,6 +323,14 @@ namespace Raven
 		const bool WatchMeshes;
 		const bool WatchTextures;
 		std::map<AssetId, std::weak_ptr<ManagedAsset>> Entries;
+		JobSystem* Workers = nullptr;
+		struct Pending
+		{
+			std::weak_ptr<ManagedAsset> Asset;
+			std::shared_ptr<BackgroundLoad> Load;
+		};
+		std::vector<Pending> Loads;
+		std::shared_ptr<LoadTracker> Tracker = std::make_shared<LoadTracker>();
 	};
 
 	struct AssetCatalogUpdate::Impl
@@ -260,7 +383,60 @@ namespace Raven
 		}
 		if (asset->Record.Kind != kind)
 			throw std::invalid_argument("Cannot change a live asset's type: " + id.ToString());
+		// A scene preloads what it references, so an asset still loading in the background is finished
+		// here; its worker's result is then dropped.
+		if (asset->State != AssetLoadState::Ready)
+			m_Impl->LoadNow(*asset);
 		return AssetLease(std::move(asset));
+	}
+
+	AssetLease AssetStore::Request(const AssetCatalog& catalog, AssetId id, AssetKind kind)
+	{
+		if (!m_Impl->Workers)
+			return Acquire(catalog, id, kind);
+		if (catalog.Get(id).Kind != kind)
+			throw std::invalid_argument("Incorrect scene asset type: " + id.ToString());
+		const auto source = ResolveAssetPath(m_Impl->Root, catalog.Get(id).SourcePath);
+		if (!std::filesystem::is_regular_file(source))
+			throw std::runtime_error("Missing referenced scene asset: " + id.ToString());
+		Collect();
+		auto& entry = m_Impl->Entries[id];
+		if (auto asset = entry.lock())
+		{
+			if (asset->Record.Kind != kind)
+				throw std::invalid_argument("Cannot change a live asset's type: " + id.ToString());
+			return AssetLease(std::move(asset));
+		}
+		// No contents until the worker's decode is published (FD-22).
+		auto asset = std::make_shared<ManagedAsset>(m_Impl->Renderer);
+		asset->Record = catalog.Get(id);
+		asset->Source = source;
+		if (kind == AssetKind::Texture)
+			asset->ColorSpace = catalog.GetTexture({ id }).ColorSpace;
+		asset->State = AssetLoadState::Loading;
+		auto load = std::make_shared<BackgroundLoad>();
+		load->Source = source;
+		m_Impl->Loads.push_back({ asset, load });
+		auto job = std::make_unique<LoadJob>(LoadJob{ load, m_Impl->Tracker });
+		m_Impl->Tracker->Running.fetch_add(1, std::memory_order_relaxed);
+		try
+		{
+			m_Impl->Workers->Submit(&RunLoad, job.get(), 0, JobSystem::Priority::Background);
+		}
+		catch (...)
+		{
+			m_Impl->Tracker->Running.fetch_sub(1, std::memory_order_relaxed);
+			m_Impl->Loads.pop_back();
+			throw;
+		}
+		job.release();
+		entry = asset;
+		return AssetLease(std::move(asset));
+	}
+
+	void AssetStore::UseWorkers(JobSystem* workers) noexcept
+	{
+		m_Impl->Workers = workers;
 	}
 
 	const char* AssetStore::FindReferenceError(const AssetCatalog& catalog, AssetId id, AssetKind kind) const
@@ -297,10 +473,19 @@ namespace Raven
 	{
 		Collect();
 		AssetReloadResult result;
+		// Finished background loads first; one whose asset was released is dropped.
+		std::erase_if(m_Impl->Loads, [&](Impl::Pending& pending)
+		{
+			if (!pending.Load->Done.load(std::memory_order_acquire))
+				return false;
+			if (const auto asset = pending.Asset.lock())
+				result.Loaded += m_Impl->Publish(*asset, *pending.Load) ? 1 : 0;
+			return true;
+		});
 		for (const auto& [id, weak] : m_Impl->Entries)
 		{
 			auto current = weak.lock();
-			if (!current || !current->Watch)
+			if (!current || !current->Watch || current->State != AssetLoadState::Ready)
 				continue;
 			auto decoded = current->Watch->Take();
 			if (!decoded)
@@ -308,12 +493,7 @@ namespace Raven
 			try
 			{
 				const auto publishStart = std::chrono::steady_clock::now();
-				AssetCatalog catalog;
-				if (current->Record.Kind == AssetKind::Texture)
-					catalog.Register(TextureAssetDesc{ id, current->Record.SourcePath, current->ColorSpace });
-				else
-					catalog.Register(current->Record);
-				auto candidate = m_Impl->Load(catalog, id, std::move(decoded));
+				auto candidate = m_Impl->Load(Impl::RecordOf(*current), id, std::move(decoded));
 				if (!candidate->IsCurrent())
 					continue;
 				// Commit swaps in the candidate's fresh watch, so the summary comes from this one.
@@ -351,6 +531,7 @@ namespace Raven
 				++result.ResidentAssets;
 				result.Watchers += asset->Watch != nullptr;
 			}
+		result.Loading = m_Impl->Loads.size();
 		return result;
 	}
 
@@ -376,6 +557,11 @@ namespace Raven
 	}
 
 	AssetKind AssetLease::GetKind() const noexcept { return m_Asset ? m_Asset->Record.Kind : AssetKind::Unknown; }
+
+	AssetLoadState AssetLease::GetLoadState() const noexcept
+	{
+		return m_Asset ? m_Asset->State : AssetLoadState::Failed;
+	}
 
 	MeshHandle AssetLease::GetMesh() const
 	{

@@ -42,8 +42,10 @@ namespace Raven
 		std::shared_ptr<const SoundEvent> Sound;
 		std::shared_ptr<const MaterialDefinition> Material;
 		std::shared_ptr<const MaterialShader> Shader;
-		// Bumped by every committed reload, so holders of a lease can tell new contents.
+		// Bumped by every committed reload and by a background load's arrival, so holders of a lease can
+		// tell new contents.
 		std::uint64_t Revision = 0;
+		AssetLoadState State = AssetLoadState::Ready;
 		std::unique_ptr<SettledFileWatch<DecodedAsset>> Watch;
 	};
 }

@@ -66,15 +66,17 @@ namespace Raven
 			return;
 		auto& slot = *m_Open;
 		m_Open = nullptr;
-		// Everything the batch wrote is visible to the fragment and vertex shaders of later frames.
+		// Everything the batch wrote is visible to the vertex input and the vertex and fragment shaders of
+		// later frames: texture contents and mesh pool ranges (FD-22).
 		VkMemoryBarrier2KHR barrier{};
 		barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR;
 		barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
 		barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
 		barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR |
+			VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT_KHR | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR |
 			VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
-		barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_READ_BIT_KHR |
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
+		barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT_KHR | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT_KHR |
+			VK_ACCESS_2_INDEX_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR;
 		VkDependencyInfoKHR dependency{};
 		dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
 		dependency.memoryBarrierCount = 1;

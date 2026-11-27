@@ -655,10 +655,12 @@ namespace Raven
 			error = m_Store ? m_Store->FindReferenceError(catalog, id, kind) : "no asset store";
 		if (!error)
 		{
-			// Decode and upload failures are data errors too (FD-06): the reference draws nothing.
+			// A runtime-only ID loads on the workers; its holders draw a placeholder until it arrives (FD-22).
 			try
 			{
-				return &UseAsset(catalog, id, kind);
+				if (!m_Store)
+					throw std::invalid_argument("This scene has no asset store");
+				return &m_Assets.emplace(id, m_Store->Request(catalog, id, kind)).first->second;
 			}
 			catch (const std::exception& failure)
 			{

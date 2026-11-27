@@ -92,6 +92,9 @@ namespace Raven
 		Vec4 InlineColor;
 		AssetLease Lease;
 		std::array<AssetLease, 4> Textures;
+		// The texture leases' revisions the record was built from; a texture loaded in the background
+		// arriving, or reloading, changes one (FD-22).
+		std::array<std::uint64_t, 4> TextureRevisions{};
 		// The material lease's revision the record was built from; a reload changes it.
 		std::uint64_t Revision = 0;
 		// The material shader and the revision its parameters were packed from (B0 contract 7).
@@ -168,6 +171,8 @@ namespace Raven
 		// The slot's position in State::Blended, or NoSlot.
 		std::uint32_t Blended = 0xffffffffu;
 		bool Sprite = false;
+		// The mesh is loading in the background (FD-22); the slot is in State::PendingMeshes.
+		bool MeshPending = false;
 	};
 
 	struct RenderWorld::State
@@ -198,6 +203,8 @@ namespace Raven
 		std::uint32_t SpriteCount = 0;
 		// Slots of blended sprites, in no order: the renderer sorts the visible ones back to front.
 		std::vector<std::uint32_t> Blended;
+		// Entities whose mesh is loading in the background; each Sync retries them until it arrives.
+		std::vector<ECS::Entity> PendingMeshes;
 		std::uint32_t NextSequence = 0;
 
 		// Slots changed since a renderer last committed an upload. Entries past the object

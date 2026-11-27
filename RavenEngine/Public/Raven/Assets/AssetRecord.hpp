@@ -7,6 +7,16 @@
 
 namespace Raven
 {
+	// Where an asset's contents are (docs/RenderingContentDesign.md, FD-22). Assets a scene preloads are
+	// Ready; an ID first used at runtime loads on a worker, and its holders draw a placeholder until then.
+	enum class AssetLoadState : std::uint8_t
+	{
+		Ready,
+		Loading,
+		// The background load failed; the asset keeps its placeholder until its scene reloads.
+		Failed,
+	};
+
 	enum class AssetKind : std::uint8_t
 	{
 		Unknown = 0,

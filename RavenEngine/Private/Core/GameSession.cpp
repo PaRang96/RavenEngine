@@ -350,6 +350,11 @@ namespace Raven
 			m_Physics ? *m_Physics : none, m_Commands, *this, m_PresentationRandom, ui };
 	}
 
+	void GameSession::SetWorkers(JobSystem* workers) noexcept
+	{
+		m_Project.GetAssets().UseWorkers(workers);
+	}
+
 	void GameSession::SetUi(Text::TextSystem* text, UI::UiContext* game, UI::UiContext* developer)
 	{
 		m_Text = text;
@@ -357,16 +362,17 @@ namespace Raven
 		m_DeveloperUi = developer;
 		if (!m_Ui)
 			return;
-		// UI images use the active scene's texture leases, like sprites; a bad reference draws nothing.
+		// UI images use the active scene's texture leases, like sprites; a bad reference draws nothing, and
+		// a texture loading in the background draws white until it arrives (FD-22).
 		m_Ui->SetTextureResolver([this](const AssetId& id) -> std::optional<std::uint32_t>
 		{
 			auto& scene = m_Session->GetActive();
 			const auto* lease = scene.FindAsset(id);
 			if (!lease || lease->GetKind() != AssetKind::Texture)
 				lease = scene.TryUseAsset(m_Project.GetCatalog(), id, AssetKind::Texture);
-			if (!lease)
+			if (!lease || lease->GetLoadState() == AssetLoadState::Failed)
 				return std::nullopt;
-			return lease->GetTexture().GetBindlessIndex();
+			return lease->IsReady() ? lease->GetTexture().GetBindlessIndex() : 0u;
 		});
 	}
 
@@ -417,7 +423,8 @@ namespace Raven
 		const auto* lease = scene.FindAsset(sound.Id);
 		if (!lease)
 			lease = scene.TryUseAsset(m_Project.GetCatalog(), sound.Id, AssetKind::Audio);
-		return lease ? m_Audio.Play(*lease, params) : SoundHandle{};
+		// A clip loading in the background is silent until it arrives (FD-22).
+		return lease && lease->IsReady() ? m_Audio.Play(*lease, params) : SoundHandle{};
 	}
 
 	SoundHandle GameSession::PlaySound(AssetRef<SoundAsset> sound, const SoundOverrides& overrides)
@@ -437,7 +444,8 @@ namespace Raven
 		const auto* clip = scene.FindAsset(clipId);
 		if (!clip)
 			clip = scene.TryUseAsset(catalog, clipId, AssetKind::Audio);
-		if (!clip)
+		// The event, and then its clip, may still be loading in the background: silent until they arrive.
+		if (!clip || !clip->IsReady())
 			return {};
 		const auto range = [this](float low, float high)
 		{

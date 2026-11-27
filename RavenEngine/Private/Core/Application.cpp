@@ -393,6 +393,7 @@ namespace Raven
 		// The session dies before the module, the render world, the renderer and the window.
 		GameSession session(renderer, instance, config);
 		session.SetUi(&text, &gameUi, &developerUi);
+		session.SetWorkers(&workers);
 		// The project's fixed-step rate, fixed for the session (docs/GameServicesDesign.md, FD-34).
 		FixedGameplayStep gameplay(session.GetFixedStepRate());
 		// Host-owned physics world of the active scene (FD-32). It dies before the registry it reads

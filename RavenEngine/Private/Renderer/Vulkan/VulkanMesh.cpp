@@ -1,7 +1,7 @@
 #include "Renderer/Vulkan/VulkanMesh.hpp"
 #include "Core/DataError.hpp"
 
-#include "Renderer/Vulkan/VulkanFrameTimeline.hpp"
+#include "Renderer/Vulkan/VulkanUploadBatch.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 
 #include <algorithm>
@@ -141,35 +141,6 @@ namespace Raven
 			return *first;
 		}
 
-		struct UploadCommands
-		{
-			UploadCommands(VkDevice device, VkCommandPool pool) : Device(device), Pool(pool)
-			{
-				VkCommandBufferAllocateInfo allocation{};
-				allocation.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-				allocation.commandPool = pool;
-				allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-				allocation.commandBufferCount = 1;
-				const VkResult result = vkAllocateCommandBuffers(device, &allocation, &Commands);
-				if (result != VK_SUCCESS)
-					Commands = VK_NULL_HANDLE;
-				CheckMeshResult(result, "vkAllocateCommandBuffers (mesh upload)");
-			}
-
-			~UploadCommands()
-			{
-				if (Commands != VK_NULL_HANDLE)
-					vkFreeCommandBuffers(Device, Pool, 1, &Commands);
-			}
-
-			UploadCommands(const UploadCommands&) = delete;
-			UploadCommands& operator=(const UploadCommands&) = delete;
-
-			VkDevice Device;
-			VkCommandPool Pool;
-			VkCommandBuffer Commands = VK_NULL_HANDLE;
-		};
-
 		void Barrier(const VulkanDeviceCommands& vk, VkCommandBuffer commands,
 			VkPipelineStageFlags2KHR sourceStages, VkAccessFlags2KHR sourceAccess,
 			VkPipelineStageFlags2KHR destinationStages, VkAccessFlags2KHR destinationAccess)
@@ -191,38 +162,16 @@ namespace Raven
 	VulkanMeshPool::VulkanMeshPool(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice)
 		: m_DeviceOwner(device), m_PhysicalDevice(physicalDevice)
 	{
-		VkCommandPoolCreateInfo poolInfo{};
-		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-		poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-		poolInfo.queueFamilyIndex = physicalDevice.QueueFamilies.Graphics.value();
-		VkCommandPool commandPool = VK_NULL_HANDLE;
-		CheckMeshResult(vkCreateCommandPool(device.Get(), &poolInfo, nullptr, &commandPool),
-			"vkCreateCommandPool (mesh upload)");
-		m_CommandPool = commandPool;
-		try
-		{
-			// vkCmdDrawIndexed takes a signed vertex offset.
-			m_Vertices = CreatePool(device, physicalDevice, sizeof(ColorVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()), InitialVertices);
-			m_Indices = CreatePool(device, physicalDevice, sizeof(std::uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				std::numeric_limits<std::uint32_t>::max(), InitialIndices);
-		}
-		catch (...)
-		{
-			vkDestroyCommandPool(device.Get(), m_CommandPool, nullptr);
-			throw;
-		}
+		// vkCmdDrawIndexed takes a signed vertex offset.
+		m_Vertices = CreatePool(device, physicalDevice, sizeof(ColorVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()), InitialVertices);
+		m_Indices = CreatePool(device, physicalDevice, sizeof(std::uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			std::numeric_limits<std::uint32_t>::max(), InitialIndices);
 	}
 
-	VulkanMeshPool::~VulkanMeshPool()
-	{
-		vkDestroyCommandPool(m_DeviceOwner.Get(), m_CommandPool, nullptr);
-	}
-
-	VulkanMeshPool::Ranges VulkanMeshPool::Upload(VulkanFrameTimeline& timeline,
+	VulkanMeshPool::Ranges VulkanMeshPool::Upload(VulkanUploadBatch& uploads,
 		std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices)
 	{
-		const auto device = m_DeviceOwner.Get();
 		const auto vertexBytes = std::as_bytes(vertices);
 		const auto indexBytes = std::as_bytes(indices);
 		// Everything that can fail before submission runs before the pools change, or on copies.
@@ -231,8 +180,6 @@ namespace Raven
 			VulkanBuffer::Mapping::Persistent);
 		std::memcpy(staging->GetMapped(), vertexBytes.data(), vertexBytes.size());
 		std::memcpy(staging->GetMapped() + vertexBytes.size(), indexBytes.data(), indexBytes.size());
-		auto upload = std::make_shared<const UploadCommands>(device, m_CommandPool);
-		const auto commands = upload->Commands;
 
 		auto vertexPool = m_Vertices;
 		auto indexPool = m_Indices;
@@ -245,10 +192,13 @@ namespace Raven
 		const auto firstIndex = Allocate(m_DeviceOwner, m_PhysicalDevice, indexPool, indexCount,
 			outgrownIndices, outgrownIndexCapacity);
 
-		VkCommandBufferBeginInfo begin{};
-		begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		CheckMeshResult(vkBeginCommandBuffer(commands, &begin), "vkBeginCommandBuffer (mesh upload)");
+		// The keep list grows before anything is recorded, so recording cannot fail halfway.
+		uploads.Keep(staging);
+		if (outgrownVertices)
+			uploads.Keep(outgrownVertices);
+		if (outgrownIndices)
+			uploads.Keep(outgrownIndices);
+		const auto commands = uploads.Record();
 		const auto& vk = m_DeviceOwner.GetCommands();
 		constexpr VkPipelineStageFlags2KHR geometryInput =
 			VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT_KHR | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR;
@@ -273,37 +223,14 @@ namespace Raven
 		vkCmdCopyBuffer(commands, staging->Get(), vertexPool.Buffer->Get(), 1, &vertexCopy);
 		const VkBufferCopy indexCopy{ vertexBytes.size(), indexPool.ElementSize * firstIndex, indexBytes.size() };
 		vkCmdCopyBuffer(commands, staging->Get(), indexPool.Buffer->Get(), 1, &indexCopy);
+		// Later uploads in the same batch may reuse or grow the pools; the batch's closing barrier makes
+		// the copies visible to vertex input.
 		Barrier(vk, commands, VK_PIPELINE_STAGE_2_COPY_BIT_KHR, VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			geometryInput, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT_KHR | VK_ACCESS_2_INDEX_READ_BIT_KHR);
-		CheckMeshResult(vkEndCommandBuffer(commands), "vkEndCommandBuffer (mesh upload)");
-
-		VkSemaphoreSubmitInfoKHR signal{};
-		signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR;
-		signal.semaphore = timeline.Get();
-		signal.value = timeline.GetNextValue();
-		signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
-		VkCommandBufferSubmitInfoKHR commandInfo{};
-		commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO_KHR;
-		commandInfo.commandBuffer = commands;
-		VkSubmitInfo2KHR submission{};
-		submission.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR;
-		submission.commandBufferInfoCount = 1;
-		submission.pCommandBufferInfos = &commandInfo;
-		submission.signalSemaphoreInfoCount = 1;
-		submission.pSignalSemaphoreInfos = &signal;
-		CheckMeshResult(vk.QueueSubmit2(m_DeviceOwner.GetGraphicsQueue(), 1, &submission, VK_NULL_HANDLE),
-			"vkQueueSubmit2KHR (mesh upload)");
+			VK_PIPELINE_STAGE_2_COPY_BIT_KHR, VK_ACCESS_2_TRANSFER_READ_BIT_KHR | VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR);
 
 		// Committed: nothing below throws.
-		timeline.MarkSubmitted();
 		m_Vertices = std::move(vertexPool);
 		m_Indices = std::move(indexPool);
-		timeline.Retire(std::move(staging));
-		timeline.Retire(std::move(upload));
-		if (outgrownVertices)
-			timeline.Retire(std::move(outgrownVertices));
-		if (outgrownIndices)
-			timeline.Retire(std::move(outgrownIndices));
 		return { static_cast<std::int32_t>(firstVertex), vertexCount, firstIndex, indexCount };
 	}
 
@@ -320,13 +247,13 @@ namespace Raven
 		}
 	}
 
-	VulkanMeshData::VulkanMeshData(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
+	VulkanMeshData::VulkanMeshData(VulkanMeshPool& pool, VulkanUploadBatch& uploads,
 		std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices)
 		: m_Pool(pool),
 		  PickVertices(PickPositions(ValidateMesh(vertices, indices))),
 		  PickIndices(indices.begin(), indices.end()),
 		  LocalBounds(CalculateMeshBounds(vertices, indices)),
-		  Ranges(pool.Upload(timeline, vertices, indices))
+		  Ranges(pool.Upload(uploads, vertices, indices))
 	{
 	}
 
@@ -335,15 +262,9 @@ namespace Raven
 		m_Pool.Free(Ranges);
 	}
 
-	VulkanMesh::VulkanMesh(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
+	VulkanMesh::VulkanMesh(VulkanMeshPool& pool, VulkanUploadBatch& uploads,
 		std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices)
-		: m_Data(std::make_shared<const VulkanMeshData>(pool, timeline, vertices, indices))
+		: m_Data(std::make_shared<const VulkanMeshData>(pool, uploads, vertices, indices))
 	{
-	}
-
-	void VulkanMesh::Replace(VulkanMeshPool& pool, VulkanFrameTimeline& timeline,
-		std::span<const ColorVertex> vertices, std::span<const std::uint32_t> indices)
-	{
-		m_Data = std::make_shared<const VulkanMeshData>(pool, timeline, vertices, indices);
 	}
 }
