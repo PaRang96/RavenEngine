@@ -176,6 +176,13 @@ execute_process(
 if(NOT built EQUAL 0)
     message(FATAL_ERROR "Game module build failed: ${built}")
 endif()
+# FAT and exFAT drives store file times in whole seconds, rounded ahead of the write, while Ninja
+# logs each output at its command's start. A file generated just before (the PCH source after a
+# configure) then looks newer than what was built from it, and the next edit rebuilds the whole
+# module, PCH included. Logging the outputs' stored times puts both sides on the drive's clock.
+# An edit made during the build is still rebuilt: its content stamp reconfigures it above.
+execute_process(COMMAND [==[@CMAKE_MAKE_PROGRAM@]==] -C "${build_directory}" -t restat
+    OUTPUT_QUIET ERROR_QUIET)
 raven_trace_phase(compile)
 raven_game_output_digest(output_digest)
 if(NOT output_digest)
