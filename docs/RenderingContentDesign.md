@@ -394,6 +394,16 @@ The game-contract changes of the window above, landed together:
 - **Removed:** `AssetResources`, the `PngFileWatch` class, the six `VulkanContext` entry points only it used and the camera-only `DrawFrame` overloads; `AudioPlayer` lost its uncached path and its catalog, and moved to `Private/Audio`.
 - **Checked:** Debug and Release build; the 9 tests pass; all six captures are bit-identical to B1's; the Arena determinism check passes, its 600-tick hash now `36f045813e737e08` because the new fields are part of every captured scene.
 
+### B2, part 2 — asset identity with the files (2026-11-27)
+
+Contract 9, built:
+- **Formats:** `.ravenasset` sidecars (`Private/Assets/ContentIndex.*`); scene files gained an asset section written first, which older readers keep as an unknown section, and `ReadSceneFileId` reads it from the first 64 bytes; `raven-sound 2` adds `id`. `raven-project 3` holds settings and the scene order; `content index` with `asset` records is a packaged player's generated index. Version 2 projects and version 1 sound events are still read.
+- **Discovery:** a version 3 project scans its content root; development writes the sidecars of new imported files. The project watch now reads the project text plus a fingerprint of every asset file, so a new or edited sidecar republishes the project on the reload service's audit, with no watch per file.
+- **Tools:** `RavenSceneTool upgrade-project` and `list`; `stage-player` writes the generated index, and now also the project's `fixed-step` and `physics-limits`, which the version 2 manifest had dropped. `SamplesTool` and `ArenaTool` write the IDs into what they generate (scene headers, sound events, clip sidecars); the benchmark and capture scripts read scene IDs through `list`.
+- **Content:** both game roots were upgraded; their `list` output is identical before and after, and regenerating Arena's sounds reproduces the upgraded files byte for byte.
+- **Checked live:** a PNG dropped into Samples' content during a session got its sidecar and the project republished in about two seconds. A copied PNG with its copied sidecar, sorting before the original, got the new ID while the original kept its own; a first version of the rule gave the new ID by path order and so broke the original's references. That bug was found by this check and fixed before commit, and the engine kept the last good world meanwhile. Copies with equal timestamps rewrite nothing and are reported.
+- **Also checked:** the 9 tests; the Arena determinism hash is unchanged (`36f045813e737e08`); Arena's staged player project decodes; all six captures are bit-identical to B1's.
+
 ## Measurements
 
 | # | Measurement | Gate |

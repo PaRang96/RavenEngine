@@ -46,8 +46,13 @@ namespace Raven
 	class SceneProject
 	{
 	public:
+		// Reads raven-project 3 (and 2). Version 3 without a packaged index scans the content root
+		// beside `path` for sidecars and asset headers; createSidecars writes the sidecars of new
+		// imported files (development). Throws for a malformed project.
 		RAVEN_API static SceneProjectDefinition Decode(std::span<const std::byte> bytes,
 			const std::filesystem::path& path);
+		RAVEN_API static SceneProjectDefinition Decode(std::span<const std::byte> bytes,
+			const std::filesystem::path& path, bool createSidecars);
 		RAVEN_API SceneProject(VulkanContext& renderer, std::filesystem::path contentRoot,
 			bool watchProject = false, bool watchMeshes = false, bool watchTextures = false);
 		RAVEN_API ~SceneProject();

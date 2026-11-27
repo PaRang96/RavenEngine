@@ -207,7 +207,7 @@ def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
                             str(source / CONTENT / level), str(stress)],
                            stdout=output, stderr=subprocess.STDOUT, check=True)
             with (source / CONTENT / "Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
-                project.write(f'scene {STRESS[stress]} "{level}"\n')
+                project.write(f'scene {STRESS[stress]}\n')
             subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
     return source
 
@@ -226,7 +226,7 @@ def sprite_snapshot(report):
                 subprocess.run([str(runtime(source) / "SamplesTool.exe"), "create-sprite-benchmark",
                                 str(source / CONTENT / level), str(count)],
                                stdout=output, stderr=subprocess.STDOUT, check=True)
-                project.write(f'scene {scene} "{level}"\n')
+                project.write(f'scene {scene}\n')
         subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
     return source
 

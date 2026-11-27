@@ -287,24 +287,51 @@ namespace
 	}
 }
 
+namespace
+{
+	// The IDs generated scenes carry in their header (docs/RenderingContentDesign.md, B0 contract 9).
+	// Stress and sprite scenes are generated into benchmark snapshots only; their IDs match
+	// scripts/Benchmark-Windows3D.py.
+	AssetId BenchmarkId(std::uint32_t count)
+	{
+		switch (count)
+		{
+		case 100: return AssetId::Parse("5f708ee7-8927-4b46-9434-20a5392eb2c4");
+		case 500: return AssetId::Parse("675da478-1d28-4440-8d75-4bccd9942c31");
+		case 2000: return AssetId::Parse("84d2e14b-30ba-4158-b3e4-dcfad32b35e0");
+		case 4000: return AssetId::Parse("b61438cc-321d-41da-b9ec-1d17b34d7357");
+		case 10000: return AssetId::Parse("3c5e1f0a-7d2b-4e61-9a84-1b0c6f2d9e31");
+		case 50000: return AssetId::Parse("8a41d7c2-5b9e-4f03-b6d1-2e7f90c4a358");
+		default: return AssetId::Parse("d29f6b14-0c83-4a7e-8f52-6b1e3a9d07c4");
+		}
+	}
+
+	void SaveScene(SceneFile file, AssetId id, const char* path)
+	{
+		file.Id = id;
+		file.Save(path);
+	}
+}
+
 int main(int argc, char** argv)
 {
 	try
 	{
 		const std::string_view command = argc > 1 ? argv[1] : "";
 		if (command == "create-puzzle" && argc == 3)
-			CreatePuzzle().Save(argv[2]);
+			SaveScene(CreatePuzzle(), AssetId::Parse("7e6879b6-0ceb-4327-95a6-354cc4cc0863"), argv[2]);
 		else if (command == "create-collection" && argc == 3)
-			CreateCollection().Save(argv[2]);
+			SaveScene(CreateCollection(), AssetId::Parse("72c6c544-fcf5-44fd-8e87-09e507df67d8"), argv[2]);
 		else if (command == "create-physics" && argc == 3)
-			CreatePhysics().Save(argv[2]);
+			SaveScene(CreatePhysics(), AssetId::Parse("e28e2f44-752b-4474-9ce4-0677d5177af2"), argv[2]);
 		else if (command == "create-sprite-benchmark" && argc == 4)
 		{
 			std::uint32_t count = 0;
 			const std::string_view value(argv[3]);
 			if (std::from_chars(value.data(), value.data() + value.size(), count).ec != std::errc{})
 				throw std::invalid_argument("Sprite count must be a number");
-			CreateSpriteBenchmark(count).Save(argv[2]);
+			SaveScene(CreateSpriteBenchmark(count), AssetId::Parse(count == 0 ? "c6f2a8d1-4e97-4b3c-8d05-7a1e9f3b6c42"
+				: "5b0e9c3a-2f61-4d8e-a7c4-93e1d6f0b215"), argv[2]);
 		}
 		else if (command == "create-benchmark" && argc == 4)
 		{
@@ -313,7 +340,7 @@ int main(int argc, char** argv)
 			const auto result = std::from_chars(value.data(), value.data() + value.size(), count);
 			if (result.ec != std::errc{} || result.ptr != value.data() + value.size())
 				throw std::invalid_argument("Expected a benchmark mesh count");
-			CreateBenchmark(count).Save(argv[2]);
+			SaveScene(CreateBenchmark(count), BenchmarkId(count), argv[2]);
 		}
 		else
 			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics <output> | "

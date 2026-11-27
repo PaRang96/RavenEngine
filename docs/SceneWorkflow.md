@@ -2,25 +2,31 @@
 
 Each game root (`Games/<Name>`, see [EngineModules.md](EngineModules.md#game-roots-m6a)) has its own content folder with a project catalog and scene files. Add supported assets and scenes through files, then save to observe them in a development session. Game rules live in the game's module. Since M6A (2026-11-24, [DataModelDesign.md](DataModelDesign.md)), scenes use one generic, self-describing format for every component. Prefabs (FD-15) are later work.
 
-## Project data
+## Project data and asset identity
 
-`Games/<Name>/Content/Project.ravenproject` is UTF-8 text with a `raven-project 2` header. Blank lines and `#` comments outside quoted paths are allowed. Paths are Content-relative; use forward slashes and quotes around paths containing spaces. Existing asset UUIDs remain stable when their paths change.
-
-```text
-raven-project 2
-texture 7a590cee-ec82-4a27-927f-860e64619c19 "Textures/UVGrid.png" srgb
-mesh 6938c6b9-72ca-4bc1-b0bf-9dc31e158087 "Meshes/Cube.fbx"
-audio ef451c5a-02db-4d81-89a1-ec2ea98ed719 "Audio/Win.wav"
-scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180 "Levels/Perspective.ravenscene"
-```
-
-**Records.**
-- Records use UUIDv4 identities in one namespace.
-- `texture` requires a PNG and `srgb` or `linear`. `mesh` requires a single-object static FBX. `audio` requires 16-bit PCM WAV.
-- Scenes are `.ravenscene` files in the generic format. The scene-record order is the F4 order.
-- `fixed-step <Hz>` (optional, 10–480, default 60) sets the simulation rate ([FD-34](GameServicesDesign.md#fd-34--smaller-services)). The rate is fixed for a session: an edit during a run logs a warning and applies at the next start. Readers that predate it skip it.
-- `physics-limits <bodies> <body pairs> <contact constraints>` (optional, each 16–4194304, default 65536, 65536 and 10240) sets the physics world's fixed capacities ([Physics.md](Physics.md#project-limits)). Like the step rate, it is fixed for a session.
-- A record kind this reader does not know is skipped with a warning, so later versions can add records (FD-10).
+Since M6B's B2 (2026-11-27, [B0 contract 9](RenderingContentDesign.md#9-asset-sidecars-and-raven-project-3-fd-23)) asset identity lives with the files, and the project keeps only project settings:
+- **Imported files** (PNG, FBX, WAV, FLAC, MP3, Ogg) have a `.ravenasset` sidecar beside them, for example `Textures/UVGrid.png.ravenasset`:
+  ```text
+  raven-asset 1
+  id 7a590cee-ec82-4a27-927f-860e64619c19
+  kind texture
+  color-space srgb
+  ```
+  Drop a new file into `Content/` while a development session runs and its sidecar is written with a new ID within about two seconds; edit `color-space` there. Unknown keys are skipped with a warning.
+- **Raven's own formats** (`.ravenscene`, `.ravensound`) carry their ID in their header, so they need no sidecar.
+- **`Games/<Name>/Content/Project.ravenproject`** is UTF-8 text with a `raven-project 3` header, holding settings and the scene order:
+  ```text
+  raven-project 3
+  fixed-step 60
+  scene 78e12fa6-6bc9-4ad6-953c-ec8f45ad4180  # Levels/Perspective.ravenscene
+  scene d852433d-7890-4cd6-955c-661a3b5503d8  # Levels/Gallery.ravenscene
+  ```
+  The `scene` order is the F4 order, and the first one starts; scenes not listed can still be opened with `--scene` and follow in path order.
+  - `fixed-step <Hz>` (optional, 10–480, default 60) sets the simulation rate ([FD-34](GameServicesDesign.md#fd-34--smaller-services)). It is fixed for a session: an edit during a run logs a warning and applies at the next start.
+  - `physics-limits <bodies> <body pairs> <contact constraints>` (optional, each 16–4194304, default 65536, 65536 and 10240) sets the physics world's fixed capacities ([Physics.md](Physics.md#project-limits)), also fixed for a session.
+  - An unknown record is skipped with a warning (FD-10). A packaged player's project adds `content index` and one `asset` record per file, written by `stage-player`, and is never scanned.
+- **Reported, never silent:** a sidecar without its source is skipped as an orphan; of two sidecars sharing an ID (a copied file), the one written later gets a new ID, and equal timestamps change nothing and report both. A scene or sound event without an ID in its header is reported.
+- **Older projects:** `raven-project 2`, which listed every asset, is still read. `RavenSceneTool <Content-root> upgrade-project` converts it, keeping every ID: it writes the sidecars, puts the IDs into scene and sound-event headers, and checks the result against the old catalog before replacing the project file. `RavenSceneTool <Content-root> list` prints the scenes and assets for scripts.
 
 **Rejected.** The catalog rejects:
 - duplicate or nil identities and unsupported settings;

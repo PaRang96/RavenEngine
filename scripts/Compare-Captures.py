@@ -33,11 +33,14 @@ SCENES = ("Perspective", "Gallery", "Assemblies", "Puzzle", "Collection", "Bench
 HEADER = re.compile(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s")
 
 
-def scene_ids():
+def scene_ids(preset):
+    # The project lists only the scene order; the scene files carry their IDs (raven-project 3).
+    tool = ROOT / "out/build" / preset / "RavenEngine/RavenSceneTool.exe"
+    listing = subprocess.run([str(tool), str(ROOT / "Games/Samples/Content"), "list"], check=True,
+                             capture_output=True, text=True).stdout
     ids = {}
-    project = (ROOT / "Games/Samples/Content/Project.ravenproject").read_text(encoding="utf-8")
-    for line in project.splitlines():
-        match = re.match(r'scene\s+([0-9a-fA-F-]{36})\s+"Levels/(.+)\.ravenscene"', line.strip())
+    for line in listing.splitlines():
+        match = re.match(r"scene\s+([0-9a-fA-F-]{36})\s+Levels/(.+)\.ravenscene$", line.strip())
         if match:
             ids[match.group(2)] = match.group(1)
     return ids
@@ -78,13 +81,13 @@ def capture(directory, preset, timeout):
     executable = ROOT / "out/build" / preset / "RavenEngine/RavenEngine.exe"
     if not executable.is_file():
         raise SystemExit(f"Build {preset} first: {executable} is missing")
-    ids = scene_ids()
+    ids = scene_ids(preset)
     # The engine runs from its own folder, so the screenshot layer needs an absolute path.
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     for name in SCENES:
         if name not in ids:
-            raise SystemExit(f"{name} is not registered in Content/Project.ravenproject")
+            raise SystemExit(f"{name} is not a scene of Games/Samples/Content")
         frames = directory / f"{name}.frames"
         shutil.rmtree(frames, ignore_errors=True)
         frames.mkdir()

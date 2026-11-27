@@ -28,6 +28,7 @@ namespace Raven
 		std::string line;
 		std::size_t number = 0;
 		bool header = false;
+		int version = 0;
 		while (std::getline(file, line))
 		{
 			++number;
@@ -42,10 +43,17 @@ namespace Raven
 			{
 				if (!header)
 				{
-					int version = 0;
-					if (key != "raven-sound" || !(input >> version) || version != 1)
-						throw std::runtime_error("expected raven-sound 1");
+					// Version 2 adds the ID; version 1 is still read (FD-10, version policy).
+					if (key != "raven-sound" || !(input >> version) || (version != 1 && version != 2))
+						throw std::runtime_error("expected raven-sound 1 or 2");
 					header = true;
+				}
+				else if (key == "id" && version == 2)
+				{
+					std::string id;
+					if (!(input >> id))
+						throw std::runtime_error("expected the sound event's asset UUID");
+					event.Id = AssetId::Parse(id);
 				}
 				else if (key == "clip")
 				{
@@ -120,7 +128,7 @@ namespace Raven
 			}
 		}
 		if (!header)
-			throw std::runtime_error(PathToUtf8(path) + ": expected raven-sound 1");
+			throw std::runtime_error(PathToUtf8(path) + ": expected raven-sound 1 or 2");
 		if (event.Clips.empty())
 			throw std::runtime_error(PathToUtf8(path) + ": a sound event needs at least one clip");
 		return event;

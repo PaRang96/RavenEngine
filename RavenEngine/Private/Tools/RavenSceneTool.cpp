@@ -2,6 +2,7 @@
 // the game roots, for example Games/Samples/Tools.
 
 #include "PlayerContent.hpp"
+#include "ProjectUpgrade.hpp"
 
 #include "Raven/Core/Files.hpp"
 #include "Raven/Math/Transform.hpp"
@@ -86,9 +87,20 @@ int main(int argc, char** argv)
 {
 	try
 	{
+		if (argc == 3 && std::string_view(argv[2]) == "upgrade-project")
+		{
+			std::cout << UpgradeProject(std::filesystem::absolute(argv[1])) << '\n';
+			return 0;
+		}
+		if (argc == 3 && std::string_view(argv[2]) == "list")
+		{
+			std::cout << ListProject(std::filesystem::absolute(argv[1]));
+			return 0;
+		}
 		if (argc < 4)
 			throw std::invalid_argument("Usage: RavenSceneTool <Content-root> "
-				"<validate|dump|apply|position|rotation|scale|stage-player> <scene-or-destination> [arguments]");
+				"<validate|dump|apply|position|rotation|scale|stage-player> <scene-or-destination> [arguments] | "
+				"<Content-root> <upgrade-project|list>");
 		const auto root = std::filesystem::absolute(argv[1]);
 		const std::string_view command(argv[2]);
 		const std::filesystem::path input(argv[3]);

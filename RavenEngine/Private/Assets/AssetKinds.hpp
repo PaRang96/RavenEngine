@@ -32,6 +32,9 @@ namespace Raven
 		// An AssetRef of this kind in a scene is a load dependency: leased with the scene and staged
 		// with a player build.
 		bool SceneDependency = false;
+		// A Raven format that stores its own ID in its header; other file-backed kinds have a
+		// .ravenasset sidecar (B0 contract 9).
+		bool IdInHeader = false;
 
 		bool IsFileBacked() const noexcept
 		{
@@ -56,9 +59,9 @@ namespace Raven
 		{ AssetKind::Skeleton, "skeleton", {}, {}, Detail::AssetTag<SkeletonAsset>(), false },
 		{ AssetKind::Animation, "animation", {}, {}, Detail::AssetTag<AnimationAsset>(), false },
 		{ AssetKind::Shader, "shader", {}, {}, Detail::AssetTag<ShaderAsset>(), false },
-		{ AssetKind::Scene, "scene", "scene", { ".ravenscene" }, Detail::AssetTag<SceneAsset>(), false },
+		{ AssetKind::Scene, "scene", "scene", { ".ravenscene" }, Detail::AssetTag<SceneAsset>(), false, true },
 		{ AssetKind::Audio, "audio", "audio", { ".wav", ".flac", ".mp3", ".ogg" }, Detail::AssetTag<AudioAsset>(), true },
-		{ AssetKind::Sound, "sound event", "sound", { ".ravensound" }, Detail::AssetTag<SoundAsset>(), true },
+		{ AssetKind::Sound, "sound event", "sound", { ".ravensound" }, Detail::AssetTag<SoundAsset>(), true, true },
 		{ AssetKind::Font, "font", {}, {}, Detail::AssetTag<FontAsset>(), false } } };
 
 	// The row of a kind; null for Unknown or a value outside the enum.

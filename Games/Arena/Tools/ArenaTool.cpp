@@ -1,7 +1,7 @@
 // Generates the arena's content (docs/GameServicesDesign.md, FD-46 and C9):
 //   ArenaTool create-arena <output.ravenscene>
-//   ArenaTool create-sounds <content root>   synthesized clips (Audio/*.wav) and their sound events
-//                                            (Sounds/*.ravensound), registered in Project.ravenproject
+//   ArenaTool create-sounds <content root>   synthesized clips (Audio/*.wav, each with its .ravenasset
+//                                            sidecar) and their sound events (Sounds/*.ravensound)
 
 #include "ArenaComponents.hpp"
 
@@ -38,7 +38,9 @@ namespace
 	const AssetId Cube = AssetId::Parse("b56e70df-6cdb-4c9f-bf7b-a4fd5c49381c");
 	const AssetId Sphere = AssetId::Parse("97acbc47-2656-47e0-b136-353ee5a0d6de");
 
-	// Sound-event assets and the clips they play (Project.ravenproject lists both).
+	// The arena scene, its sound-event assets and the clips they play. Raven formats carry their ID in
+	// their header and clips in a sidecar (docs/RenderingContentDesign.md, B0 contract 9).
+	const AssetId ArenaScene = AssetId::Parse("ef01d1ef-83d0-4c29-8358-cee13d7fdd56");
 	const AssetId PickupSound = AssetId::Parse("e384a51b-7acc-4ed1-9e84-9365d223015a");
 	const AssetId JumpSound = AssetId::Parse("774ab08d-5383-4eb1-ae29-b9ff690d680b");
 	const AssetId CaughtSound = AssetId::Parse("9d31aeef-5e74-4d1d-8642-502e3224a5cd");
@@ -49,9 +51,21 @@ namespace
 	constexpr std::uint32_t Rate = 48000;
 	using Synth = std::function<float(float time, std::mt19937& noise)>;
 
-	// 16-bit mono PCM at 48 kHz, peak-normalized to `peak`.
-	void WriteWav(const std::filesystem::path& path, float seconds, const Synth& synth, float peak = 0.6f)
+	void WriteText(const std::filesystem::path& path, const std::string& text)
 	{
+		std::filesystem::create_directories(path.parent_path());
+		std::ofstream file(path, std::ios::binary);
+		file << text;
+		if (!file)
+			throw std::runtime_error("Cannot write " + path.string());
+	}
+
+	// 16-bit mono PCM at 48 kHz, peak-normalized to `peak`, with its asset sidecar.
+	void WriteWav(const std::filesystem::path& path, AssetId id, float seconds, const Synth& synth, float peak = 0.6f)
+	{
+		auto sidecar = path;
+		sidecar += ".ravenasset";
+		WriteText(sidecar, "raven-asset 1\nid " + id.ToString() + "\nkind audio\n");
 		std::mt19937 noise(1234);
 		std::vector<float> samples(static_cast<std::size_t>(seconds * Rate));
 		float loudest = 1.0e-6f;
@@ -79,38 +93,34 @@ namespace
 	// A short attack, so no clip starts with a click.
 	float Attack(float time, float seconds = 0.004f) { return std::min(1.0f, time / seconds); }
 
-	void WriteSound(const std::filesystem::path& path, const std::string& body)
+	void WriteSound(const std::filesystem::path& path, AssetId id, const std::string& body)
 	{
-		std::filesystem::create_directories(path.parent_path());
-		std::ofstream file(path, std::ios::binary);
-		file << "raven-sound 1\n" << body;
-		if (!file)
-			throw std::runtime_error("Cannot write " + path.string());
+		WriteText(path, "raven-sound 2\nid " + id.ToString() + "\n" + body);
 	}
 
 	void CreateSounds(const std::filesystem::path& root)
 	{
 		const auto audio = root / "Audio";
 		// Energy cell pickup: a bright two-note chime, in two voicings.
-		WriteWav(audio / "Pickup1.wav", 0.32f, [](float t, std::mt19937&)
+		WriteWav(audio / "Pickup1.wav", AssetId::Parse("8373162a-1604-4d1f-a48b-f198879e3938"), 0.32f, [](float t, std::mt19937&)
 		{
 			const float note = t < 0.07f ? Tone(t, 988.0f) : Tone(t, 1319.0f) + 0.3f * Tone(t, 2638.0f);
 			return note * Attack(t) * Decay(t, 9.0f);
 		});
-		WriteWav(audio / "Pickup2.wav", 0.32f, [](float t, std::mt19937&)
+		WriteWav(audio / "Pickup2.wav", AssetId::Parse("d72522b8-e70b-4f05-8a63-5f44d6efb86e"), 0.32f, [](float t, std::mt19937&)
 		{
 			const float note = t < 0.07f ? Tone(t, 880.0f) : Tone(t, 1175.0f) + 0.3f * Tone(t, 2349.0f);
 			return note * Attack(t) * Decay(t, 9.0f);
 		});
 		// Jump: a rising sweep with a little air.
-		WriteWav(audio / "Jump.wav", 0.2f, [](float t, std::mt19937& noise)
+		WriteWav(audio / "Jump.wav", AssetId::Parse("56a0085a-5af7-4ed6-86df-f3c9695788c1"), 0.2f, [](float t, std::mt19937& noise)
 		{
 			const float phase = 2.0f * std::numbers::pi_v<float> * (220.0f * t + 1100.0f * t * t);
 			std::uniform_real_distribution<float> air(-1.0f, 1.0f);
 			return (std::sin(phase) + 0.15f * air(noise)) * Attack(t) * Decay(t, 14.0f);
 		});
 		// Caught by a drone: a falling buzz over a short noise hit.
-		WriteWav(audio / "Caught.wav", 0.7f, [](float t, std::mt19937& noise)
+		WriteWav(audio / "Caught.wav", AssetId::Parse("5302e01f-80d3-4e9f-8864-b124976f378a"), 0.7f, [](float t, std::mt19937& noise)
 		{
 			const float phase = 2.0f * std::numbers::pi_v<float> * (440.0f * t - 160.0f * t * t);
 			std::uniform_real_distribution<float> hit(-1.0f, 1.0f);
@@ -118,34 +128,34 @@ namespace
 			return (buzz * Decay(t, 3.5f) + 0.6f * hit(noise) * Decay(t, 30.0f)) * Attack(t);
 		}, 0.7f);
 		// A new drone: two quick blips.
-		WriteWav(audio / "Drone.wav", 0.14f, [](float t, std::mt19937&)
+		WriteWav(audio / "Drone.wav", AssetId::Parse("8e34abd2-a7fe-461b-9a97-dff014b389c6"), 0.14f, [](float t, std::mt19937&)
 		{
 			const float local = t < 0.06f ? t : t - 0.07f;
 			const float blip = t < 0.06f ? Tone(t, 660.0f) : t >= 0.07f ? Tone(t, 990.0f) : 0.0f;
 			return blip * Attack(local, 0.003f) * Decay(local, 40.0f);
 		}, 0.45f);
 		// Menu click and the pause chord.
-		WriteWav(audio / "Click.wav", 0.05f, [](float t, std::mt19937&) { return Tone(t, 2000.0f) * Attack(t, 0.001f) * Decay(t, 120.0f); }, 0.4f);
-		WriteWav(audio / "Pause.wav", 0.3f, [](float t, std::mt19937&)
+		WriteWav(audio / "Click.wav", AssetId::Parse("3d9a6184-8e70-4416-b966-d542a6434a3f"), 0.05f, [](float t, std::mt19937&) { return Tone(t, 2000.0f) * Attack(t, 0.001f) * Decay(t, 120.0f); }, 0.4f);
+		WriteWav(audio / "Pause.wav", AssetId::Parse("1f24282d-6b14-4441-be88-72c561dd1d21"), 0.3f, [](float t, std::mt19937&)
 		{
 			return (Tone(t, 523.25f) + 0.7f * Tone(t, 783.99f)) * Attack(t, 0.01f) * Decay(t, 8.0f);
 		}, 0.45f);
 
 		const auto sounds = root / "Sounds";
-		WriteSound(sounds / "Pickup.ravensound",
+		WriteSound(sounds / "Pickup.ravensound", PickupSound,
 			"clip 8373162a-1604-4d1f-a48b-f198879e3938\nclip d72522b8-e70b-4f05-8a63-5f44d6efb86e\n"
 			"volume 0.8 1.0\npitch 0.97 1.03\nbus Effects\nlimit Pickup 3 stop-oldest\nspatial 3 45\n");
-		WriteSound(sounds / "Jump.ravensound",
+		WriteSound(sounds / "Jump.ravensound", JumpSound,
 			"clip 56a0085a-5af7-4ed6-86df-f3c9695788c1\nvolume 0.6 0.7\npitch 0.94 1.06\nbus Effects\n"
 			"limit Jump 2 stop-oldest\nspatial 3 40\n");
-		WriteSound(sounds / "Caught.ravensound",
+		WriteSound(sounds / "Caught.ravensound", CaughtSound,
 			"clip 5302e01f-80d3-4e9f-8864-b124976f378a\nvolume 0.9 0.9\nbus Effects\npriority 4\n");
-		WriteSound(sounds / "Drone.ravensound",
+		WriteSound(sounds / "Drone.ravensound", DroneSound,
 			"clip 8e34abd2-a7fe-461b-9a97-dff014b389c6\nvolume 0.5 0.6\npitch 0.9 1.1\nbus Effects\npriority 0.5\n"
 			"limit Drone 4 stop-oldest\nspatial 3 40\n");
-		WriteSound(sounds / "Click.ravensound",
+		WriteSound(sounds / "Click.ravensound", ClickSound,
 			"clip 3d9a6184-8e70-4416-b966-d542a6434a3f\nvolume 0.5 0.5\nbus Interface\nlimit Ui 2 stop-oldest\n");
-		WriteSound(sounds / "Pause.ravensound",
+		WriteSound(sounds / "Pause.ravensound", PauseSound,
 			"clip 1f24282d-6b14-4441-be88-72c561dd1d21\nvolume 0.6 0.6\nbus Interface\nlimit Ui 2 stop-oldest\n");
 	}
 
@@ -309,7 +319,9 @@ int main(int argc, char** argv)
 		const std::string_view command = argc > 1 ? argv[1] : "";
 		if (command == "create-arena" && argc == 3)
 		{
-			CreateArena().Save(argv[2]);
+			auto scene = CreateArena();
+			scene.Id = ArenaScene;
+			scene.Save(argv[2]);
 			std::cout << "Saved scene " << argv[2] << '\n';
 		}
 		else if (command == "create-sounds" && argc == 3)

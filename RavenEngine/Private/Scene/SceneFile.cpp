@@ -24,6 +24,9 @@ namespace Raven
 		constexpr std::uint32_t FormatVersion = 1;
 		constexpr std::uint32_t EntitySection = 1;
 		constexpr std::uint32_t ComponentSection = 2;
+		// The scene's asset ID: 16 bytes, written first so ReadSceneFileId needs only the header.
+		// Readers before it keep it as an unknown section.
+		constexpr std::uint32_t AssetSection = 3;
 		// Section and string limits keep a corrupt length from allocating without bound.
 		constexpr std::size_t MaxText = 1u << 16;
 		constexpr std::size_t MaxFields = 1u << 12;
@@ -490,6 +493,23 @@ namespace Raven
 		return offset;
 	}
 
+	AssetId ReadSceneFileId(std::span<const std::byte> bytes) noexcept
+	{
+		// Magic, version, section count, then the first section's kind, reserved word and length.
+		constexpr std::size_t header = SceneFileMagic.size() + 4 + 4 + 4 + 4 + 8;
+		AssetId id;
+		if (!IsSceneFile(bytes) || bytes.size() < header + sizeof(AssetId))
+			return id;
+		std::uint32_t version = 0, kind = 0;
+		std::uint64_t length = 0;
+		std::memcpy(&version, bytes.data() + SceneFileMagic.size(), sizeof(version));
+		std::memcpy(&kind, bytes.data() + SceneFileMagic.size() + 8, sizeof(kind));
+		std::memcpy(&length, bytes.data() + SceneFileMagic.size() + 16, sizeof(length));
+		if (version == FormatVersion && kind == AssetSection && length == sizeof(AssetId))
+			std::memcpy(&id, bytes.data() + header, sizeof(AssetId));
+		return id;
+	}
+
 	bool IsSceneFile(std::span<const std::byte> bytes) noexcept
 	{
 		return bytes.size() >= SceneFileMagic.size() &&
@@ -548,7 +568,12 @@ namespace Raven
 			if (length > reader.Remaining())
 				Malformed("section is truncated");
 			Reader section(reader.Take(static_cast<std::size_t>(length)));
-			if (kind == EntitySection)
+			if (kind == AssetSection)
+			{
+				const auto id = section.Take(sizeof(AssetId));
+				std::memcpy(&file.Id, id.data(), sizeof(AssetId));
+			}
+			else if (kind == EntitySection)
 			{
 				const auto count = section.Number<std::uint32_t>();
 				if (count > section.Remaining() / (sizeof(std::uint64_t) + sizeof(std::uint32_t)))
@@ -586,7 +611,8 @@ namespace Raven
 		Writer writer;
 		writer.Bytes(SceneFileMagic.data(), SceneFileMagic.size());
 		writer.Number(FormatVersion);
-		writer.Number(static_cast<std::uint32_t>(1 + sorted.Components.size() + sorted.Unknown.size()));
+		writer.Number(static_cast<std::uint32_t>((sorted.Id.IsValid() ? 2 : 1) + sorted.Components.size() +
+			sorted.Unknown.size()));
 		const auto section = [&](std::uint32_t kind, const auto& body)
 		{
 			writer.Number(kind);
@@ -597,6 +623,8 @@ namespace Raven
 			body();
 			writer.Patch(length, writer.Size() - start);
 		};
+		if (sorted.Id.IsValid())
+			section(AssetSection, [&] { writer.Bytes(&sorted.Id, sizeof(AssetId)); });
 		section(EntitySection, [&]
 		{
 			writer.Number(static_cast<std::uint32_t>(sorted.Entities.size()));
@@ -646,6 +674,8 @@ namespace Raven
 		SceneFile sorted = *this;
 		sorted.Normalize();
 		std::string out = "raven-scene-text 1\n";
+		if (sorted.Id.IsValid())
+			out += "asset " + sorted.Id.ToString() + '\n';
 		for (const auto& entity : sorted.Entities)
 			out += "entity " + Hex(entity.Id) + (entity.Label.empty() ? "" : ' ' + Quote(entity.Label)) + '\n';
 		for (const auto& component : sorted.Components)
@@ -720,7 +750,9 @@ namespace Raven
 				header = true;
 				continue;
 			}
-			if (keyword == "entity")
+			if (keyword == "asset" && !current)
+				file.Id = AssetId::Parse(tokens.Next());
+			else if (keyword == "entity")
 			{
 				Entity entity;
 				entity.Id = ParseNumber<std::uint64_t>(tokens.Next(), 16);

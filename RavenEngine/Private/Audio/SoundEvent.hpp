@@ -15,7 +15,8 @@ namespace Raven
 	// sound, as data that hot-reloads, while game code only says which event plays and where. Text,
 	// one setting per line:
 	//
-	//   raven-sound 1
+	//   raven-sound 2
+	//   id 4c1e9a52-...            the event's own asset ID (version 1 files have none)
 	//   clip 0b47e26c-...          one line per variation; each play picks one at random
 	//   volume 0.8 1.0             a random linear gain in this range (0 to 4)
 	//   pitch 0.95 1.05            a random playback rate in this range (0.25 to 4)
@@ -30,6 +31,8 @@ namespace Raven
 	// Unknown settings are errors, so a typo never silently plays a default.
 	struct SoundEvent
 	{
+		// Version 2 files carry their own asset ID (docs/RenderingContentDesign.md, B0 contract 9).
+		AssetId Id;
 		std::vector<AssetId> Clips;
 		float VolumeMin = 1.0f;
 		float VolumeMax = 1.0f;

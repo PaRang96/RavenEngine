@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Raven/Assets/AssetId.hpp"
+
 #include "Raven/Core/Api.hpp"
 #include "Raven/ECS/Component.hpp"
 
@@ -69,6 +71,9 @@ namespace Raven
 			std::vector<std::byte> Bytes;
 		};
 
+		// The scene's own asset ID (docs/RenderingContentDesign.md, B0 contract 9): Raven formats carry
+		// their identity, so the project needs no record of them. Null in files written before it.
+		AssetId Id;
 		std::vector<Entity> Entities;
 		std::vector<Component> Components;
 		std::vector<Section> Unknown;
@@ -90,6 +95,9 @@ namespace Raven
 
 	// True when the bytes start with the generic scene magic.
 	RAVEN_API bool IsSceneFile(std::span<const std::byte> bytes) noexcept;
+	// The asset ID of a scene file from its first bytes (the ID is the first section), without
+	// decoding the rest; null when the file has none or the bytes are not a scene file.
+	RAVEN_API AssetId ReadSceneFileId(std::span<const std::byte> bytes) noexcept;
 
 	// Copies the scene's live entities and every registered, non-transient component of them.
 	RAVEN_API SceneFile CaptureScene(const Scene& scene);
