@@ -1,5 +1,6 @@
 #include "SampleSceneBuilder.hpp"
 
+#include "Raven/Assets/Model.hpp"
 #include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 
@@ -74,6 +75,34 @@ namespace Samples
 	void SampleSceneBuilder::Parent(const std::string& child, const std::string& parent)
 	{
 		m_Parents.emplace_back(child, parent);
+	}
+
+	void SampleSceneBuilder::Model(const std::string& name, const std::filesystem::path& file,
+		const ECS::TransformComponent& transform, Vec4 tint, const ECS::MaterialComponent& material,
+		const std::vector<std::pair<std::string, Vec4>>& tints)
+	{
+		const auto model = ReadModel(file);
+		Group(name, transform);
+		std::vector<std::string> names;
+		for (const auto& node : model.Nodes)
+		{
+			names.push_back(name + "/" + node.Path);
+			ECS::TransformComponent local;
+			local.Position = node.Position;
+			local.Rotation = node.Rotation;
+			local.Scale = node.Scale;
+			if (node.Part.IsValid())
+			{
+				auto partTint = tint;
+				for (const auto& [partName, value] : tints)
+					if (partName == node.Name)
+						partTint = value;
+				Mesh(names.back(), node.Part, local, partTint, material);
+			}
+			else
+				Group(names.back(), local);
+			Parent(names.back(), node.Parent < 0 ? name : names[static_cast<std::size_t>(node.Parent)]);
+		}
 	}
 
 	void SampleSceneBuilder::Camera(const std::string& name, const ECS::TransformComponent& spawn,

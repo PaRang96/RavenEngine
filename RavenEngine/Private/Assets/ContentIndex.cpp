@@ -1,6 +1,8 @@
 #include "Assets/ContentIndex.hpp"
 
 #include "Assets/AssetKinds.hpp"
+#include "Assets/FbxMesh.hpp"
+#include "Raven/Assets/Model.hpp"
 #include "Audio/SoundEvent.hpp"
 #include "Renderer/MaterialFile.hpp"
 #include "Core/PathText.hpp"
@@ -10,6 +12,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <locale>
 #include <map>
 #include <sstream>
@@ -125,6 +128,17 @@ namespace Raven
 					fail("expected color-space srgb or linear");
 				result.ColorSpace = value == "srgb" ? TextureColorSpace::SRGB : TextureColorSpace::Linear;
 			}
+			else if (key == "part")
+			{
+				SidecarPart part;
+				if (!(input >> std::quoted(part.Path) >> value) || part.Path.empty())
+					fail("expected part \"<name path>\" <uuid>");
+				part.Id = AssetId::Parse(value);
+				for (const auto& other : result.Parts)
+					if (other.Path == part.Path || other.Id == part.Id)
+						fail("repeats a part's name path or ID");
+				result.Parts.push_back(std::move(part));
+			}
 			else
 				Log(LogLevel::Warning, PathToUtf8(path) + " line " + std::to_string(number) + ": unknown key '" + key + "' skipped");
 		}
@@ -132,6 +146,8 @@ namespace Raven
 			throw std::runtime_error(PathToUtf8(path) + ": a sidecar needs raven-asset 1, an id and a kind");
 		if (result.Kind == AssetKind::Texture && !result.ColorSpace)
 			result.ColorSpace = TextureColorSpace::SRGB;
+		if (!result.Parts.empty() && result.Kind != AssetKind::Mesh)
+			throw std::runtime_error(PathToUtf8(path) + ": only a model has parts");
 		return result;
 	}
 
@@ -142,7 +158,73 @@ namespace Raven
 		if (sidecar.Kind == AssetKind::Texture)
 			text += std::string("color-space ") +
 				(sidecar.ColorSpace.value_or(TextureColorSpace::SRGB) == TextureColorSpace::SRGB ? "srgb" : "linear") + '\n';
+		for (const auto& part : sidecar.Parts)
+		{
+			std::ostringstream line;
+			line << "part " << std::quoted(part.Path) << ' ' << part.Id.ToString() << '\n';
+			text += line.str();
+		}
 		return text;
+	}
+
+	PartTableUpdate UpdatePartTable(const Sidecar& sidecar, const std::vector<std::string>& parts)
+	{
+		PartTableUpdate result;
+		result.Updated = sidecar;
+		if (sidecar.Kind != AssetKind::Mesh || (parts.size() < 2 && sidecar.Parts.empty()))
+			return result;
+		// The file's order, each with its recorded ID or a new one; recorded parts it lacks follow.
+		std::vector<SidecarPart> table;
+		for (const auto& path : parts)
+		{
+			const auto known = std::find_if(sidecar.Parts.begin(), sidecar.Parts.end(),
+				[&](const SidecarPart& part) { return part.Path == path; });
+			if (known != sidecar.Parts.end())
+				table.push_back(*known);
+			else
+			{
+				table.push_back({ path, AssetId::Generate() });
+				result.Added.push_back(table.back());
+			}
+		}
+		for (const auto& part : sidecar.Parts)
+			if (std::find(parts.begin(), parts.end(), part.Path) == parts.end())
+			{
+				table.push_back(part);
+				result.Missing.push_back(part);
+			}
+		result.Changed = !result.Added.empty() || table.size() != sidecar.Parts.size() ||
+			!std::equal(table.begin(), table.end(), sidecar.Parts.begin(),
+				[](const SidecarPart& left, const SidecarPart& right) { return left.Path == right.Path && left.Id == right.Id; });
+		result.Updated.Parts = std::move(table);
+		return result;
+	}
+
+	PartTableUpdate ImportModel(const std::filesystem::path& source, std::vector<std::string>& report)
+	{
+		const auto sidecarPath = SidecarPath(source);
+		const auto name = PathToUtf8(source.filename());
+		// A model without a sidecar yet gets one, as the content scan would give it.
+		std::error_code missing;
+		const bool created = !std::filesystem::exists(sidecarPath, missing);
+		if (created && !AcceptsSource(AssetKind::Mesh, source))
+			throw std::invalid_argument(PathToUtf8(source) + " is not a model file");
+		const auto sidecar = created ? Sidecar{ AssetId::Generate(), AssetKind::Mesh, std::nullopt, {} }
+			: ParseSidecar(Files::ReadBinary(sidecarPath, MaxSidecarBytes), sidecarPath);
+		if (created)
+			report.push_back(name + ": new model, ID " + sidecar.Id.ToString());
+		auto update = UpdatePartTable(sidecar, sidecar.Kind == AssetKind::Mesh ?
+			ListFbxParts(ReadFbxBytes(source), source) : std::vector<std::string>{});
+		for (const auto& part : update.Added)
+			report.push_back(name + ": new part \"" + part.Path + "\" got ID " + part.Id.ToString());
+		for (const auto& part : update.Missing)
+			report.push_back(name + ": part \"" + part.Path + "\" (" + part.Id.ToString() + ") is no longer in the file; "
+				"if it was renamed, run RavenSceneTool <Content> rename-part <model> \"" + part.Path +
+				"\" \"<new name path>\", and references to it keep working");
+		update.Changed = update.Changed || created;
+		if (update.Changed)
+			WriteSidecar(sidecarPath, update.Updated);
+		return update;
 	}
 
 	std::filesystem::path SidecarPath(const std::filesystem::path& source)
@@ -208,7 +290,28 @@ namespace Raven
 							", which does not match its source; it is skipped");
 						continue;
 					}
-					ContentAsset asset{ sidecar.Id, sidecar.Kind, source.lexically_relative(root).lexically_normal(), sidecar.ColorSpace };
+					const auto sourcePath = source.lexically_relative(root).lexically_normal();
+					// Development keeps a model's part table in step with the file, so re-exports keep their
+					// IDs and a vanished part is reported, never silently dropped (FD-23).
+					if (createSidecars && sidecar.Kind == AssetKind::Mesh)
+					{
+						std::vector<std::string> report;
+						try
+						{
+							sidecar = ImportModel(source, report).Updated;
+						}
+						catch (const std::exception& problem)
+						{
+							index.Problems.push_back(relative + ": its parts could not be read: " + problem.what());
+						}
+						for (auto& line : report)
+							index.Problems.push_back(std::move(line));
+					}
+					for (const auto& part : sidecar.Parts)
+						if (!claim({ part.Id, AssetKind::Mesh, sourcePath, std::nullopt, part.Path }, file, true))
+							index.Problems.push_back(relative + ": part \"" + part.Path + "\" repeats the ID " +
+								part.Id.ToString() + "; it is skipped");
+					ContentAsset asset{ sidecar.Id, sidecar.Kind, sourcePath, sidecar.ColorSpace };
 					if (claim(asset, file, true))
 						continue;
 					// Two sidecars with one ID: a copied file and its copied sidecar. The copy is the
@@ -321,5 +424,64 @@ namespace Raven
 			bytes.push_back(std::byte{ '\n' });
 		}
 		return bytes;
+	}
+}
+
+namespace Raven
+{
+	std::string RenamePart(const std::filesystem::path& source, const std::string& from, const std::string& to)
+	{
+		const auto sidecarPath = SidecarPath(source);
+		auto sidecar = ParseSidecar(Files::ReadBinary(sidecarPath, MaxSidecarBytes), sidecarPath);
+		const auto parts = ListFbxParts(ReadFbxBytes(source), source);
+		if (std::find(parts.begin(), parts.end(), to) == parts.end())
+			throw std::invalid_argument(PathToUtf8(source.filename()) + " has no part \"" + to + "\"");
+		const auto old = std::find_if(sidecar.Parts.begin(), sidecar.Parts.end(),
+			[&](const SidecarPart& part) { return part.Path == from; });
+		if (old == sidecar.Parts.end())
+			throw std::invalid_argument(PathToUtf8(sidecarPath.filename()) + " records no part \"" + from + "\"");
+		const auto id = old->Id;
+		std::string dropped;
+		std::erase_if(sidecar.Parts, [&](const SidecarPart& part)
+		{
+			if (part.Path != to)
+				return false;
+			dropped = part.Id.ToString();
+			return true;
+		});
+		for (auto& part : sidecar.Parts)
+			if (part.Id == id)
+				part.Path = to;
+		WriteSidecar(sidecarPath, sidecar);
+		return PathToUtf8(source.filename()) + ": part \"" + to + "\" now has " + id.ToString() + ", the ID of \"" + from + "\"" +
+			(dropped.empty() ? "" : "; the ID the importer gave it, " + dropped + ", is dropped");
+	}
+
+	ModelDescription ReadModel(const std::filesystem::path& source)
+	{
+		const auto sidecarPath = SidecarPath(source);
+		const auto sidecar = ParseSidecar(Files::ReadBinary(sidecarPath, MaxSidecarBytes), sidecarPath);
+		if (sidecar.Kind != AssetKind::Mesh)
+			throw std::invalid_argument(PathToUtf8(source) + " is not a model");
+		// One mesh: the file's own ID, which is that mesh already placed in the model.
+		if (sidecar.Parts.empty())
+			return { sidecar.Id, { ModelNode{ PathToUtf8(source.stem()), PathToUtf8(source.stem()), -1, {}, {},
+				{ 1.0f, 1.0f, 1.0f }, sidecar.Id } } };
+		ModelDescription result{ sidecar.Id, {} };
+		for (const auto& node : ReadFbxNodes(ReadFbxBytes(source), source))
+		{
+			ModelNode entry{ node.Name, node.Path, node.Parent, node.Position, EulerFromQuat(node.Rotation), node.Scale, {} };
+			if (node.Mesh)
+			{
+				const auto part = std::find_if(sidecar.Parts.begin(), sidecar.Parts.end(),
+					[&](const SidecarPart& recorded) { return recorded.Path == node.Path; });
+				if (part == sidecar.Parts.end())
+					throw std::runtime_error(PathToUtf8(source) + ": part \"" + node.Path + "\" is not in " +
+						PathToUtf8(sidecarPath.filename()) + " yet; run the content scan or RavenSceneTool import-model");
+				entry.Part = part->Id;
+			}
+			result.Nodes.push_back(std::move(entry));
+		}
+		return result;
 	}
 }

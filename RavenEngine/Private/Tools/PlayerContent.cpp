@@ -61,6 +61,9 @@ namespace Raven
 			// A texture's record also carries its color space.
 			if (asset.Kind == AssetKind::Texture)
 				manifest << ' ' << (catalog.GetTexture({ asset.Id }).ColorSpace == TextureColorSpace::SRGB ? "srgb" : "linear");
+			// A model part's record also carries its name path (FD-23).
+			if (!asset.Part.empty())
+				manifest << " part " << std::quoted(asset.Part);
 			manifest << '\n';
 		}
 	}

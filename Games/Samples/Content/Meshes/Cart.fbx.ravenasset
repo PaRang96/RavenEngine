@@ -1,0 +1,8 @@
+raven-asset 1
+id d0679f54-bc94-42d2-90cc-ea6ae62fb3a6
+kind mesh
+part "Body" 72ca8d61-bd77-4d5a-91a4-62ec5fac63e6
+part "FrontAxle/WheelLeft" a455b981-85b8-4200-8a98-c6dd17edc252
+part "FrontAxle/WheelRight" 8fb1f591-6a04-4aa3-93d8-1c02248d7fa6
+part "RearAxle/WheelLeft" 003d7408-4e4e-4c58-b4d0-5de6ea78b4d2
+part "RearAxle/WheelRight" 555571b4-5a31-44d2-ba75-4273d985fd96

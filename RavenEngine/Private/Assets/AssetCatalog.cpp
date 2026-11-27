@@ -45,7 +45,9 @@ namespace Raven
 		if (sourcePath == "." || !sourcePath.has_filename())
 			throw std::invalid_argument("Asset source path must name a file: " + identity);
 
-		Entry entry{ { record.Id, record.Kind, std::move(sourcePath) }, std::nullopt };
+		if (!record.Part.empty() && record.Kind != AssetKind::Mesh)
+			throw std::invalid_argument("Only a mesh can be a model part: " + identity);
+		Entry entry{ { record.Id, record.Kind, std::move(sourcePath), record.Part }, std::nullopt };
 		if (colorSpace)
 			entry.Texture.emplace(TextureAssetDesc{ record.Id, entry.Record.SourcePath, *colorSpace });
 		if (!Entries.emplace(record.Id, std::move(entry)).second)

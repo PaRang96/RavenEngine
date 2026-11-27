@@ -3,6 +3,7 @@
 
 #include "PlayerContent.hpp"
 #include "ProjectUpgrade.hpp"
+#include "Assets/ContentIndex.hpp"
 
 #include "Raven/Core/Files.hpp"
 #include "Raven/Math/Transform.hpp"
@@ -97,10 +98,28 @@ int main(int argc, char** argv)
 			std::cout << ListProject(std::filesystem::absolute(argv[1]));
 			return 0;
 		}
+		// A model's part table (docs/RenderingContentDesign.md, FD-23): new parts get IDs, and parts the file
+		// no longer has are reported, so a renamed part can be repaired in its sidecar.
+		if (argc == 4 && std::string_view(argv[2]) == "import-model")
+		{
+			std::vector<std::string> report;
+			const auto update = ImportModel(std::filesystem::absolute(argv[1]) / std::filesystem::path(argv[3]), report);
+			for (const auto& line : report)
+				std::cout << line << '\n';
+			std::cout << update.Updated.Parts.size() << " part(s); " << update.Added.size() << " added, "
+				<< update.Missing.size() << " missing" << (update.Changed ? "; sidecar written" : "") << '\n';
+			return update.Missing.empty() ? 0 : 2;
+		}
+		if (argc == 6 && std::string_view(argv[2]) == "rename-part")
+		{
+			std::cout << RenamePart(std::filesystem::absolute(argv[1]) / std::filesystem::path(argv[3]), argv[4], argv[5]) << '\n';
+			return 0;
+		}
 		if (argc < 4)
 			throw std::invalid_argument("Usage: RavenSceneTool <Content-root> "
 				"<validate|dump|apply|position|rotation|scale|stage-player> <scene-or-destination> [arguments] | "
-				"<Content-root> <upgrade-project|list>");
+				"<Content-root> <upgrade-project|list> | <Content-root> import-model <model.fbx> | "
+				"<Content-root> rename-part <model.fbx> <old name path> <new name path>");
 		const auto root = std::filesystem::absolute(argv[1]);
 		const std::string_view command(argv[2]);
 		const std::filesystem::path input(argv[3]);

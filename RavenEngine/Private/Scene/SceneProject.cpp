@@ -110,10 +110,17 @@ namespace Raven
 			}
 			else
 			{
-				// Every other kind's record is its keyword, ID and source path.
+				// Every other kind's record is its keyword, ID and source path; a model part adds its name
+				// path (FD-23).
 				if (!(input >> std::quoted(source)))
 					throw std::runtime_error("expected source path");
-				result.Catalog.Register({ id, FindAssetKindByKeyword(keyword)->Kind, PathFromUtf8(source) });
+				std::string part;
+				if (keyword == "mesh" && input >> setting)
+				{
+					if (setting != "part" || !(input >> std::quoted(part)) || part.empty())
+						throw std::runtime_error("expected part \"<name path>\" after a mesh's path");
+				}
+				result.Catalog.Register({ id, FindAssetKindByKeyword(keyword)->Kind, PathFromUtf8(source), part });
 			}
 		};
 		while (std::getline(file, line))
@@ -204,7 +211,7 @@ namespace Raven
 					result.Catalog.Register(TextureAssetDesc{ asset.Id, asset.Source,
 						asset.ColorSpace.value_or(TextureColorSpace::SRGB) });
 				else
-					result.Catalog.Register({ asset.Id, asset.Kind, asset.Source });
+					result.Catalog.Register({ asset.Id, asset.Kind, asset.Source, asset.Part });
 			}
 		}
 		// The ordered scenes first, then any other scene in path order, so every scene can be opened.

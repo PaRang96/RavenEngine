@@ -90,13 +90,15 @@ namespace Raven
 			return shader;
 		}
 
-		DecodedAsset DecodeAsset(std::span<const std::byte> bytes, const std::filesystem::path& path)
+		// A model part decodes its node's mesh; every other asset its whole file (FD-23).
+		DecodedAsset DecodeAsset(std::span<const std::byte> bytes, const std::filesystem::path& path,
+			const std::string& part = {})
 		{
 			DecodedAsset result;
 			result.Bytes.assign(bytes.begin(), bytes.end());
 			const auto extension = LowercaseExtension(path);
 			if (extension == ".fbx")
-				result.Data = DecodeFbxMesh(bytes, path);
+				result.Data = DecodeFbxMesh(bytes, path, part);
 			else if (extension == ".png")
 				result.Data = DecodePngSource(bytes, path);
 			else if (IsAudioExtension(path))
@@ -158,6 +160,7 @@ namespace Raven
 		struct BackgroundLoad
 		{
 			std::filesystem::path Source;
+			std::string Part;
 			std::optional<DecodedAsset> Decoded;
 			std::string Error;
 			double DecodeMs = 0.0;
@@ -183,7 +186,7 @@ namespace Raven
 			const auto start = std::chrono::steady_clock::now();
 			try
 			{
-				load.Decoded = DecodeAsset(ReadAsset(load.Source), load.Source);
+				load.Decoded = DecodeAsset(ReadAsset(load.Source), load.Source, load.Part);
 			}
 			catch (const std::exception& error)
 			{
@@ -271,7 +274,7 @@ namespace Raven
 			const auto& record = result->Record;
 			result->Source = ResolveAssetPath(Root, record.SourcePath);
 			if (!decoded)
-				decoded = DecodeAsset(ReadAsset(result->Source), result->Source);
+				decoded = DecodeAsset(ReadAsset(result->Source), result->Source, record.Part);
 			if (record.Kind == AssetKind::Mesh)
 			{
 				const auto& mesh = std::get<FbxMesh>(decoded->Data);
@@ -312,7 +315,11 @@ namespace Raven
 				const bool mesh = record.Kind == AssetKind::Mesh;
 				result->Watch = std::make_unique<SettledFileWatch<DecodedAsset>>(result->Source, AssetKindName(record.Kind),
 					mesh ? ImporterVersion::Fbx : sound ? ImporterVersion::Audio : material ? ImporterVersion::Material
-					: shader ? ImporterVersion::Hlsl : ImporterVersion::Png, ReadAsset, DecodeAsset, result->Bytes);
+					: shader ? ImporterVersion::Hlsl : ImporterVersion::Png, ReadAsset,
+					[part = record.Part](std::span<const std::byte> bytes, const std::filesystem::path& path)
+					{
+						return DecodeAsset(bytes, path, part);
+					}, result->Bytes);
 				Log(LogLevel::Info, "Watching asset " + id.ToString() + " " + PathToUtf8(result->Source));
 			}
 			return result;
@@ -416,6 +423,7 @@ namespace Raven
 		asset->State = AssetLoadState::Loading;
 		auto load = std::make_shared<BackgroundLoad>();
 		load->Source = source;
+		load->Part = asset->Record.Part;
 		m_Impl->Loads.push_back({ asset, load });
 		auto job = std::make_unique<LoadJob>(LoadJob{ load, m_Impl->Tracker });
 		m_Impl->Tracker->Running.fetch_add(1, std::memory_order_relaxed);
@@ -463,7 +471,8 @@ namespace Raven
 				if (record.Kind != current->Record.Kind)
 					throw std::invalid_argument("Cannot change a live asset's type: " + id.ToString());
 				const auto color = record.Kind == AssetKind::Texture ? catalog.GetTexture({ id }).ColorSpace : current->ColorSpace;
-				if (record.SourcePath != current->Record.SourcePath || color != current->ColorSpace)
+				if (record.SourcePath != current->Record.SourcePath || record.Part != current->Record.Part ||
+					color != current->ColorSpace)
 					update.m_Impl->Changes.push_back({ current, m_Impl->Load(catalog, id) });
 			}
 		return update;

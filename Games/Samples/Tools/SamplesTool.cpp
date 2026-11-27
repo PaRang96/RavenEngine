@@ -4,13 +4,20 @@
 //   SamplesTool create-benchmark <output.ravenscene> <mesh-count>
 //   SamplesTool create-sprite-benchmark <output.ravenscene> <sprite-count>
 //   SamplesTool create-physics <output.ravenscene>
+//   SamplesTool create-cart-model <output.fbx>
 
+#include "CartModel.hpp"
 #include "SampleSceneBuilder.hpp"
+
+#include "Raven/Assets/Model.hpp"
+#include "Raven/Core/Files.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <span>
 #include <iostream>
 #include <numbers>
 #include <stdexcept>
@@ -225,7 +232,8 @@ namespace
 	// Physics bodies on the sample meshes (docs/GameServicesDesign.md, FD-32): a crate pyramid, a ramp
 	// and bouncing spheres on a static floor. The cube mesh is 1 m per side and the sphere 1 m across,
 	// so the default collider sizes match them at any scale.
-	SceneFile CreatePhysics()
+	// contentRoot holds Meshes/Cart.fbx with its part table (B7).
+	SceneFile CreatePhysics(const std::filesystem::path& contentRoot)
 	{
 		SampleSceneBuilder scene;
 		const auto paint = Material(true);
@@ -297,6 +305,13 @@ namespace
 			patrol.Speed = speed;
 			scene.Patrol(name, walker, patrol);
 		}
+		// The model with parts (B7, FD-23), decorative and without colliders: on the left the file's own ID,
+		// every part merged into one mesh; on the right its node hierarchy as entities, one per part.
+		const auto cart = contentRoot / "Meshes/Cart.fbx";
+		const auto model = ReadModel(cart);
+		scene.Mesh("cart-whole", model.Id, Pose({ -5.5f, 4, 0 }, { 1.5f, 1.5f, 1.5f }), { .85f, .3f, .25f, 1 }, paint);
+		scene.Model("cart-parts", cart, Pose({ 5.5f, 4, 0 }, { 1.5f, 1.5f, 1.5f }), { .2f, .22f, .25f, 1 }, paint,
+			{ { "Body", { .85f, .3f, .25f, 1 } } });
 		scene.Camera("main", Pose({ 0, -4, 5 }, { 1, 1, 1 }, { -.42f, 0, 0 }), {}, { 0, 10, 1 });
 		scene.Lighting("sun", {});
 		return scene.Finish();
@@ -363,7 +378,17 @@ int main(int argc, char** argv)
 		else if (command == "create-collection" && argc == 3)
 			SaveScene(CreateCollection(), AssetId::Parse("72c6c544-fcf5-44fd-8e87-09e507df67d8"), argv[2]);
 		else if (command == "create-physics" && argc == 3)
-			SaveScene(CreatePhysics(), AssetId::Parse("e28e2f44-752b-4474-9ce4-0677d5177af2"), argv[2]);
+			// The scene goes to <Content>/Levels, so its content root is two levels up.
+			SaveScene(CreatePhysics(std::filesystem::absolute(argv[2]).parent_path().parent_path()),
+				AssetId::Parse("e28e2f44-752b-4474-9ce4-0677d5177af2"), argv[2]);
+		else if (command == "create-cart-model" && argc == 3)
+		{
+			// Then `RavenSceneTool <Content> import-model Meshes/Cart.fbx` writes its sidecar and part table.
+			const auto text = Samples::CreateCartModel();
+			Files::WriteAtomic(argv[2], std::as_bytes(std::span(text.data(), text.size())));
+			std::cout << "Saved model " << argv[2] << '\n';
+			return 0;
+		}
 		else if (command == "create-sprite-benchmark" && argc == 4)
 		{
 			std::uint32_t count = 0;
@@ -391,7 +416,7 @@ int main(int argc, char** argv)
 			SaveScene(CreateBenchmark(count, animation), BenchmarkId(count), argv[2]);
 		}
 		else
-			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics <output> | "
+			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics|create-cart-model <output> | "
 				"create-benchmark <output> <mesh-count> [scattered|contiguous|all] | create-sprite-benchmark <output> <sprite-count>");
 		std::cout << "Saved scene " << argv[2] << '\n';
 		return 0;

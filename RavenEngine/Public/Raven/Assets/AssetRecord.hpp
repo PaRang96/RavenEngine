@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 
 namespace Raven
 {
@@ -41,5 +42,8 @@ namespace Raven
 		AssetKind Kind = AssetKind::Unknown;
 		// Content-relative source path; registration does not read the file.
 		std::filesystem::path SourcePath;
+		// A part of a model file (docs/RenderingContentDesign.md, FD-23): the name path of its mesh node in
+		// the file, as the sidecar's part table records it. Empty for the whole file.
+		std::string Part;
 	};
 }

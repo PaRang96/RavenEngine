@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,7 +27,7 @@ namespace Raven
 	{
 	public:
 		using ReadFile = ReloadInput::ReadFile;
-		using DecodeFile = Data(*)(std::span<const std::byte>, const std::filesystem::path&);
+		using DecodeFile = std::function<Data(std::span<const std::byte>, const std::filesystem::path&)>;
 
 		// importerVersion comes from ImporterVersions.hpp and keys the dependency record (Q4 A+).
 		SettledFileWatch(std::filesystem::path path, std::string_view format, std::uint32_t importerVersion, ReadFile read,

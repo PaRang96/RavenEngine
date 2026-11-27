@@ -24,12 +24,22 @@ namespace Raven
 	//   id <uuid>
 	//   kind texture|mesh|audio
 	//   color-space srgb|linear      (textures)
+	//   part "<name path>" <uuid>    (models: one per mesh node, FD-23)
 	// Unknown keys are skipped with a warning, so later importer settings never break older readers.
+	struct SidecarPart
+	{
+		std::string Path;
+		AssetId Id;
+	};
+
 	struct Sidecar
 	{
 		AssetId Id;
 		AssetKind Kind = AssetKind::Unknown;
 		std::optional<TextureColorSpace> ColorSpace;
+		// A model's parts in file order; a part no longer in the file keeps its line, so a rename can be
+		// repaired by writing the new name path on it.
+		std::vector<SidecarPart> Parts;
 	};
 
 	inline constexpr std::string_view SidecarExtension = ".ravenasset";
@@ -46,7 +56,30 @@ namespace Raven
 		// Relative to the content root.
 		std::filesystem::path Source;
 		std::optional<TextureColorSpace> ColorSpace;
+		// A model part's name path (FD-23); empty for the whole file.
+		std::string Part;
 	};
+
+	struct PartTableUpdate
+	{
+		Sidecar Updated;
+		// New parts that got IDs, and recorded parts the file no longer has.
+		std::vector<SidecarPart> Added;
+		std::vector<SidecarPart> Missing;
+		bool Changed = false;
+	};
+
+	// Matches a model file's mesh nodes to its sidecar's part table by name path (FD-23): a known path
+	// keeps its ID, a new one gets a new ID, and a recorded part the file lacks is kept and reported. A
+	// file with one mesh keeps no table unless it already had one: its own ID is that mesh.
+	RAVEN_API PartTableUpdate UpdatePartTable(const Sidecar& sidecar, const std::vector<std::string>& parts);
+	// Reads the model file beside the sidecar and writes the sidecar when its table changes; the report
+	// lines name every added and missing part.
+	RAVEN_API PartTableUpdate ImportModel(const std::filesystem::path& source, std::vector<std::string>& report);
+	// Repairs a rename (FD-23): the part recorded at `from` takes the name path `to`, which the file must
+	// have, so references to its ID keep working; a line the importer added for `to` is dropped with its
+	// new ID. Returns the report line.
+	RAVEN_API std::string RenamePart(const std::filesystem::path& source, const std::string& from, const std::string& to);
 
 	struct ContentIndex
 	{

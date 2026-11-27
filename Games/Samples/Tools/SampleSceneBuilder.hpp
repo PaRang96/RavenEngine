@@ -12,6 +12,7 @@
 #include "Raven/Scene/Scene.hpp"
 #include "Raven/Scene/SceneFile.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,12 @@ namespace Samples
 		void Mesh(const std::string& name, Raven::AssetId mesh, const Raven::ECS::TransformComponent& transform,
 			Raven::Vec4 tint, const Raven::ECS::MaterialComponent& material);
 		void Parent(const std::string& child, const std::string& parent);
+		// A model's node hierarchy as entities (docs/RenderingContentDesign.md, FD-23): a group named `name`
+		// placed by `transform`, and below it one entity per node, "<name>/<node path>", with the node's
+		// transform and, for a part, its mesh. A part named in `tints` takes that tint instead of `tint`.
+		void Model(const std::string& name, const std::filesystem::path& file, const Raven::ECS::TransformComponent& transform,
+			Raven::Vec4 tint, const Raven::ECS::MaterialComponent& material,
+			const std::vector<std::pair<std::string, Raven::Vec4>>& tints = {});
 		// The active camera, orbiting target in the orbit demo and returning to spawn on reset.
 		void Camera(const std::string& name, const Raven::ECS::TransformComponent& spawn,
 			const Raven::ECS::CameraComponent& lens, Raven::Vec3 orbitTarget);
