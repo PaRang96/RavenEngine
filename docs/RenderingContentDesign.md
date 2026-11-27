@@ -14,7 +14,7 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 
 | # | ID | Question | Recommendation |
 | --- | --- | --- | --- |
-| 1 | [FD-18](#fd-18--material-model) | How designers author materials | **Decided 2026-11-26 (owner): (b).** A material **file** shared by many objects, referenced by ID; per-object tint stays; the file extension is `.ravenmat` (owner, 2026-11-27) |
+| 1 | [FD-18](#fd-18--material-model) | How designers author materials | **Decided 2026-11-26 (owner): (b).** A material **file** shared by many objects, referenced by ID; per-object tint stays; the file extension is `.ravenmaterial` (owner, 2026-11-27) |
 | 2 | [FD-19](#fd-19--custom-material-shaders) | What a custom material shader may change | **Decided 2026-11-26 (owner), revised after research:** pixel shaders plus an engine-owned vertex offset hook with a declared maximum displacement; four textures and up to 16 named `float4` values declared per shader; compiled at build time for players and on a background compile queue in development |
 | 3 | [FD-23](#fd-23--multi-object-fbx) | How a multi-part FBX keeps stable IDs when the modelling file changes | **Decided 2026-11-26 (owner), revised:** IDs generated once; imported files get a `.ravenasset` sidecar (ID, kind, import settings, part table), Raven's own formats carry their ID in their header, and the project file keeps only project settings; parts match by name path and renames are reported |
 | 4 | [FD-26](#fd-26--lighting-in-v1) | How much lighting v1 has | **Decided 2026-11-26 (owner):** v1 keeps one sun plus ambient light; the renderer's target after v1 is physically based materials plus global illumination, and M6B must not block it |
@@ -55,7 +55,7 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 | Option | What designers see | Strength | Cost |
 | --- | --- | --- | --- |
 | (a) Values on each object (today) | Every object carries its own color and texture | No new file type | Changing "all red crates" means editing every crate; a custom shader would be repeated on every object; the table grows with every distinct value |
-| **(b) A material file referenced by ID** | A `.ravenmat` text file (shader, colors, textures); objects point to it; per-object tint still works | One edit changes every object using it, live; the material ID is the table key and owns the texture leases | A new file type, edited as text until an editor exists |
+| **(b) A material file referenced by ID** | A `.ravenmaterial` text file (shader, colors, textures); objects point to it; per-object tint still works | One edit changes every object using it, live; the material ID is the table key and owns the texture leases | A new file type, edited as text until an editor exists |
 | (c) Material file plus per-object overrides of any parameter | As (b), plus any value overridable per object | Most flexible | Every override combination is a new table entry again; animated overrides grow it every frame |
 
 **Decision (owner, 2026-11-26): (b).** The change is additive: `MaterialComponent` gains the material `AssetRef`, and its inline values stay as defaults ([planning decision 7](../ROADMAP.md#planning-decisions-2026-11-24)).
@@ -168,11 +168,11 @@ The FBX importer rejects files with more than one mesh node. One project record 
 **Decision (owner, 2026-11-26): (a), with the storage revised so that asset properties and project settings are separate** (the Godot model, compared with Unity's `.meta` files):
 
 - **Imported files** (PNG, FBX, WAV and the other decoded formats) get a sidecar beside them, for example `Cube.fbx.ravenasset`. It holds the asset ID, its kind, its import settings (color space now; mips and compression later) and, for models, the part table: each part's name path and ID.
-- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmat`) store their ID in their own header, so they need no second file.
+- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmaterial`) store their ID in their own header, so they need no second file.
 - **`Project.ravenproject` keeps only project settings:** the scene order and startup scene, the window title and the physics layer names.
 - **Discovery:** development scans `Content/` at startup, and the reload service's existing watch reimports new or edited sidecars live. Packaging writes one generated index, so players never scan.
 - **Reported, never silent:** a source file without a sidecar gets a new ID with one log line; a sidecar without its source is reported as an orphan; two files with one ID (a copy) are reported and the copy gets a new ID.
-- **Timing:** the split lands at the start of B2, before `.ravenmat` exists, as `raven-project 3` with a converter from today's records; the sample generators regenerate their content.
+- **Timing:** the split lands at the start of B2, before `.ravenmaterial` exists, as `raven-project 3` with a converter from today's records; the sample generators regenerate their content.
 
 **Original draft recommendation, kept for the record: (a), with (b)'s convenience.** A `RavenSceneTool import-model` command (and the live reload) matches parts by name path first, so ordinary re-exports need nothing. New parts get new IDs, and a part whose name vanished is reported with its old ID so a rename can be repaired. Each part becomes a mesh sub-asset; the file's node hierarchy is instantiated as entities.
 
@@ -278,7 +278,7 @@ Recorded in full in [RendererDesign.md](RendererDesign.md) when the batch lands:
 
 - **Keyed by material asset ID,** plus one default entry per distinct inline value of `MaterialComponent` (the additive B2 change). Entries own their texture leases and carry dirty flags and a free list, so a material edit uploads only its entry, through Scatter with the record stride as a parameter.
 - **A freed bindless element is reset to white** before it is reused, so a stale index never samples another texture.
-- **Non-finite values never enter the table:** the render world hides an object whose Tint or inline values are NaN or infinite, logging once per entity; the `.ravenmat` parser rejects non-finite values and unknown parameters and keeps the last good version.
+- **Non-finite values never enter the table:** the render world hides an object whose Tint or inline values are NaN or infinite, logging once per entity; the `.ravenmaterial` parser rejects non-finite values and unknown parameters and keeps the last good version.
 
 ### 7. Material shaders as content (AA2-RND-06, AA2-HR-01)
 
@@ -304,7 +304,7 @@ Recorded in full in [RendererDesign.md](RendererDesign.md) when the batch lands:
   color-space srgb
   ```
   Models add one `part <name path> <id>` line per part (B7). Unknown keys are skipped with a warning, like project records.
-- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmat`) carry their ID in their header, so they have no sidecar.
+- **Raven's own formats** (`.ravenscene`, `.ravensound`, `.ravenmaterial`) carry their ID in their header, so they have no sidecar.
 - **`Project.ravenproject` (`raven-project 3`)** keeps only project settings: scene order and startup scene, window title, fixed-step rate, physics limits and layer names. Asset records leave it.
 - **Discovery and reports:** development scans `Content/` at startup, and the reload service's watch picks up new or edited sidecars live. A source without a sidecar gets a new ID, with one log line, and the sidecar is written. A sidecar without its source is reported as an orphan. Two files with one ID (a copied file) are reported, and the copy gets a new ID. Packaging writes one generated index, so players never scan.
 - **Conversion:** `RavenSceneTool upgrade-project` turns a `raven-project 2` file into version 3 plus sidecars, keeping every ID, so scene references survive. The sample generators then write version 3 directly.
@@ -358,7 +358,7 @@ Each step leaves nothing to replace. Steps that need an owner decision start aft
 | Step | Content | Uses |
 | --- | --- | --- |
 | B1 | **Sprite baseline:** the Samples Gallery's opaque and blended quads captured on today's path (replaces the 2D run, owner 2026-11-26), plus the 10k-sprite baseline for the budget | The 2D run decision |
-| B2 | **Contract window and materials:** the contract changes above; `raven-project 3` with sidecars (contract 9); device limits and bindless classes (contract 8); the render-world grouping restructure (contract 3, including the 0.27 ms sync cost); then `.ravenmat`, `MaterialComponent` referencing it, and the keyed material table owning its texture leases (contract 6), with hot reload; samples regenerated | FD-18, FD-23 |
+| B2 | **Contract window and materials:** the contract changes above; `raven-project 3` with sidecars (contract 9); device limits and bindless classes (contract 8); the render-world grouping restructure (contract 3, including the 0.27 ms sync cost); then `.ravenmaterial`, `MaterialComponent` referencing it, and the keyed material table owning its texture leases (contract 6), with hot reload; samples regenerated | FD-18, FD-23 |
 | B3 | **Textures:** the per-frame upload batch first (contract 5), then GPU mip generation into it, the sampler set, and per-texture samplers removed. VMA is vendored here, after the owner approves the download | FD-21, FD-24 |
 | B4 | **Material shaders:** fragment ABI v2 and the vertex offset hook (contracts 1-2), shader assets with their build rule and per-shader pipelines (contract 7), one indirect draw per pipeline range, live reload | FD-19 |
 | B5 | **Sprites on the GPU path:** sprites in the render world on the overlay instance format, cut-out GPU-culled, blended CPU-sorted from the render world | FD-20 |

@@ -11,7 +11,7 @@ namespace Raven::ECS
 		Vec4 BaseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
 		AssetRef<TextureAsset> BaseColorTexture;
 		bool Lit = false;
-		// A shared .ravenmat file (docs/RenderingContentDesign.md, FD-18). When set, it replaces
+		// A shared .ravenmaterial file (docs/RenderingContentDesign.md, FD-18). When set, it replaces
 		// the inline values above, which stay the material of entities without one.
 		AssetRef<MaterialAsset> Material;
 

@@ -168,7 +168,7 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
   - Q8 decided 2026-11-26: sprite sheets are in v1 (planning decision 15).
   - Q9 delegated 2026-11-26 (no on-screen change for existing content, and the indirect path draws in group order with depth): `Opaque` sprites stay as today, with real depth and no alpha test; a new `Cutout` mode is also depth-ordered; sort layer and order apply only to blended sprites, which stay CPU-sorted.
   - CQ Q3 decided 2026-11-26: vendor VMA when B3 or B6 starts (planning decision 16).
-  - FD-18 decided 2026-11-26: shared `.ravenmat` files referenced by ID, per-object tint kept ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-18--material-model)).
+  - FD-18 decided 2026-11-26: shared `.ravenmaterial` files referenced by ID, per-object tint kept ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-18--material-model)).
   - FD-19 decided 2026-11-26 after research: pixel shaders plus a vertex offset hook with declared maximum displacement, four textures and up to 16 named values per shader, build-time compiling for players and a background compile queue in development ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-19--custom-material-shaders)).
   - FD-23 decided 2026-11-26, storage revised: `.ravenasset` sidecars for imported files, IDs in the headers of Raven's own formats, and project settings only in `Project.ravenproject`, landing at the start of B2 as `raven-project 3` ([RenderingContentDesign.md](docs/RenderingContentDesign.md#fd-23--multi-object-fbx)).
   - FD-26 decided 2026-11-26: v1 keeps sun plus ambient; PBR plus global illumination is the target after v1, and M6B keeps the path open (planning decision 17).
