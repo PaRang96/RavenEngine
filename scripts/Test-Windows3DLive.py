@@ -200,7 +200,9 @@ def run_sample(executable, directory, args=(), capture=False):
         env["VK_SCREENSHOT_DIR"] = str(directory / "frames")
         (directory / "frames").mkdir()
     with (directory / "run.log").open("wb") as log:
-        process = subprocess.Popen([str(executable), *args], cwd=directory, env=env,
+        # The warning panel stays off: transient warnings must not enter compared screenshots, and the
+        # checks read every problem from the log instead.
+        process = subprocess.Popen([str(executable), "--no-warning-panel", *args], cwd=directory, env=env,
                                    stdout=log, stderr=subprocess.STDOUT)
         try:
             sample = Sample(process, directory)
@@ -364,7 +366,7 @@ def live(executable, source, directory, capture=True):
             app.marker(b"Render view: shaded")
             screenshot("view-shaded", warm_image, False)
 
-            rejected = b"Cannot replace scene/project; keeping active world"
+            rejected = b"Cannot replace scene/project; keeping the active world"
             count = app.count(rejected) + 1
             start = save(scene, b"malformed smoke scene")
             app.marker(rejected, count)

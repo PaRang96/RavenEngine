@@ -325,9 +325,10 @@ namespace Raven
 			InputState m_Input;
 		};
 
-		void DrawDeveloperOverlay(UI::Ui& ui, const UiPreview& preview, const std::vector<std::string>& entries)
+		void DrawDeveloperOverlay(UI::Ui& ui, const UiPreview& preview, const std::vector<std::string>& entries,
+			bool showProblems)
 		{
-			const auto problems = GetRecentProblems(std::chrono::seconds(10));
+			const auto problems = showProblems ? GetRecentProblems(std::chrono::seconds(10)) : std::vector<LoggedProblem>{};
 			if (problems.empty() && preview.Entry < 0)
 				return;
 			UI::Style panel;
@@ -736,7 +737,7 @@ namespace Raven
 				}
 				boundary.Run(StageBoundary::Render, [&]
 				{
-					DrawDeveloperOverlay(developerUi, preview, previewEntries);
+					DrawDeveloperOverlay(developerUi, preview, previewEntries, config.ShowWarningPanel);
 					debugLines.clear();
 					physics.DrawColliders(debugLines);
 					session.Render(renderer, renderWorld, input, debugLines);

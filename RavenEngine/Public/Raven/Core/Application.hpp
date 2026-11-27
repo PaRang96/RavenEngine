@@ -34,6 +34,10 @@ namespace Raven
 		std::optional<std::uint64_t> SimulationSeed;
 		// The engine's developer input context (F3, F4, F5, F7, F8 by default). Off in player builds.
 		bool DeveloperInput = true;
+		// The on-screen panel of recent warnings and errors. Automated checks and measurements turn it
+		// off (`--no-warning-panel`) so a transient warning never enters a compared or measured image;
+		// every problem is still logged.
+		bool ShowWarningPanel = true;
 		std::optional<AssetId> StartScene;
 		// `--name` options the engine does not use itself, for GameServices::HasOption.
 		std::vector<std::string> GameOptions;

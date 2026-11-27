@@ -109,7 +109,7 @@ namespace
 		return true;
 	}
 
-	constexpr std::string_view Usage = "Usage: RavenEngine [--game <Name>] [--scene <UUID>] [--no-watch] [--seed <n>] "
+	constexpr std::string_view Usage = "Usage: RavenEngine [--game <Name>] [--scene <UUID>] [--no-watch] [--no-warning-panel] [--seed <n>] "
 		"[--present fifo|mailbox|immediate] [--max-fps <rate>] [--gpu discrete|integrated] "
 		"[--borderless <x> <y> <width> <height>] [--<game option>...]";
 }
@@ -143,6 +143,9 @@ int main(int argc, char* argv[])
 			}
 			else if (option == "--no-watch")
 				noWatch = true;
+			// For automated checks and measurements: problems are logged but not drawn.
+			else if (option == "--no-warning-panel")
+				config.ShowWarningPanel = false;
 			// The simulation seed (docs/GameServicesDesign.md, FD-48), for reproducing a run.
 			else if (option == "--seed")
 			{

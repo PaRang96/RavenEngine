@@ -4,8 +4,8 @@
     python scripts/Compare-Captures.py capture out/captures/candidate
     python scripts/Compare-Captures.py compare out/captures/reference out/captures/candidate
 
-Each scene is launched with --no-watch --scene <id>, like the 3D benchmark: the staged game
-module and content, without watchers. The first drawable frame has a zero time step, so it
+Each scene is launched with --no-watch --no-warning-panel --scene <id>, like the 3D benchmark: the
+staged game module and content, without watchers, and no warning panel over the image. The first drawable frame has a zero time step, so it
 shows the authored state before any animation or camera movement. The Vulkan screenshot
 layer saves that frame, and the process is then closed.
 
@@ -99,7 +99,7 @@ def capture(directory, preset, timeout):
         env["VK_SCREENSHOT_DIR"] = str(frames)
         frame = frames / "0.ppm"
         with (directory / f"{name}.log").open("wb") as log:
-            process = subprocess.Popen([str(executable), "--no-watch", "--scene", ids[name]],
+            process = subprocess.Popen([str(executable), "--no-watch", "--no-warning-panel", "--scene", ids[name]],
                                        cwd=executable.parent, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 wait_for_frame(frame, process, timeout)
