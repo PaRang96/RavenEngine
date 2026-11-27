@@ -1,6 +1,6 @@
 # Platform layer design note
 
-Status: **draft for the owner's decision (2026-11-27).** [Planning decision 21](../ROADMAP.md#planning-decisions-2026-11-24) (owner, 2026-11-27): Windows is the head platform, and platform code is only ever encapsulated, so macOS and Linux follow by implementing interfaces. The owner asked that the encapsulation take other engines as reference, Unreal's `FPlatform*` layer in particular. This note compares three engines with Raven's current layer and proposes how Raven's layer is shaped and checked from now on. [PlatformHandoff.md](PlatformHandoff.md) keeps the list of what each platform still lacks.
+Status: **decided (owner, 2026-11-27): option C**, Raven's link-time layer formalized with the points the three engines share (below). Not yet implemented. [Planning decision 21](../ROADMAP.md#planning-decisions-2026-11-24) (owner, 2026-11-27): Windows is the head platform, and platform code is only ever encapsulated, so macOS and Linux follow by implementing interfaces. The owner asked that the encapsulation take other engines as reference, Unreal's `FPlatform*` layer in particular. This note compares three engines with Raven's current layer and proposes how Raven's layer is shaped and checked from now on. [PlatformHandoff.md](PlatformHandoff.md) keeps the list of what each platform still lacks.
 
 ---
 
