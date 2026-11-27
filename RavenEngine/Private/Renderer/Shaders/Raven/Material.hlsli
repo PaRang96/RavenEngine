@@ -64,7 +64,46 @@ float4 RavenMaterialTexture(RavenFragmentInput input, uint slot, float2 uv)
 	return RavenTextures[NonUniformResourceIndex(element)].Sample(RavenSamplers[0], uv);
 }
 
-// One of the values the material file sets for its shader, in declaration order; zero past them.
+// A texture parameter of a material shader (FD-19): the material file names it, and its type says
+// whether it repeats or clamps at the edges.
+struct RavenClampTexture
+{
+	uint Element;
+	uint3 Padding;
+};
+
+struct RavenRepeatTexture
+{
+	uint Element;
+	uint3 Padding;
+};
+
+float4 RavenSample(RavenClampTexture parameter, float2 uv)
+{
+	return RavenTextures[NonUniformResourceIndex(parameter.Element)].Sample(RavenSamplers[0], uv);
+}
+
+float4 RavenSample(RavenRepeatTexture parameter, float2 uv)
+{
+	return RavenTextures[NonUniformResourceIndex(parameter.Element)].Sample(RavenSamplers[1], uv);
+}
+
+// A material shader's parameters (FD-19): declare one struct of float4 values and Raven*Texture
+// members, at most 16 values and 4 textures, then name it here and read it with RavenGetParameters.
+// The material file sets them by member name; the engine reads the names from the compiled shader.
+//
+//   struct GlowMaterial { RavenClampTexture BaseColor; RavenRepeatTexture Noise; float4 EdgeColor; };
+//   RAVEN_MATERIAL_PARAMETERS(GlowMaterial)
+//   ... const GlowMaterial parameters = RavenGetParameters(input);
+#define RAVEN_MATERIAL_PARAMETERS(Type) \
+	[[vk::binding(RAVEN_SCENE_MATERIAL_VALUES, 2)]] StructuredBuffer<Type> RavenParameterBlocks; \
+	Type RavenGetParameters(RavenFragmentInput input) \
+	{ \
+		const MaterialData material = RavenMaterials[input.Material]; \
+		return RavenParameterBlocks[material.ValueOffset / max(material.ValueCount, 1u)]; \
+	}
+
+// One 16-byte member of the material's parameter block, in declaration order; zero past them.
 float4 RavenMaterialValue(RavenFragmentInput input, uint index)
 {
 	const MaterialData material = RavenMaterials[input.Material];

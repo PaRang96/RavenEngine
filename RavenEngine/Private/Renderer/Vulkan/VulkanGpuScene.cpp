@@ -218,7 +218,7 @@ namespace Raven
 			{ set, Commands, sizeof(Command), { offsetof(Command, indexCount), offsetof(Command, instanceCount),
 				offsetof(Command, firstIndex), offsetof(Command, vertexOffset), offsetof(Command, firstInstance) } },
 			// Material values are float4 elements (B0 contract 1).
-			{ set, MaterialValues, sizeof(Vec4), {} },
+			{ set, MaterialValues, sizeof(Vec4), {}, true },
 			// Byte-address buffers: runtime arrays of uint.
 			{ set, ObjectBytes, sizeof(std::uint32_t), {} },
 			{ set, Binding::Upload, sizeof(std::uint32_t), {} },

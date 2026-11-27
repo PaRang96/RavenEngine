@@ -17,7 +17,8 @@ namespace Raven
 		{
 			OpEntryPoint = 15, OpExecutionMode = 16, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23,
 			OpTypeImage = 25, OpTypeSampler = 26, OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30,
-			OpTypePointer = 32, OpConstant = 43, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72
+			OpTypePointer = 32, OpConstant = 43, OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72,
+			OpName = 5, OpMemberName = 6
 		};
 		enum Decoration : std::uint32_t
 		{
@@ -44,6 +45,9 @@ namespace Raven
 			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> MemberOffsets;
 			// 32-bit integer constants, for array lengths.
 			std::unordered_map<std::uint32_t, std::uint32_t> Constants;
+			// Debug names, which DXC keeps for buffer element types and their members.
+			std::unordered_map<std::uint32_t, std::string> Names;
+			std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::string>> MemberNames;
 			struct Variable
 			{
 				std::uint32_t Id;
@@ -129,6 +133,21 @@ namespace Raven
 					if (size < 2)
 						Reject("invalid type");
 					module.Types.emplace(instruction[1], instruction);
+					break;
+				case OpName:
+					if (size >= 3)
+					{
+						const auto* text = reinterpret_cast<const char*>(instruction.data() + 2);
+						module.Names[instruction[1]].assign(text, strnlen(text, (size - 2) * sizeof(std::uint32_t)));
+					}
+					break;
+				case OpMemberName:
+					if (size >= 4)
+					{
+						const auto* text = reinterpret_cast<const char*>(instruction.data() + 3);
+						module.MemberNames[instruction[1]][instruction[2]].assign(text,
+							strnlen(text, (size - 3) * sizeof(std::uint32_t)));
+					}
 					break;
 				case OpConstant:
 					if (size == 4)
@@ -267,6 +286,67 @@ namespace Raven
 			}
 		}
 
+		bool IsFloat4(const Module& module, std::uint32_t id)
+		{
+			const auto type = module.Type(id);
+			if ((type[0] & 0xffff) != OpTypeVector || type[3] != 4)
+				return false;
+			const auto component = module.Type(type[2]);
+			return (component[0] & 0xffff) == OpTypeFloat && component[2] == 32;
+		}
+
+		// The members of a parameter block element (FD-19), or nothing for plain float4 elements.
+		std::vector<MaterialParameter> ReadParameterBlock(const Module& module, std::uint32_t element,
+			std::optional<std::uint32_t> stride, const std::string& where)
+		{
+			if (IsFloat4(module, element))
+			{
+				if (stride != 16u)
+					Reject(where + " must hold float4 elements 16 bytes apart");
+				return {};
+			}
+			const auto type = module.Type(element);
+			if ((type[0] & 0xffff) != OpTypeStruct)
+				Reject(where + " must hold float4 values or one material parameter struct");
+			const auto offsets = module.Offsets(element);
+			std::vector<MaterialParameter> parameters;
+			std::size_t values = 0, textures = 0;
+			const auto names = module.MemberNames.find(element);
+			for (std::uint32_t member = 0; member < offsets.size(); ++member)
+			{
+				if (offsets[member] != member * 16)
+					Reject(where + " parameter members must each take 16 bytes, in order");
+				MaterialParameter parameter;
+				if (names != module.MemberNames.end() && names->second.contains(member))
+					parameter.Name = names->second.at(member);
+				if (parameter.Name.empty())
+					Reject(where + " parameter member " + std::to_string(member) + " has no name in the compiled shader");
+				const auto memberType = type[2 + member];
+				if (IsFloat4(module, memberType))
+					++values;
+				else
+				{
+					const auto typeName = module.Names.find(memberType);
+					const std::string name = typeName == module.Names.end() ? "" : typeName->second;
+					if (name == "RavenClampTexture")
+						parameter.Type = MaterialParameter::Kind::ClampTexture;
+					else if (name == "RavenRepeatTexture")
+						parameter.Type = MaterialParameter::Kind::RepeatTexture;
+					else
+						Reject(where + " parameter " + parameter.Name + " must be a float4, RavenClampTexture or RavenRepeatTexture");
+					++textures;
+				}
+				parameters.push_back(std::move(parameter));
+			}
+			if (values > MaxMaterialValues || textures > MaxMaterialTextures)
+				Reject(where + " declares " + std::to_string(values) + " values and " + std::to_string(textures) +
+					" textures; a material has at most " + std::to_string(MaxMaterialValues) + " and " +
+					std::to_string(MaxMaterialTextures));
+			if (stride != static_cast<std::uint32_t>(offsets.size() * 16))
+				Reject(where + " element stride differs from its parameter count");
+			return parameters;
+		}
+
 		void CheckBuffer(const Module& module, const Module::Variable& variable, const ShaderInterface& expected)
 		{
 			const auto set = module.Decorated(variable.Id, DescriptorSet);
@@ -296,6 +376,11 @@ namespace Raven
 			const auto array = module.Type(block[2]);
 			if ((array[0] & 0xffff) != OpTypeRuntimeArray)
 				Reject(where + " must hold one runtime array");
+			if (layout->ParameterBlock)
+			{
+				ReadParameterBlock(module, array[2], module.Decorated(block[2], ArrayStride), where);
+				return;
+			}
 			const auto stride = module.Decorated(block[2], ArrayStride);
 			if (stride != layout->Stride)
 				Reject(where + " element stride " + std::to_string(stride.value_or(0)) + " differs from the engine's " +
@@ -359,5 +444,29 @@ namespace Raven
 				break;
 			}
 		}
+	}
+
+	std::vector<MaterialParameter> ReadMaterialParameters(std::span<const std::uint32_t> words)
+	{
+		const auto module = Parse(words);
+		for (const auto& variable : module.Variables)
+		{
+			if (variable.Class != StorageBuffer && variable.Class != Uniform)
+				continue;
+			if (module.Decorated(variable.Id, DescriptorSet) != 2u ||
+				module.Decorated(variable.Id, Binding) != RavenSceneParameterBinding)
+				continue;
+			const auto block = module.Type(module.Type(variable.Pointer)[3]);
+			if ((block[0] & 0xffff) != OpTypeStruct || block.size() != 3)
+				continue;
+			const auto array = module.Type(block[2]);
+			if ((array[0] & 0xffff) != OpTypeRuntimeArray)
+				continue;
+			auto parameters = ReadParameterBlock(module, array[2], module.Decorated(block[2], ArrayStride),
+				"the material parameters");
+			if (!parameters.empty())
+				return parameters;
+		}
+		return {};
 	}
 }
