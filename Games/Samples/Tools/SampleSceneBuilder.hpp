@@ -6,6 +6,7 @@
 #include "Raven/Components/LightingComponent.hpp"
 #include "Raven/Components/MaterialComponent.hpp"
 #include "Raven/Components/PhysicsComponents.hpp"
+#include "Raven/Components/SpriteComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
@@ -44,6 +45,9 @@ namespace Samples
 		// A collider, and a rigid body unless static, on an existing entity (docs/GameServicesDesign.md, FD-32).
 		void Physics(const std::string& name, const Raven::ECS::ColliderComponent& collider,
 			std::optional<Raven::ECS::RigidBodyComponent> body = {});
+		// A world-space quad (docs/RenderingContentDesign.md, FD-20).
+		void Sprite(const std::string& name, const Raven::ECS::TransformComponent& transform,
+			const Raven::ECS::SpriteComponent& sprite);
 		// A mover walking a circle (FD-47) on an existing entity.
 		void Patrol(const std::string& name, const Raven::ECS::MoverComponent& mover, const PatrolComponent& patrol);
 

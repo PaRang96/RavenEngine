@@ -366,6 +366,24 @@ Each step leaves nothing to replace. Steps that need an owner decision start aft
 | B7 | **Multi-object FBX:** sub-asset records, `import-model`, rename reporting, hierarchy instantiation | FD-23 |
 | B8 | **Exit check** with every measurement | All |
 
+## Implementation record
+
+### B1 — Sprite baseline (2026-11-27)
+
+- **Images:** `scripts/Compare-Captures.py capture out/captures/m6b-b1-reference` (Release) recorded the first frames of Perspective, Gallery, Assemblies, Puzzle, Collection and Benchmark-500 on today's path. Every later step compares against these at the M2 tolerance; the Gallery's two opaque and two blended quads are the sprite reference. The folder is ignored evidence and is recaptured only from this commit's code.
+- **Sprite scene:** `SamplesTool create-sprite-benchmark <output> 10000|0` builds a 100 x 100 wall of quads facing the camera, opaque and blended in a checkerboard with both sample textures, and a control scene with the same camera and light but no wall. `scripts/Benchmark-Windows3D.py sprites <label>` generates both into a snapshot, measures each three times alternately for 4 s at 1280 x 720, and reports the loaded scene minus the control. The frame trace gained a `sprites` column (sprites submitted per frame).
+- **Today's cost of 10k sprites** (laptop, Release, 60 Hz FIFO, medians of three runs):
+
+  | | p50 | p95 |
+  | --- | --- | --- |
+  | CPU preparation | 2.62 ms | 2.87 ms |
+  | of which renderer prepare (cull, sort, batching) | 1.73 ms | 1.92 ms |
+  | of which record and submit | 0.47 ms | 0.52 ms |
+  | of which sprite gathering | 0.04 ms | 0.06 ms |
+  | GPU | 0.45 ms | 0.89 ms |
+
+  The wall draws in 2,648 instanced runs, because alternating textures and blend modes break runs. B5's budget (1.0 ms CPU and 1.0 ms GPU for the same scene) needs the CPU cost to fall by more than half; the GPU cost is already within it.
+
 ## Measurements
 
 | # | Measurement | Gate |

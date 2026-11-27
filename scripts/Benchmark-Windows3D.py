@@ -30,6 +30,14 @@ STRESS = {
     100000: "d29f6b14-0c83-4a7e-8f52-6b1e3a9d07c4",
 }
 SCENE_IDS = {**SCENES, **STRESS}
+# The sprite budget scenes (docs/RenderingContentDesign.md, B1): 10k quads and a control without
+# them, generated into the snapshot like the stress scenes.
+SPRITES = {
+    10000: "5b0e9c3a-2f61-4d8e-a7c4-93e1d6f0b215",
+    0: "c6f2a8d1-4e97-4b3c-8d05-7a1e9f3b6c42",
+}
+# Every generated scene also carries the Gallery's four transparency-demo sprites.
+DEMO_SPRITES = 4
 EXTENT = 1280, 720
 RATE = .65
 RELEASE = "x64-release"
@@ -204,6 +212,74 @@ def build_snapshot(report, edit=None, preset=RELEASE, stress=None):
     return source
 
 
+def sprite_snapshot(report):
+    source = report / "source"
+    source.mkdir()
+    copy_source_tree(ROOT, source)
+    with (report / "build.log").open("wb") as output:
+        subprocess.run(["cmake", "--preset", RELEASE], cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+        build = ["cmake", "--build", f"out/build/{RELEASE}", "--parallel", "4"]
+        subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+        with (source / CONTENT / "Project.ravenproject").open("a", encoding="utf-8", newline="\n") as project:
+            for count, scene in SPRITES.items():
+                level = f"Levels/Sprites-{count}.ravenscene"
+                subprocess.run([str(runtime(source) / "SamplesTool.exe"), "create-sprite-benchmark",
+                                str(source / CONTENT / level), str(count)],
+                               stdout=output, stderr=subprocess.STDOUT, check=True)
+                project.write(f'scene {scene} "{level}"\n')
+        subprocess.run(build, cwd=source, stdout=output, stderr=subprocess.STDOUT, check=True)
+    return source
+
+
+def sprite_profile(executable, directory, count, seconds):
+    with SMOKE["run_sample"](executable, directory, ["--scene", SPRITES[count], "--no-watch"]) as app:
+        app.resize(*EXTENT)
+        app.marker(f"Loaded level 'Sprites-{count}.ravenscene'".encode())
+        time.sleep(1.5)
+        start = time.perf_counter_ns()
+        time.sleep(seconds)
+        end = time.perf_counter_ns()
+        time.sleep(.15)
+    frames = read_frames(directory / "frames.csv")
+    window = [row for row in frames if start <= row["start_ns"] < end and row["presented_ns"]]
+    check(len(window) >= 20, "Too few presented frames for a timing distribution")
+    check({row["sprites"] for row in window} == {count + DEMO_SPRITES}, f"Unexpected sprite count for {count}")
+    timestamps = {row["gpu_frame_ns"]: row["gpu_ns"] for row in frames if row["gpu_frame_ns"]}
+    gpu = [timestamps[row["start_ns"]] for row in window if row["start_ns"] in timestamps]
+    check(len(gpu) >= len(window) - 2 and min(gpu) > 0, "Completed GPU timestamps are missing")
+    waits = [row["fence_wait_ns"] + row["acquire_wait_ns"] + row["present_wait_ns"] for row in window]
+    intervals = [b["start_ns"] - a["start_ns"] for a, b in zip(window, window[1:])]
+    calls = sorted({row["draw_calls"] for row in window})
+    result = {"sprites": count, "frames": len(window), "draw_calls": calls,
+              "fps": round(len(intervals) * 1e9 / sum(intervals), 2),
+              "cpu_preparation": distribution(row["work_ns"] - wait for row, wait in zip(window, waits)),
+              "scene_gather": distribution(row["scene_gather_ns"] for row in window),
+              "renderer_prepare": distribution(row["render_prepare_ns"] for row in window),
+              "record_submit": distribution(row["record_submit_ns"] for row in window),
+              "gpu": distribution(gpu)}
+    (directory / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
+
+
+def sprite_budget(report, seconds, repeats):
+    source = sprite_snapshot(report)
+    samples = []
+    for repeat in range(repeats):
+        for count in (SPRITES if repeat % 2 == 0 else list(SPRITES)[::-1]):
+            label = f"{repeat + 1}-sprites-{count}"
+            row = sprite_profile(runtime(source) / "RavenEngine.exe", report / label, count, seconds)
+            samples.append({"run": label, **row})
+            print(f"{label}: {row['fps']:.1f} FPS, CPU preparation p50 {row['cpu_preparation']['p50']:.3f} ms, "
+                  f"GPU p50 {row['gpu']['p50']:.3f} ms, draws {row['draw_calls']}", flush=True)
+    def median(count, key, pct):
+        return statistics.median(row[key][pct] for row in samples if row["sprites"] == count)
+    loaded, control = max(SPRITES), min(SPRITES)
+    summary = {key: {pct: round(median(loaded, key, pct) - median(control, key, pct), 4) for pct in ("p50", "p95")}
+               for key in ("cpu_preparation", "scene_gather", "renderer_prepare", "record_submit", "gpu")}
+    print("10k sprites cost (median of runs, loaded minus control): " + json.dumps(summary), flush=True)
+    return {"samples": samples, "cost_of_10k_sprites_ms": summary}
+
+
 def hot_reload(report, count):
     source = build_snapshot(report, stress=count)
     path = source / "Games/Samples/Source/Interaction.cpp"
@@ -268,6 +344,10 @@ def main():
     scale.add_argument("--static", action="store_true", help="Pause the rotators (M3 100k static target)")
     scale.add_argument("--view", choices=VIEWS, default="shaded", help="Render view selected with F7 before measuring")
     scale.add_argument("--max-fps", type=int, default=0, help="Frame-rate cap passed to the host (0: none)")
+    sprites = modes.add_parser("sprites", help="The 10k-sprite budget scene against its control (M6B B1)")
+    sprites.add_argument("label")
+    sprites.add_argument("--seconds", type=float, default=4)
+    sprites.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if args.mode == "generate":
         generate()
@@ -278,6 +358,9 @@ def main():
         check(args.seconds >= 1 and args.repeats >= 1, "Measure at least one run of one second or longer")
         result = {"label": args.label, "resolution": EXTENT, "seconds": args.seconds, "repeats": args.repeats,
                   "samples": measure(report, args.seconds, args.repeats)}
+    elif args.mode == "sprites":
+        check(args.seconds >= 1 and args.repeats >= 1, "Measure at least one run of one second or longer")
+        result = {"label": args.label, "resolution": EXTENT, **sprite_budget(report, args.seconds, args.repeats)}
     elif args.mode == "reload":
         result = hot_reload(report, args.meshes)
         print(json.dumps(result, indent=2), flush=True)

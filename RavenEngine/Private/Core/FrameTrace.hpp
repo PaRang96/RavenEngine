@@ -48,6 +48,8 @@ namespace Raven
 		// glyph uploads gathered for the frame (docs/UIDesign.md, section 7; measurement 7).
 		std::int64_t Ui = 0;
 		std::uint32_t UiQuads = 0;
+		// Sprites submitted for drawing this frame, opaque and blended (docs/RenderingContentDesign.md, B1).
+		std::uint32_t Sprites = 0;
 	};
 
 	RAVEN_API FrameMetrics* GetFrameMetrics() noexcept;

@@ -44,6 +44,14 @@ namespace Samples
 		m_Registry.Add(m_Scene.CreateEntity(name), transform);
 	}
 
+	void SampleSceneBuilder::Sprite(const std::string& name, const ECS::TransformComponent& transform,
+		const ECS::SpriteComponent& sprite)
+	{
+		const auto entity = m_Scene.CreateEntity(name);
+		m_Registry.Add(entity, transform);
+		m_Registry.Add(entity, sprite);
+	}
+
 	void SampleSceneBuilder::Mesh(const std::string& name, AssetId mesh, const ECS::TransformComponent& transform,
 		Vec4 tint, const ECS::MaterialComponent& material)
 	{

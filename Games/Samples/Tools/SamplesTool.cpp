@@ -2,6 +2,7 @@
 //   SamplesTool create-puzzle <output.ravenscene>
 //   SamplesTool create-collection <output.ravenscene>
 //   SamplesTool create-benchmark <output.ravenscene> <mesh-count>
+//   SamplesTool create-sprite-benchmark <output.ravenscene> <sprite-count>
 //   SamplesTool create-physics <output.ravenscene>
 
 #include "SampleSceneBuilder.hpp"
@@ -98,6 +99,42 @@ namespace
 			}
 		}
 		scene.Camera("main", spawn, lens, {});
+		scene.Lighting("sun", {});
+		return scene.Finish();
+	}
+
+	// The sprite budget scene (docs/RenderingContentDesign.md, B1 and the sprite budget): a 100 x 100
+	// wall of quads facing the camera, alternating opaque and blended in a checkerboard so blended
+	// sprites overlap opaque ones and each other's rows, with both sample textures. Zero sprites gives
+	// the control scene: the same camera and light without the wall.
+	SceneFile CreateSpriteBenchmark(std::uint32_t spriteCount)
+	{
+		if (spriteCount != 0 && spriteCount != 10000)
+			throw std::invalid_argument("Sprite benchmark count must be 0 or 10000");
+		constexpr std::uint32_t columns = 100;
+		constexpr float spacing = .5f;
+		const AssetRef<TextureAsset> grid{ AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19") };
+		const AssetRef<TextureAsset> alternate{ AssetId::Parse("a1552d51-3e07-483c-aabd-366e71785a34") };
+		SampleSceneBuilder scene;
+		for (std::uint32_t index = 0; index < spriteCount; ++index)
+		{
+			const auto row = index / columns, column = index % columns;
+			const bool blended = (row + column) % 2 == 1;
+			ECS::SpriteComponent sprite;
+			sprite.Texture = row % 2 == 0 ? grid : alternate;
+			sprite.Tint = blended ? Vec4{ .65f, .8f, 1.0f, .55f } : Vec4{ 1, 1, 1, 1 };
+			sprite.BlendMode = blended ? ECS::SpriteBlendMode::Alpha : ECS::SpriteBlendMode::Opaque;
+			sprite.SortOrder = static_cast<std::int32_t>(column);
+			// Blended quads sit slightly in front and overlap their neighbours.
+			const float depth = blended ? -.05f : 0.0f;
+			scene.Sprite("sprite-" + std::to_string(index),
+				Pose({ (static_cast<float>(column) - 49.5f) * spacing, depth, (static_cast<float>(row) - 49.5f) * spacing },
+					blended ? Vec3{ .7f, 1, .7f } : Vec3{ .45f, 1, .45f }),
+				sprite);
+		}
+		ECS::CameraComponent lens;
+		lens.FarPlane = 200.0f;
+		scene.Camera("main", Pose({ 0, -60.0f, 0 }), lens, {});
 		scene.Lighting("sun", {});
 		return scene.Finish();
 	}
@@ -261,6 +298,14 @@ int main(int argc, char** argv)
 			CreateCollection().Save(argv[2]);
 		else if (command == "create-physics" && argc == 3)
 			CreatePhysics().Save(argv[2]);
+		else if (command == "create-sprite-benchmark" && argc == 4)
+		{
+			std::uint32_t count = 0;
+			const std::string_view value(argv[3]);
+			if (std::from_chars(value.data(), value.data() + value.size(), count).ec != std::errc{})
+				throw std::invalid_argument("Sprite count must be a number");
+			CreateSpriteBenchmark(count).Save(argv[2]);
+		}
 		else if (command == "create-benchmark" && argc == 4)
 		{
 			std::uint32_t count = 0;
@@ -272,7 +317,7 @@ int main(int argc, char** argv)
 		}
 		else
 			throw std::invalid_argument("Usage: SamplesTool create-puzzle|create-collection|create-physics <output> | "
-				"create-benchmark <output> <mesh-count>");
+				"create-benchmark <output> <mesh-count> | create-sprite-benchmark <output> <sprite-count>");
 		std::cout << "Saved scene " << argv[2] << '\n';
 		return 0;
 	}

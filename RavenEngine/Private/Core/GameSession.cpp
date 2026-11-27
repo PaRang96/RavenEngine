@@ -525,6 +525,8 @@ namespace Raven
 		if (skipped != m_SkippedSprites && skipped != 0)
 			Log(LogLevel::Warning, std::format("{} sprite(s) not drawn: a non-finite world transform or tint", skipped));
 		m_SkippedSprites = skipped;
+		if (auto* metrics = GetFrameMetrics())
+			metrics->Sprites = static_cast<std::uint32_t>(m_OpaqueSprites.size() + m_TransparentSprites.size());
 	}
 
 	OverlayFrame GameSession::BuildOverlay()
