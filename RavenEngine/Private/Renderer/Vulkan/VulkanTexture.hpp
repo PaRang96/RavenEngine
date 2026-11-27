@@ -2,6 +2,7 @@
 
 #include "Raven/Renderer/TextureDesc.hpp"
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanMemory.hpp"
 
 namespace Raven
 {
@@ -37,8 +38,9 @@ namespace Raven
 
 		// The context completes GPU use before destroying this owner and its device.
 		VkDevice m_Device = VK_NULL_HANDLE;
+		const VulkanMemory* m_Memory = nullptr;
 		VkImage m_Image = VK_NULL_HANDLE;
-		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+		VulkanMemory::Allocation m_Allocation;
 		VkImageView m_View = VK_NULL_HANDLE;
 		VkSampler m_Sampler = VK_NULL_HANDLE;
 		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;

@@ -1,0 +1,4 @@
+raven-vendor-manifest 1
+version 3.5.0
+be95175d6a296d066ed17617c094422d27174ad5 LICENSE.txt
+0c9b3279dd5492c01ad4172830f647559d0792c5 include/vk_mem_alloc.h

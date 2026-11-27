@@ -14,16 +14,6 @@ namespace Raven
 				throw std::runtime_error(std::string(operation) + " failed: " + std::to_string(result));
 		}
 
-		std::uint32_t FindDepthMemory(VkPhysicalDevice physicalDevice, std::uint32_t allowedTypes)
-		{
-			VkPhysicalDeviceMemoryProperties properties{};
-			vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
-			for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
-				if ((allowedTypes & (std::uint32_t{ 1 } << index)) != 0 &&
-					(properties.memoryTypes[index].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
-					return index;
-			throw std::runtime_error("No compatible device-local depth memory");
-		}
 	}
 
 	VkFormat VulkanDepthAttachment::SelectFormat(const VulkanPhysicalDevice& physicalDevice)
@@ -42,7 +32,7 @@ namespace Raven
 
 	VulkanDepthAttachment::VulkanDepthAttachment(const VulkanDevice& device,
 		const VulkanPhysicalDevice& physicalDevice, VkExtent2D extent, VkFormat format)
-		: m_Device(device.Get())
+		: m_Device(device.Get()), m_Memory(&device.GetMemory())
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
 			extent.width == 0 || extent.height == 0 ||
@@ -63,20 +53,8 @@ namespace Raven
 			imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 			imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			VkImage image = VK_NULL_HANDLE;
-			CheckDepthResult(vkCreateImage(m_Device, &imageInfo, nullptr, &image), "vkCreateImage (depth)");
-			m_Image = image;
-
-			VkMemoryRequirements requirements{};
-			vkGetImageMemoryRequirements(m_Device, m_Image, &requirements);
-			VkMemoryAllocateInfo allocation{};
-			allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			allocation.allocationSize = requirements.size;
-			allocation.memoryTypeIndex = FindDepthMemory(physicalDevice.Handle, requirements.memoryTypeBits);
-			VkDeviceMemory memory = VK_NULL_HANDLE;
-			CheckDepthResult(vkAllocateMemory(m_Device, &allocation, nullptr, &memory), "vkAllocateMemory (depth)");
-			m_Memory = memory;
-			CheckDepthResult(vkBindImageMemory(m_Device, m_Image, m_Memory, 0), "vkBindImageMemory (depth)");
+			// An attachment takes its own block (FD-24).
+			m_Image = m_Memory->CreateImage(imageInfo, true, m_Allocation);
 
 			VkImageViewCreateInfo viewInfo{};
 			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -107,8 +85,6 @@ namespace Raven
 		if (m_View != VK_NULL_HANDLE)
 			vkDestroyImageView(m_Device, m_View, nullptr);
 		if (m_Image != VK_NULL_HANDLE)
-			vkDestroyImage(m_Device, m_Image, nullptr);
-		if (m_Memory != VK_NULL_HANDLE)
-			vkFreeMemory(m_Device, m_Memory, nullptr);
+			m_Memory->DestroyImage(m_Image, m_Allocation);
 	}
 }

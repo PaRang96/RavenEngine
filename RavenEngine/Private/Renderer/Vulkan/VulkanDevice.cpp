@@ -1,4 +1,5 @@
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanMemory.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 
 #include <array>
@@ -17,7 +18,7 @@ namespace Raven
 		throw std::runtime_error(std::string(operation) + " failed: " + std::to_string(result));
 	}
 
-	VulkanDevice::VulkanDevice(const VulkanPhysicalDevice& physicalDevice)
+	VulkanDevice::VulkanDevice(const VulkanPhysicalDevice& physicalDevice, VkInstance instance)
 	{
 		if (physicalDevice.Handle == VK_NULL_HANDLE ||
 			!physicalDevice.QueueFamilies.IsComplete())
@@ -113,10 +114,21 @@ namespace Raven
 		m_Commands.EndRendering = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(load("vkCmdEndRenderingKHR"));
 		m_Commands.PipelineBarrier2 = reinterpret_cast<PFN_vkCmdPipelineBarrier2KHR>(load("vkCmdPipelineBarrier2KHR"));
 		m_Commands.QueueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2KHR>(load("vkQueueSubmit2KHR"));
+		try
+		{
+			m_Memory = std::make_unique<VulkanMemory>(instance, physicalDevice.Handle, m_Device);
+		}
+		catch (...)
+		{
+			vkDestroyDevice(m_Device, nullptr);
+			m_Device = VK_NULL_HANDLE;
+			throw;
+		}
 	}
 
 	VulkanDevice::~VulkanDevice()
 	{
+		m_Memory.reset();
 		if (m_Device != VK_NULL_HANDLE)
 			vkDestroyDevice(m_Device, nullptr);
 	}

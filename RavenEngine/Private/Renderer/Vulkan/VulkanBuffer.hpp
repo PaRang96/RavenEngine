@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanMemory.hpp"
 
 #include <cstddef>
 #include <span>
@@ -44,9 +45,9 @@ namespace Raven
 		void Destroy() noexcept;
 
 		// Device outlives this owner; GPU use completes before destruction.
-		VkDevice m_Device = VK_NULL_HANDLE;
+		const VulkanMemory* m_Memory = nullptr;
 		VkBuffer m_Buffer = VK_NULL_HANDLE;
-		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+		VulkanMemory::Allocation m_Allocation;
 		VkDeviceSize m_Size = 0;
 		std::byte* m_Mapped = nullptr;
 		bool m_DeviceLocal = false;

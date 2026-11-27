@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Renderer/Vulkan/VulkanDevice.hpp"
+#include "Renderer/Vulkan/VulkanMemory.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
 
 namespace Raven
@@ -24,8 +25,9 @@ namespace Raven
 		void Destroy() noexcept;
 
 		VkDevice m_Device = VK_NULL_HANDLE;
+		const VulkanMemory* m_Memory = nullptr;
 		VkImage m_Image = VK_NULL_HANDLE;
-		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+		VulkanMemory::Allocation m_Allocation;
 		VkImageView m_View = VK_NULL_HANDLE;
 	};
 }

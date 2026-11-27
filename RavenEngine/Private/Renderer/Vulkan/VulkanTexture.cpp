@@ -18,17 +18,6 @@ namespace Raven
 			CheckVulkanResult(result, operation);
 		}
 
-		std::uint32_t FindTextureMemory(VkPhysicalDevice physicalDevice, std::uint32_t allowedTypes)
-		{
-			VkPhysicalDeviceMemoryProperties properties{};
-			vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
-			for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
-				if ((allowedTypes & (std::uint32_t{ 1 } << index)) != 0 &&
-					(properties.memoryTypes[index].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
-					return index;
-			throw std::runtime_error("No compatible device-local texture memory");
-		}
-
 		class TextureUpload
 		{
 		public:
@@ -123,7 +112,7 @@ namespace Raven
 
 	VulkanTexture::VulkanTexture(const VulkanDevice& device, const VulkanPhysicalDevice& physicalDevice,
 		const TextureDesc& description)
-		: m_Device(device.Get()), m_Extent{ description.Width, description.Height }
+		: m_Device(device.Get()), m_Memory(&device.GetMemory()), m_Extent{ description.Width, description.Height }
 	{
 		if (m_Device == VK_NULL_HANDLE || physicalDevice.Handle == VK_NULL_HANDLE ||
 			!physicalDevice.QueueFamilies.Graphics.has_value() || device.GetGraphicsQueue() == VK_NULL_HANDLE)
@@ -178,21 +167,7 @@ namespace Raven
 			imageInfo.usage = usage;
 			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 			imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			VkImage image = VK_NULL_HANDLE;
-			CheckTextureResult(vkCreateImage(m_Device, &imageInfo, nullptr, &image), "vkCreateImage (texture)");
-			m_Image = image;
-
-			VkMemoryRequirements requirements{};
-			vkGetImageMemoryRequirements(m_Device, m_Image, &requirements);
-			VkMemoryAllocateInfo allocation{};
-			allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			allocation.allocationSize = requirements.size;
-			allocation.memoryTypeIndex = FindTextureMemory(physicalDevice.Handle, requirements.memoryTypeBits);
-			VkDeviceMemory memory = VK_NULL_HANDLE;
-			CheckTextureResult(vkAllocateMemory(m_Device, &allocation, nullptr, &memory),
-				"vkAllocateMemory (texture)");
-			m_Memory = memory;
-			CheckTextureResult(vkBindImageMemory(m_Device, m_Image, m_Memory, 0), "vkBindImageMemory (texture)");
+			m_Image = m_Memory->CreateImage(imageInfo, false, m_Allocation);
 
 			VkImageViewCreateInfo viewInfo{};
 			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -274,7 +249,7 @@ namespace Raven
 	{
 		using std::swap;
 		swap(m_Image, other.m_Image);
-		swap(m_Memory, other.m_Memory);
+		swap(m_Allocation, other.m_Allocation);
 		swap(m_View, other.m_View);
 		swap(m_Sampler, other.m_Sampler);
 		swap(m_Format, other.m_Format);
@@ -300,13 +275,8 @@ namespace Raven
 		}
 		if (m_Image != VK_NULL_HANDLE)
 		{
-			vkDestroyImage(m_Device, m_Image, nullptr);
+			m_Memory->DestroyImage(m_Image, m_Allocation);
 			m_Image = VK_NULL_HANDLE;
-		}
-		if (m_Memory != VK_NULL_HANDLE)
-		{
-			vkFreeMemory(m_Device, m_Memory, nullptr);
-			m_Memory = VK_NULL_HANDLE;
 		}
 	}
 }

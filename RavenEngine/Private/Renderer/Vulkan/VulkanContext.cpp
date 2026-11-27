@@ -1,6 +1,7 @@
 #include "Raven/Renderer/Vulkan/VulkanContext.hpp"
 
 #include "Renderer/Vulkan/VulkanInstance.hpp"
+#include "Renderer/Vulkan/VulkanMemory.hpp"
 #include "Renderer/Vulkan/VulkanDebugMessenger.hpp"
 #include "Renderer/Vulkan/VulkanSurface.hpp"
 #include "Renderer/Vulkan/VulkanPhysicalDevice.hpp"
@@ -211,7 +212,7 @@ namespace Raven
 		  m_Surface(m_Instance, m_Window),
 		  m_PhysicalDevice(SelectVulkanPhysicalDevice(
 			  m_Instance.Get(), m_Surface.Get(), config.Gpu)),
-		  m_Device(m_PhysicalDevice),
+		  m_Device(m_PhysicalDevice, m_Instance.Get()),
 		  m_MeshPool(m_Device, m_PhysicalDevice),
 		  m_TextureDescriptors(m_Device),
 		  m_FrameLayout(m_Device),
@@ -853,6 +854,10 @@ namespace Raven
 		result.DescriptorPools = m_Impl->m_TextureDescriptors.GetPoolCount();
 		result.BindlessEngine = m_Impl->m_TextureDescriptors.GetEngineElements();
 		result.BindlessContent = m_Impl->m_TextureDescriptors.GetContentElements();
+		const auto memory = m_Impl->m_Device.GetMemory().GetStats();
+		result.GpuAllocations = memory.Allocations;
+		result.GpuAllocatedBytes = static_cast<std::size_t>(memory.AllocatedBytes);
+		result.GpuBlockBytes = static_cast<std::size_t>(memory.BlockBytes);
 		return result;
 	}
 

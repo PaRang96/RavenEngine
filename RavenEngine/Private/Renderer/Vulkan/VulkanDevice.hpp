@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <memory>
 #include <stdexcept>
 
 namespace Raven
@@ -18,6 +19,7 @@ namespace Raven
 	void CheckVulkanResult(VkResult result, const char* operation);
 
 	struct VulkanPhysicalDevice;
+	class VulkanMemory;
 
 	// Extension commands loaded for this device (docs/RendererDesign.md, R2 and R3).
 	struct VulkanDeviceCommands
@@ -31,7 +33,7 @@ namespace Raven
 	class VulkanDevice
 	{
 	public:
-		explicit VulkanDevice(const VulkanPhysicalDevice& physicalDevice);
+		VulkanDevice(const VulkanPhysicalDevice& physicalDevice, VkInstance instance);
 		~VulkanDevice();
 
 		VulkanDevice(const VulkanDevice&) = delete;
@@ -41,11 +43,15 @@ namespace Raven
 		VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
 		VkQueue GetPresentQueue() const { return m_PresentQueue; }
 		const VulkanDeviceCommands& GetCommands() const { return m_Commands; }
+		// GPU memory for every buffer, texture and attachment of this device (FD-24).
+		const VulkanMemory& GetMemory() const { return *m_Memory; }
 
 	private:
 		VkDevice m_Device = VK_NULL_HANDLE;
 		VkQueue m_GraphicsQueue = VK_NULL_HANDLE;
 		VkQueue m_PresentQueue = VK_NULL_HANDLE;
 		VulkanDeviceCommands m_Commands;
+		// Released before the device, after every allocation.
+		std::unique_ptr<VulkanMemory> m_Memory;
 	};
 }

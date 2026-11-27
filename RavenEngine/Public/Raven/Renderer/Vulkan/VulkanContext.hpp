@@ -46,6 +46,11 @@ namespace Raven
 		// Bindless elements in use per class (B0 contract 8).
 		std::size_t BindlessEngine = 0;
 		std::size_t BindlessContent = 0;
+		// GPU memory through the allocator (FD-24): live allocations, the bytes they use, and the bytes
+		// of the blocks holding them.
+		std::size_t GpuAllocations = 0;
+		std::size_t GpuAllocatedBytes = 0;
+		std::size_t GpuBlockBytes = 0;
 	};
 
 	class VulkanContext
