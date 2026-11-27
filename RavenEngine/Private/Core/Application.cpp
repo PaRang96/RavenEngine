@@ -714,18 +714,15 @@ namespace Raven
 							blended = interpolator.Apply(scene, static_cast<float>(gameplay.GetAlpha()));
 						scene.UpdateWorldTransforms();
 					});
-					// Only new objects and changed materials resolve their texture (G1), and only new
-					// objects and changed mesh components their mesh. A bad game-written texture
-					// samples white (bindless element 0); a bad mesh draws nothing (FD-06).
+					// Only new material keys and reloaded material files resolve leases (G1, B0
+					// contract 6), and only new objects and changed mesh components their mesh. A bad
+					// game-written texture samples white (bindless element 0), a bad material file
+					// falls back to the inline values, and a bad mesh draws nothing (FD-06).
 					boundary.Run(StageBoundary::Extract, [&]
 					{
-						renderWorld.Sync(scene, [&](ECS::Entity, const ECS::MaterialComponent& material)
-							-> const VulkanTexture*
+						renderWorld.Sync(scene, [&](AssetId id, AssetKind kind) -> const AssetLease*
 						{
-							if (!material.BaseColorTexture.IsValid())
-								return nullptr;
-							const auto* lease = scene.TryUseAsset(catalog, material.BaseColorTexture.Id, AssetKind::Texture);
-							return lease ? &lease->GetTexture() : nullptr;
+							return id.IsValid() ? scene.TryUseAsset(catalog, id, kind) : nullptr;
 						}, [&](ECS::Entity, AssetRef<MeshAsset> mesh) -> MeshHandle
 						{
 							if (!mesh.IsValid())

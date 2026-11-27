@@ -1,0 +1,5 @@
+raven-material 1
+id 5ca26efa-0438-4103-8bcd-93ac6f13d59f
+# Lit with the UV grid texture.
+lit
+texture base-color 7a590cee-ec82-4a27-927f-860e64619c19

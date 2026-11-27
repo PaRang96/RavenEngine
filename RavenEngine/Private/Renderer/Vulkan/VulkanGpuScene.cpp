@@ -206,8 +206,9 @@ namespace Raven
 				offsetof(GpuObjectData, Tint), offsetof(GpuObjectData, Group), offsetof(GpuObjectData, Material),
 				offsetof(GpuObjectData, Flags), offsetof(GpuObjectData, Padding) } },
 			{ set, Visible, sizeof(std::uint32_t), {} },
-			{ set, Materials, sizeof(GpuMaterialData), { offsetof(GpuMaterialData, BaseColor), offsetof(GpuMaterialData, Texture),
-				offsetof(GpuMaterialData, Lit), offsetof(GpuMaterialData, Padding) } },
+			{ set, Materials, sizeof(GpuMaterialData), { offsetof(GpuMaterialData, BaseColor), offsetof(GpuMaterialData, Textures),
+				offsetof(GpuMaterialData, Samplers), offsetof(GpuMaterialData, Flags), offsetof(GpuMaterialData, ValueOffset),
+				offsetof(GpuMaterialData, ValueCount), offsetof(GpuMaterialData, Padding) } },
 			{ set, Meshes, sizeof(MeshEntry), { offsetof(MeshEntry, IndexCount), offsetof(MeshEntry, FirstIndex),
 				offsetof(MeshEntry, VertexOffset), offsetof(MeshEntry, CommandIndex), offsetof(MeshEntry, Center),
 				offsetof(MeshEntry, HalfExtent) } },
@@ -292,8 +293,19 @@ namespace Raven
 		}
 		m_Full = m_PendingFull || world != m_UploadedWorld || world->Generation != m_UploadedGeneration ||
 			VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData) > m_Objects.Capacity;
-		const bool allMaterials = m_Full || VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData) > m_Materials.Capacity;
-		m_FirstMaterial = allMaterials ? 0 : std::min(m_UploadedMaterials, m_MaterialCount);
+		// The material table uploads whole when the buffer is new or must grow, and otherwise only its
+		// changed slots (B0 contract 6).
+		m_AllMaterials = m_Full || m_PendingMaterials ||
+			VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData) > m_Materials.Capacity;
+		m_MaterialSlots.clear();
+		m_MaterialRecords.clear();
+		if (!m_AllMaterials)
+			for (const auto slot : world->DirtyMaterials)
+				if (slot < m_MaterialCount)
+				{
+					m_MaterialSlots.push_back(slot);
+					m_MaterialRecords.push_back(world->Materials[slot]);
+				}
 
 		// The mesh table and the command order follow the groups (B0 contract 3): live groups get
 		// commands, contiguous per pipeline, and each table entry names its command.
@@ -358,7 +370,8 @@ namespace Raven
 				}
 		}
 		const auto align = VulkanUploadRing::Align;
-		VkDeviceSize bytes = align(VkDeviceSize{ m_MaterialCount - m_FirstMaterial } * sizeof(GpuMaterialData));
+		VkDeviceSize bytes = align((m_AllMaterials ? VkDeviceSize{ m_MaterialCount } : m_MaterialRecords.size()) *
+			sizeof(GpuMaterialData));
 		if (m_UploadMeshes)
 			bytes += align(m_MeshTable.size() * sizeof(MeshEntry));
 		if (m_UploadTemplates)
@@ -391,7 +404,7 @@ namespace Raven
 		if (Reserve(m_Objects, VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData), 0))
 			m_PendingFull = true;
 		if (Reserve(m_Materials, VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData), 0))
-			m_UploadedMaterials = 0;
+			m_PendingMaterials = true;
 		const VkDeviceSize readbackBytes = std::max<VkDeviceSize>(256,
 			VkDeviceSize{ m_CommandCount } * sizeof(VkDrawIndexedIndirectCommand));
 		if (!slot.Readback || slot.Readback->GetSize() < readbackBytes)
@@ -404,9 +417,8 @@ namespace Raven
 		slot.MeshOffset = m_UploadMeshes ? ring.Push(Bytes(m_MeshTable)) : 0;
 		slot.TemplateOffset = m_UploadTemplates ? ring.Push(Bytes(m_TemplateRecords)) : 0;
 		auto* world = m_World;
-		const auto* worldBegin = reinterpret_cast<const std::byte*>(world->Materials.data());
-		slot.MaterialOffset = ring.Push(std::span(worldBegin + m_FirstMaterial * sizeof(GpuMaterialData),
-			(m_MaterialCount - m_FirstMaterial) * sizeof(GpuMaterialData)));
+		slot.MaterialOffset = m_AllMaterials ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Materials.data()),
+			std::size_t{ m_MaterialCount } * sizeof(GpuMaterialData))) : ring.Push(Bytes(m_MaterialRecords));
 		if (m_Full)
 		{
 			slot.ObjectOffset = ring.Push(Bytes(world->Objects));
@@ -477,8 +489,19 @@ namespace Raven
 			const VkBufferCopy region{ 0, 0, commandBytes };
 			vkCmdCopyBuffer(commands, m_Templates.Buffer->Get(), m_Commands.Buffer->Get(), 1, &region);
 		}
-		copy(slot.MaterialOffset, m_Materials, VkDeviceSize{ m_FirstMaterial } * sizeof(GpuMaterialData),
-			VkDeviceSize{ m_MaterialCount - m_FirstMaterial } * sizeof(GpuMaterialData));
+		if (m_AllMaterials)
+			copy(slot.MaterialOffset, m_Materials, 0, VkDeviceSize{ m_MaterialCount } * sizeof(GpuMaterialData));
+		else if (!m_MaterialSlots.empty())
+		{
+			// A changed material copies its one record (B0 contract 6).
+			std::vector<VkBufferCopy> regions;
+			regions.reserve(m_MaterialSlots.size());
+			for (std::size_t index = 0; index < m_MaterialSlots.size(); ++index)
+				regions.push_back({ slot.MaterialOffset + index * sizeof(GpuMaterialData),
+					VkDeviceSize{ m_MaterialSlots[index] } * sizeof(GpuMaterialData), sizeof(GpuMaterialData) });
+			vkCmdCopyBuffer(commands, slot.Ring, m_Materials.Buffer->Get(), static_cast<std::uint32_t>(regions.size()),
+				regions.data());
+		}
 		if (m_Full)
 			copy(slot.ObjectOffset, m_Objects, 0, VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData));
 
@@ -552,10 +575,10 @@ namespace Raven
 		m_Slots.at(slotIndex).ReadbackGroups = m_CommandCount;
 		m_UploadedWorld = m_World;
 		m_UploadedGeneration = m_World->Generation;
-		m_UploadedMaterials = m_MaterialCount;
 		// Only a frame that recorded its copies holds them; one without commands copied nothing.
 		if (m_CommandCount != 0)
 		{
+			m_PendingMaterials = false;
 			m_UploadedLayout = m_World->LayoutRevision;
 			m_UploadedCounts = m_World->CountRevision;
 			m_UploadedMeshRevision = m_MeshRevision;

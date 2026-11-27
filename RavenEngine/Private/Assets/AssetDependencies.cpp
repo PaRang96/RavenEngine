@@ -2,6 +2,7 @@
 
 #include "Assets/AssetKinds.hpp"
 #include "Audio/SoundEvent.hpp"
+#include "Renderer/MaterialFile.hpp"
 #include "Raven/Scene/SceneFile.hpp"
 
 #include <cstring>
@@ -44,5 +45,12 @@ namespace Raven
 	{
 		for (const auto& clip : event.Clips)
 			visit(clip, AssetKind::Audio);
+	}
+
+	void ExpandMaterialTextures(const MaterialDefinition& material, const std::function<void(AssetId, AssetKind)>& visit)
+	{
+		for (const auto& texture : material.Textures)
+			if (texture.IsValid())
+				visit(texture, AssetKind::Texture);
 	}
 }

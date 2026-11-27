@@ -1,0 +1,4 @@
+raven-material 1
+id b4946988-0380-4c4c-a812-0534e5287ca2
+# Lit paint: the color comes from each mesh's vertices and Tint.
+lit

@@ -28,6 +28,16 @@ Since M6B's B2 (2026-11-27, [B0 contract 9](RenderingContentDesign.md#9-asset-si
 - **Reported, never silent:** a sidecar without its source is skipped as an orphan; of two sidecars sharing an ID (a copied file), the one written later gets a new ID, and equal timestamps change nothing and report both. A scene or sound event without an ID in its header is reported.
 - **Older projects:** `raven-project 2`, which listed every asset, is still read. `RavenSceneTool <Content-root> upgrade-project` converts it, keeping every ID: it writes the sidecars, puts the IDs into scene and sound-event headers, and checks the result against the old catalog before replacing the project file. `RavenSceneTool <Content-root> list` prints the scenes and assets for scripts.
 
+**Material files.** A `.ravenmaterial` file is shared by every object whose `MaterialComponent::Material` names it; editing it updates them all while the game runs. The component's inline values (`BaseColor`, `BaseColorTexture`, `Lit`) remain the material of objects without a file, and their fallback when the file cannot be used. Per-object color variation stays on `StaticMeshComponent::Tint`.
+```text
+raven-material 1
+id 5ca26efa-0438-4103-8bcd-93ac6f13d59f
+lit
+base-color 1 1 1 1
+texture base-color 7a590cee-ec82-4a27-927f-860e64619c19
+```
+`base-color` is a linear multiplier (four numbers, 0 to 64); the texture slot is `base-color` until B4's material shaders name more. Unknown, repeated or non-finite settings reject the file and name the line; while the game runs the last good version stays.
+
 **Rejected.** The catalog rejects:
 - duplicate or nil identities and unsupported settings;
 - incorrect source extensions;

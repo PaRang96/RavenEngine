@@ -37,11 +37,19 @@ namespace
 		return transform;
 	}
 
+	// The shared material files in Content/Materials (docs/RenderingContentDesign.md, FD-18). The inline
+	// values match each file, so an object still draws the same if its file cannot be used.
+	const AssetId UvGrid = AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19");
+	const AssetId PaintMaterial = AssetId::Parse("b4946988-0380-4c4c-a812-0534e5287ca2");
+	const AssetId GridMaterial = AssetId::Parse("5ca26efa-0438-4103-8bcd-93ac6f13d59f");
+	const AssetId SignalMaterial = AssetId::Parse("5035a9fe-7513-48b9-8b15-42664830e0cf");
+
 	ECS::MaterialComponent Material(bool lit, AssetId texture = {})
 	{
 		ECS::MaterialComponent material;
 		material.Lit = lit;
 		material.BaseColorTexture.Id = texture;
+		material.Material.Id = !lit ? SignalMaterial : texture == UvGrid ? GridMaterial : PaintMaterial;
 		return material;
 	}
 
@@ -89,7 +97,7 @@ namespace
 			lens.FarPlane = 100.0f * scale;
 		}
 		const auto paint = Material(true);
-		const auto textured = Material(true, AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19"));
+		const auto textured = Material(true, UvGrid);
 		for (std::uint32_t row = 0; row < rows; ++row)
 			scene.Group("row-" + std::to_string(row), Pose({ 0, 0, centered(row, rows) }));
 		const auto animated = [animation](std::uint32_t index)
@@ -214,7 +222,7 @@ namespace
 	{
 		SampleSceneBuilder scene;
 		const auto paint = Material(true);
-		const auto grid = Material(true, AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19"));
+		const auto grid = Material(true, UvGrid);
 		ECS::ColliderComponent box;
 		ECS::ColliderComponent ball;
 		ball.Shape = ECS::ColliderShape::Sphere;

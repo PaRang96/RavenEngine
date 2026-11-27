@@ -189,7 +189,16 @@ Design: [RenderingContentDesign.md](docs/RenderingContentDesign.md) (draft, 2026
 - [x] Platform layer (option C, owner 2026-11-27, [PlatformLayerDesign.md](docs/PlatformLayerDesign.md)): named areas, capabilities header, Posix and Fallback folders with one CMake selection, the OS-leak CI check, and the port contract table. Before B2; no game-contract change. *Done 2026-11-27 on Windows ([PlatformLayerDesign.md](docs/PlatformLayerDesign.md), [port contract](docs/PlatformHandoff.md#port-contract-2026-11-27)).*
 - [x] B0 contracts in this note before B2 (architecture assessment, AA2-DOC-07 and AA2-RND-01..07), now including the FD-19 vertex offset hook and the FD-23 sidecar format. *Done 2026-11-27: nine contracts, the contract-change window, tracked tests, threads, M4 notes and the sprite budget ([RenderingContentDesign.md](docs/RenderingContentDesign.md#b0-contracts-2026-11-27)); the step order is revised so grouping precedes material keying and the upload batch precedes mips.*
 - [x] Adopt the proposed coding rules R1–R15 of the code-quality assessment (section 7), as part of the joint review. *Done 2026-11-27 (owner, option B): condensed to eleven rules in the tracked [docs/CodingRules.md](docs/CodingRules.md), which AGENTS.md and the README point to.*
-- [ ] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4).
+- [x] M6-9: find and remove the 0.27 ms render-world sync cost that M6A added at 50k animated ([exit record](docs/DataModelDesign.md#m6a-exit-record-2026-11-24), item 4). *Explained 2026-11-27: change locality from random entity IDs, not slower code; scattered stays the baseline ([RenderingContentDesign.md, B2 part 4](docs/RenderingContentDesign.md#b2-part-4--draw-groups-the-command-index-and-the-027-ms-2026-11-27)).*
+- [x] B1: sprite baseline and reference captures.
+- [x] B2: contract window, `raven-project 3` with sidecars, device limits and bindless classes, the draw-group restructure, `.ravenmaterial` files and the keyed material table. *Done 2026-11-27 ([RenderingContentDesign.md](docs/RenderingContentDesign.md#b2-part-5--material-files-and-the-keyed-material-table-2026-11-27)).*
+- [ ] FD-27 follow-up: every object moving at 50k needs 8.6–9.0 ms of CPU against the 3.5 ms budget; tighten the single-threaded world pass and sync first, then use the job system. The 20% case (3.16–3.56 ms p95) is at the budget's edge too.
+- [ ] B3: upload batch, then GPU mips and the sampler set (per-texture samplers removed); VMA download needs the owner's approval.
+- [ ] B4: material shaders (fragment ABI v2, vertex offset hook, shader assets, per-pipeline ranges).
+- [ ] B5: sprites on the GPU path.
+- [ ] B6: async assets with placeholders.
+- [ ] B7: multi-object FBX with part tables in sidecars.
+- [ ] B8: exit check with measurements, then the joint review.
 
 ## M6A — Host and data model (done 2026-11-27, owner review)
 

@@ -153,14 +153,17 @@ namespace Raven
 		std::uint32_t m_CommandCount = 0;
 		std::uint64_t m_MeshRevision = 0;
 		std::uint32_t m_MaterialCount = 0;
-		std::uint32_t m_FirstMaterial = 0;
+		bool m_AllMaterials = false;
+		std::vector<std::uint32_t> m_MaterialSlots;
+		std::vector<GpuMaterialData> m_MaterialRecords;
 		bool m_Full = false;
 		VkDeviceSize m_PlannedBytes = 0;
 
 		// What the GPU holds after the last committed frame.
 		const RenderWorld::State* m_UploadedWorld = nullptr;
 		std::uint64_t m_UploadedGeneration = 0;
-		std::uint32_t m_UploadedMaterials = 0;
+		// Set when the material buffer was replaced but the frame filling it has not been committed.
+		bool m_PendingMaterials = true;
 		// What the resident mesh table and templates were built from; a replaced buffer forgets.
 		std::uint64_t m_UploadedLayout = ~0ull;
 		std::uint64_t m_UploadedCounts = ~0ull;

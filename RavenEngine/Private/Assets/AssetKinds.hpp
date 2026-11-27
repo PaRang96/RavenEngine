@@ -55,7 +55,7 @@ namespace Raven
 		{ AssetKind::Texture, "PNG", "texture", { ".png" }, Detail::AssetTag<TextureAsset>(), true },
 		{ AssetKind::Model, "model", {}, {}, Detail::AssetTag<ModelAsset>(), false },
 		{ AssetKind::Mesh, "FBX", "mesh", { ".fbx" }, Detail::AssetTag<MeshAsset>(), true },
-		{ AssetKind::Material, "material", {}, {}, Detail::AssetTag<MaterialAsset>(), false },
+		{ AssetKind::Material, "material", "material", { ".ravenmaterial" }, Detail::AssetTag<MaterialAsset>(), true, true },
 		{ AssetKind::Skeleton, "skeleton", {}, {}, Detail::AssetTag<SkeletonAsset>(), false },
 		{ AssetKind::Animation, "animation", {}, {}, Detail::AssetTag<AnimationAsset>(), false },
 		{ AssetKind::Shader, "shader", {}, {}, Detail::AssetTag<ShaderAsset>(), false },

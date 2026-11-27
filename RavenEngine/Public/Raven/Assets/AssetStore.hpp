@@ -6,6 +6,7 @@
 #include "Raven/Renderer/TextureHandle.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <utility>
@@ -18,6 +19,7 @@ namespace Raven
 	class AudioPlayer;
 	struct ManagedAsset;
 	struct SoundEvent;
+	struct MaterialDefinition;
 
 	// Host-owned lease. It must die before the renderer; it is never retained in ECS data.
 	class AssetLease
@@ -31,6 +33,10 @@ namespace Raven
 		RAVEN_API const VulkanTexture& GetTexture() const;
 		// A sound-event asset's parsed contents; null for other kinds.
 		RAVEN_API const SoundEvent* GetSoundEvent() const noexcept;
+		// A material asset's parsed contents; null for other kinds.
+		RAVEN_API const MaterialDefinition* GetMaterial() const noexcept;
+		// Changes with every reload committed to the asset; holders compare it to notice new contents.
+		RAVEN_API std::uint64_t GetRevision() const noexcept;
 
 	private:
 		friend class AssetStore;
@@ -67,6 +73,7 @@ namespace Raven
 	{
 		bool Mesh = false;
 		bool Texture = false;
+		bool Material = false;
 	};
 
 	// Main/render-thread cache of weak entries. Leases own resources, not the cache.

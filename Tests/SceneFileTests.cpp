@@ -1,7 +1,9 @@
 // Guards the generic scene format that replaces the sample's positional codec at M6-6
 // (docs/DataModelDesign.md, FD-10, FD-11): save/load and text round trips, deterministic
-// bytes, and loading a file written with another component layout.
+// bytes, and loading a file written with another component layout. M6B's B2 adds the case of a scene
+// saved before MaterialComponent gained its material file (docs/RenderingContentDesign.md, FD-18).
 
+#include "Raven/Components/MaterialComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
 #include "Raven/Scene/Scene.hpp"
@@ -141,6 +143,38 @@ namespace
 		RAVEN_CHECK_THROWS(Raven::InstantiateScene(decoded, loaded));
 		RAVEN_CHECK_THROWS(SceneFile::Decode(std::vector<std::byte>(8, std::byte{ 0 })));
 	}
+
+	// A scene saved before B2 has no Material field: its inline values load unchanged, without a file.
+	void MaterialBeforeFiles()
+	{
+		Registry registry;
+		Scene scene(registry);
+		const auto crate = scene.CreateEntity("Crate");
+		Raven::ECS::MaterialComponent material;
+		material.BaseColor = { 0.25f, 0.5f, 0.75f, 1.0f };
+		material.BaseColorTexture.Id = Raven::AssetId::Parse("7a590cee-ec82-4a27-927f-860e64619c19");
+		material.Lit = true;
+		material.Material.Id = Raven::AssetId::Parse("5ca26efa-0438-4103-8bcd-93ac6f13d59f");
+		RAVEN_CHECK(registry.Add(crate, material));
+		auto file = Raven::CaptureScene(scene);
+		auto section = std::find_if(file.Components.begin(), file.Components.end(),
+			[](const SceneFile::Component& component) { return component.Type == "Raven::ECS::MaterialComponent"; });
+		RAVEN_CHECK(section != file.Components.end() && !section->Fields.empty() && section->Fields.back().Name == "Material");
+		if (section == file.Components.end() || section->Fields.empty())
+			return;
+		// The field is the last one, so its values end the section.
+		section->Values.resize(section->FieldOffset(section->Fields.size() - 1));
+		section->Fields.pop_back();
+
+		Registry other;
+		Scene loaded(other);
+		Raven::InstantiateScene(SceneFile::Decode(file.Encode()), loaded);
+		Raven::ECS::MaterialComponent value;
+		RAVEN_CHECK(other.Read(loaded.Resolve(scene.GetRef(crate)), value));
+		RAVEN_CHECK(value.BaseColor.X == 0.25f && value.BaseColor.Y == 0.5f && value.BaseColor.Z == 0.75f &&
+			value.BaseColor.W == 1.0f && value.BaseColorTexture.Id == material.BaseColorTexture.Id && value.Lit &&
+			!value.Material.IsValid());
+	}
 }
 
 int main()
@@ -149,5 +183,6 @@ int main()
 	{
 		SaveAndLoad();
 		OtherLayouts();
+		MaterialBeforeFiles();
 	});
 }

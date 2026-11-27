@@ -1,4 +1,5 @@
 #include "Audio/SoundEvent.hpp"
+#include "Renderer/MaterialFile.hpp"
 #include "PlayerContent.hpp"
 
 #include "Assets/AssetDependencies.hpp"
@@ -76,14 +77,15 @@ namespace Raven
 			selected.push_back({ &*found, std::move(bytes) });
 		}
 
-		// A sound event plays its clips, so the player needs them too.
+		// A sound event plays its clips and a material samples its textures, so the player needs them too.
 		for (const auto& id : std::set<AssetId>(requiredAssets))
 		{
 			const auto& record = project.Catalog.Get(id);
-			if (record.Kind != AssetKind::Sound)
-				continue;
 			const auto path = ResolveAssetPath(source, record.SourcePath);
-			ExpandSoundClips(ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path), require);
+			if (record.Kind == AssetKind::Sound)
+				ExpandSoundClips(ParseSoundEvent(Files::ReadBinary(path, 1024 * 1024), path), require);
+			else if (record.Kind == AssetKind::Material)
+				ExpandMaterialTextures(ParseMaterial(Files::ReadBinary(path, 1024 * 1024), path), require);
 		}
 
 		// raven-project 3 with a generated index (docs/RenderingContentDesign.md, B0 contract 9): the

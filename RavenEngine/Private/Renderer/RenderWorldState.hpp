@@ -1,11 +1,13 @@
 #pragma once
 
 #include "Raven/Renderer/RenderWorld.hpp"
+#include "Raven/Assets/AssetStore.hpp"
 #include "Raven/Renderer/MeshHandle.hpp"
 #include "Raven/Math/Transform.hpp"
 
 #include <array>
 #include <compare>
+#include <map>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -39,19 +41,61 @@ namespace Raven
 	static_assert(sizeof(GpuObjectData) == 128);
 	static_assert(offsetof(GpuObjectData, Group) == 112);
 
+	// GPU record of one material (docs/RenderingContentDesign.md, B0 contract 1). Shaders/GpuScene.hlsli
+	// mirrors it.
 	struct GpuMaterialData
 	{
 		Vec4 BaseColor;
-		// Element of the bindless texture array (G4).
-		std::uint32_t Texture = 0;
-		std::uint32_t Lit = 0;
-		std::uint32_t Padding[2]{};
+		// Elements of the bindless texture array (G4); slot 0 is the base color, element 0 is white.
+		std::array<std::uint32_t, 4> Textures{};
+		// The sampler of each texture slot: the single clamp sampler until B3's sampler set.
+		std::array<std::uint32_t, 4> Samplers{};
+		// Bit 0: lit.
+		std::uint32_t Flags = 0;
+		// The material's values, after the records in the same buffer: none until B4's shaders.
+		std::uint32_t ValueOffset = 0;
+		std::uint32_t ValueCount = 0;
+		std::uint32_t Padding = 0;
 	};
 
 	static_assert(std::is_trivially_copyable_v<GpuMaterialData>);
-	static_assert(sizeof(GpuMaterialData) == 32);
+	static_assert(sizeof(GpuMaterialData) == 64);
+	static_assert(offsetof(GpuMaterialData, Flags) == 48);
 
+	inline constexpr std::uint32_t GpuMaterialLit = 1;
+
+	// Bit 0 hides the object (culling skips it); bit 1 records that its Tint or inline material
+	// values are not finite, which also hides it.
 	inline constexpr std::uint32_t GpuObjectHidden = 1;
+	inline constexpr std::uint32_t GpuObjectNonFinite = 2;
+
+	// The key of a material without a file: the entity's inline MaterialComponent values. The color is
+	// compared by its bits, so equal values share an entry.
+	struct InlineMaterialKey
+	{
+		std::array<std::uint32_t, 4> Color{};
+		AssetId Texture;
+		bool Lit = false;
+
+		auto operator<=>(const InlineMaterialKey&) const = default;
+	};
+
+	// One material table entry (B0 contract 6): a material file, or one set of inline values. It owns
+	// the leases its record was built from, so a texture stays resident while the entry uses it.
+	struct MaterialEntry
+	{
+		// The material file's ID; nil for inline values.
+		AssetId Asset;
+		InlineMaterialKey Inline;
+		Vec4 InlineColor;
+		AssetLease Lease;
+		std::array<AssetLease, 4> Textures;
+		// The material lease's revision the record was built from; a reload changes it.
+		std::uint64_t Revision = 0;
+		// Objects using the entry; the last one frees it.
+		std::uint32_t Users = 0;
+		bool Live = false;
+	};
 
 	// The pipeline an object draws with (docs/RenderingContentDesign.md, B0 contract 3): the
 	// material shader, blend class, cull mode and vertex offset. Every lit object uses the default
@@ -121,8 +165,17 @@ namespace Raven
 		std::vector<std::uint32_t> Dirty;
 		std::vector<std::uint8_t> DirtyFlags;
 
-		// Append-only within a generation.
+		// The material table: records and entries share slots, reused through the free list, and a
+		// changed record uploads alone (B0 contract 6).
 		std::vector<GpuMaterialData> Materials;
+		std::vector<MaterialEntry> MaterialEntries;
+		std::vector<std::uint32_t> FreeMaterials;
+		std::map<AssetId, std::uint32_t> MaterialOfAsset;
+		std::map<InlineMaterialKey, std::uint32_t> MaterialOfInline;
+		std::vector<std::uint32_t> DirtyMaterials;
+		std::vector<std::uint8_t> MaterialDirtyFlags;
+		// Entities already reported for non-finite values, so each is logged once.
+		std::vector<ECS::Entity> ReportedValues;
 
 		// Draw groups by (pipeline, mesh) (B0 contract 3). A group whose count reaches zero is
 		// retired to the free list and reused for the next new key, so the IDs objects hold stay
@@ -149,6 +202,16 @@ namespace Raven
 			DirtyFlags[slot] = 1;
 		}
 
+		void MarkMaterialDirty(std::uint32_t slot)
+		{
+			if (slot >= MaterialDirtyFlags.size())
+				MaterialDirtyFlags.resize(Materials.size(), 0);
+			if (MaterialDirtyFlags[slot])
+				return;
+			DirtyMaterials.push_back(slot);
+			MaterialDirtyFlags[slot] = 1;
+		}
+
 		// A renderer calls this once an upload containing every dirty slot was submitted.
 		void CommitChanges() noexcept
 		{
@@ -156,6 +219,10 @@ namespace Raven
 				if (slot < DirtyFlags.size())
 					DirtyFlags[slot] = 0;
 			Dirty.clear();
+			for (const auto slot : DirtyMaterials)
+				if (slot < MaterialDirtyFlags.size())
+					MaterialDirtyFlags[slot] = 0;
+			DirtyMaterials.clear();
 		}
 	};
 }

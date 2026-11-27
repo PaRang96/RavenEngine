@@ -1,5 +1,6 @@
 #include "Core/GameSession.hpp"
 #include "Assets/AssetDependencies.hpp"
+#include "Renderer/MaterialFile.hpp"
 #include "Renderer/Vulkan/VulkanTexture.hpp"
 #include "Core/FrameTrace.hpp"
 #include "Audio/SoundEvent.hpp"
@@ -67,6 +68,13 @@ namespace Raven
 						ExpandSoundClips(*lease->GetSoundEvent(), [&](AssetId clip, AssetKind clipKind)
 						{
 							scene.UseAsset(catalog, clip, clipKind);
+						});
+				// A material's textures too, so drawing it never loads one.
+				if (kind == AssetKind::Material)
+					if (const auto* lease = scene.FindAsset(id); lease && lease->GetMaterial())
+						ExpandMaterialTextures(*lease->GetMaterial(), [&](AssetId texture, AssetKind textureKind)
+						{
+							scene.UseAsset(catalog, texture, textureKind);
 						});
 			});
 		}

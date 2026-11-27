@@ -13,6 +13,8 @@ namespace Raven::ImporterVersion
 	// Audio clips and sound events (docs/GameServicesDesign.md, C8).
 	inline constexpr std::uint32_t Audio = 1;
 	inline constexpr std::uint32_t Scene = 1;
+	// Material files (docs/RenderingContentDesign.md, FD-18).
+	inline constexpr std::uint32_t Material = 1;
 	inline constexpr std::uint32_t Project = 1;
 	inline constexpr std::uint32_t Hlsl = 1;
 	// Change notices only: the game module builds and verifies its own output.

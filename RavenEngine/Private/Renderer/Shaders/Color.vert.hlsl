@@ -52,9 +52,9 @@ VertexOutput VSMain(VertexInput input, uint instance : SV_InstanceID)
 	output.UV = input.UV;
 	output.Normal = object.Normal[0].xyz * input.Normal.x + object.Normal[1].xyz * input.Normal.y
 		+ object.Normal[2].xyz * input.Normal.z;
-	output.AmbientAndLit = float4(Frame.Ambient.rgb, material.Lit != 0 ? 1.0 : 0.0);
+	output.AmbientAndLit = float4(Frame.Ambient.rgb, (material.Flags & 1u) != 0 ? 1.0 : 0.0);
 	output.LightDirection = Frame.LightDirection.xyz;
 	output.LightColor = Frame.LightColor.rgb;
-	output.Texture = material.Texture;
+	output.Texture = material.Textures.x;
 	return output;
 }

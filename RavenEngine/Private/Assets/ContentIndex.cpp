@@ -2,6 +2,7 @@
 
 #include "Assets/AssetKinds.hpp"
 #include "Audio/SoundEvent.hpp"
+#include "Renderer/MaterialFile.hpp"
 #include "Core/PathText.hpp"
 #include "Raven/Core/Files.hpp"
 #include "Raven/Core/Log.hpp"
@@ -23,6 +24,7 @@ namespace Raven
 		// Enough for a scene file's ID section and for any sound event.
 		constexpr std::size_t MaxHeaderBytes = 64;
 		constexpr std::size_t MaxSoundEventBytes = 1024 * 1024;
+		constexpr std::size_t MaxMaterialBytes = 1024 * 1024;
 
 		std::string Relative(const std::filesystem::path& path, const std::filesystem::path& root)
 		{
@@ -267,6 +269,8 @@ namespace Raven
 						id = ReadSceneFileId(ReadPrefix(file, MaxHeaderBytes));
 					else if (kind == AssetKind::Sound)
 						id = ParseSoundEvent(Files::ReadBinary(file, MaxSoundEventBytes), file).Id;
+					else if (kind == AssetKind::Material)
+						id = ParseMaterial(Files::ReadBinary(file, MaxMaterialBytes), file).Id;
 					if (!id.IsValid())
 					{
 						index.Problems.push_back(relative + " has no asset ID in its header; run RavenSceneTool upgrade-project");

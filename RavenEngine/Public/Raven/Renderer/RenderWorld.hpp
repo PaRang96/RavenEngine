@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Raven/Core/Api.hpp"
+#include "Raven/Assets/AssetRecord.hpp"
 #include "Raven/Assets/AssetRef.hpp"
 #include "Raven/Components/MaterialComponent.hpp"
 #include "Raven/ECS/Entity.hpp"
@@ -12,8 +13,8 @@
 
 namespace Raven
 {
+	class AssetLease;
 	class Scene;
-	class VulkanTexture;
 
 	// Host-owned mirror of one scene's lit meshes for GPU-driven rendering
 	// (docs/GpuDrivenDesign.md, G1). Sync follows change ticks and the Registry's lifecycle
@@ -22,9 +23,11 @@ namespace Raven
 	class RenderWorld
 	{
 	public:
-		// Maps a material to a texture of the drawing context; null selects white. Called only
-		// for new objects and changed materials.
-		using TextureResolver = std::function<const VulkanTexture*(ECS::Entity, const ECS::MaterialComponent&)>;
+		// Leases a scene asset: a material file or a texture. Null when the reference cannot be used:
+		// a material then falls back to the entity's inline values and a texture samples white
+		// (FD-06). Called only for new material keys and for material files that reloaded; the world
+		// keeps copies of the leases it uses (docs/RenderingContentDesign.md, B0 contract 6).
+		using AssetResolver = std::function<const AssetLease*(AssetId, AssetKind)>;
 		// Maps a mesh reference to geometry of the drawing context; a null handle draws nothing.
 		// Called only for new objects and changed mesh components.
 		using MeshResolver = std::function<MeshHandle(ECS::Entity, AssetRef<MeshAsset>)>;
@@ -35,7 +38,7 @@ namespace Raven
 		// After Scene::UpdateWorldTransforms, on the rendering thread, outside view iteration.
 		// A different scene, or a journal resync, rebuilds the world once. If it throws, the
 		// world is cleared and the next Sync rebuilds.
-		RAVEN_API void Sync(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh);
+		RAVEN_API void Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh);
 		// Drops every object and forgets the scene; the next Sync rebuilds.
 		RAVEN_API void Clear() noexcept;
 		RAVEN_API std::size_t GetObjectCount() const noexcept;
@@ -48,7 +51,7 @@ namespace Raven
 		State& GetState() noexcept { return *m_State; }
 
 	private:
-		void SyncUnchecked(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh);
+		void SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh);
 
 		std::unique_ptr<State> m_State;
 	};

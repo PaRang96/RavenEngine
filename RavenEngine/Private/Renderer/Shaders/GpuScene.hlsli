@@ -18,9 +18,14 @@ struct ObjectData
 struct MaterialData
 {
 	float4 BaseColor;
-	uint Texture;
-	uint Lit;
-	uint2 Padding;
+	// Bindless elements; x is the base color.
+	uint4 Textures;
+	uint4 Samplers;
+	// Bit 0: lit.
+	uint Flags;
+	uint ValueOffset;
+	uint ValueCount;
+	uint Padding;
 };
 
 struct MeshData

@@ -1,6 +1,8 @@
 #include "Renderer/RenderWorldState.hpp"
 
 #include "Renderer/DrawChecks.hpp"
+#include "Renderer/MaterialFile.hpp"
+#include "Raven/Core/Log.hpp"
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/ECS/Registry.hpp"
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <span>
 
 namespace Raven
@@ -39,8 +42,8 @@ namespace Raven
 	{
 	public:
 		RenderWorldSync(RenderWorld::State& state, ECS::Registry& registry,
-			const RenderWorld::TextureResolver& resolveTexture, const RenderWorld::MeshResolver& resolveMesh)
-			: m_State(state), m_Registry(registry), m_Resolve(resolveTexture), m_ResolveMesh(resolveMesh),
+			const RenderWorld::AssetResolver& resolveAsset, const RenderWorld::MeshResolver& resolveMesh)
+			: m_State(state), m_Registry(registry), m_Resolve(resolveAsset), m_ResolveMesh(resolveMesh),
 			  m_Meshes(registry.GetPool(ECS::ComponentTraits<ECS::StaticMeshComponent>::Info)),
 			  m_Worlds(registry.GetPool(ECS::ComponentTraits<ECS::WorldTransformComponent>::Info)),
 			  m_Materials(registry.GetPool(ECS::ComponentTraits<ECS::MaterialComponent>::Info)),
@@ -58,6 +61,13 @@ namespace Raven
 			state.Dirty.clear();
 			state.DirtyFlags.clear();
 			state.Materials.clear();
+			state.MaterialEntries.clear();
+			state.FreeMaterials.clear();
+			state.MaterialOfAsset.clear();
+			state.MaterialOfInline.clear();
+			state.DirtyMaterials.clear();
+			state.MaterialDirtyFlags.clear();
+			state.ReportedValues.clear();
 			state.Groups.clear();
 			state.FreeGroups.clear();
 			state.GroupOfKey.clear();
@@ -93,6 +103,25 @@ namespace Raven
 				Write(slot, false, true, true);
 			else if (slot != RenderWorld::State::NoSlot)
 				Remove(slot);
+		}
+
+		// Rebuilds the records of material files that reloaded since their record was built. An
+		// edit that switches lighting rewrites the objects using it, whose normal matrices follow it.
+		void RefreshMaterials()
+		{
+			auto& state = m_State;
+			for (std::uint32_t slot = 0; slot < state.MaterialEntries.size(); ++slot)
+			{
+				const auto& entry = state.MaterialEntries[slot];
+				if (!entry.Live || !entry.Asset.IsValid() || entry.Lease.GetRevision() == entry.Revision)
+					continue;
+				const auto wasLit = state.Materials[slot].Flags & GpuMaterialLit;
+				BuildMaterial(slot);
+				if ((state.Materials[slot].Flags & GpuMaterialLit) != wasLit)
+					for (std::uint32_t object = 0; object < state.Objects.size(); ++object)
+						if (state.Objects[object].Material == slot)
+							Write(object, false, false, false);
+			}
 		}
 
 		// Rewrites objects whose mesh, world transform or material changed after since.
@@ -141,6 +170,7 @@ namespace Raven
 		{
 			auto& state = m_State;
 			ReleaseGroup(state.Objects[slot].Group);
+			ReleaseMaterial(state.Objects[slot].Material);
 			state.SlotOfIndex[IndexOf(state.Entities[slot])] = RenderWorld::State::NoSlot;
 			const auto last = static_cast<std::uint32_t>(state.Objects.size() - 1);
 			if (slot != last)
@@ -201,26 +231,141 @@ namespace Raven
 			++state.LayoutRevision;
 		}
 
-		std::uint32_t FindMaterial(Entity entity)
+		// A free table slot, its entry live and empty.
+		std::uint32_t NewMaterial()
+		{
+			auto& state = m_State;
+			std::uint32_t slot;
+			if (!state.FreeMaterials.empty())
+			{
+				slot = state.FreeMaterials.back();
+				state.FreeMaterials.pop_back();
+			}
+			else
+			{
+				slot = static_cast<std::uint32_t>(state.Materials.size());
+				state.Materials.emplace_back();
+				state.MaterialEntries.emplace_back();
+			}
+			state.MaterialEntries[slot] = {};
+			state.MaterialEntries[slot].Live = true;
+			return slot;
+		}
+
+		// Fills a slot's record from its file or inline values, leasing the textures it samples.
+		void BuildMaterial(std::uint32_t slot)
+		{
+			auto& state = m_State;
+			auto& entry = state.MaterialEntries[slot];
+			GpuMaterialData record;
+			std::array<AssetId, MaterialDefinition::TextureSlots> textures{};
+			if (entry.Asset.IsValid())
+			{
+				const auto& definition = *entry.Lease.GetMaterial();
+				record.BaseColor = definition.BaseColor;
+				textures = definition.Textures;
+				record.Flags = definition.Lit ? GpuMaterialLit : 0u;
+				entry.Revision = entry.Lease.GetRevision();
+			}
+			else
+			{
+				record.BaseColor = entry.InlineColor;
+				textures[0] = entry.Inline.Texture;
+				record.Flags = entry.Inline.Lit ? GpuMaterialLit : 0u;
+			}
+			for (std::size_t index = 0; index < textures.size(); ++index)
+			{
+				entry.Textures[index] = {};
+				// Bindless element 0 is the context's white texture (G4).
+				if (const auto* lease = textures[index].IsValid() && m_Resolve ? m_Resolve(textures[index], AssetKind::Texture) : nullptr)
+				{
+					entry.Textures[index] = *lease;
+					record.Textures[index] = lease->GetTexture().GetBindlessIndex();
+				}
+			}
+			state.Materials[slot] = record;
+			state.MarkMaterialDirty(slot);
+		}
+
+		// The table slot of an entity's material, taking one use of it (B0 contract 6). A material
+		// file is keyed by its ID; without one, or when the file cannot be used, the inline values
+		// are the key. Only a new key resolves leases.
+		std::uint32_t AcquireMaterial(Entity entity, bool& nonFinite)
 		{
 			auto& state = m_State;
 			const auto dense = m_Materials.Find(entity);
-			const auto material = dense == Pool::NoIndex ? ECS::MaterialComponent{}
+			const auto component = dense == Pool::NoIndex ? ECS::MaterialComponent{}
 				: m_Materials.At<ECS::MaterialComponent>(dense);
-			const auto* texture = m_Resolve ? m_Resolve(entity, material) : nullptr;
-			// Bindless element 0 is the context's white texture (G4).
-			const GpuMaterialData value{ material.BaseColor, texture ? texture->GetBindlessIndex() : 0u,
-				material.Lit ? 1u : 0u };
-			for (std::size_t index = 0; index < state.Materials.size(); ++index)
+			std::uint32_t slot = RenderWorld::State::NoSlot;
+			if (component.Material.IsValid())
 			{
-				const auto& known = state.Materials[index];
-				if (known.Texture == value.Texture && known.Lit == value.Lit && known.BaseColor.X == value.BaseColor.X &&
-					known.BaseColor.Y == value.BaseColor.Y && known.BaseColor.Z == value.BaseColor.Z &&
-					known.BaseColor.W == value.BaseColor.W)
-					return static_cast<std::uint32_t>(index);
+				if (const auto found = state.MaterialOfAsset.find(component.Material.Id); found != state.MaterialOfAsset.end())
+					slot = found->second;
+				else if (const auto* lease = m_Resolve ? m_Resolve(component.Material.Id, AssetKind::Material) : nullptr;
+					lease && lease->GetMaterial())
+				{
+					slot = NewMaterial();
+					auto& entry = state.MaterialEntries[slot];
+					entry.Asset = component.Material.Id;
+					entry.Lease = *lease;
+					state.MaterialOfAsset.emplace(entry.Asset, slot);
+					BuildMaterial(slot);
+				}
 			}
-			state.Materials.push_back(value);
-			return static_cast<std::uint32_t>(state.Materials.size() - 1);
+			if (slot == RenderWorld::State::NoSlot)
+			{
+				// Non-finite inline values never enter the table; the object is hidden instead.
+				nonFinite = !IsFinite(component.BaseColor);
+				const auto color = nonFinite ? Vec4{ 1.0f, 1.0f, 1.0f, 1.0f } : component.BaseColor;
+				InlineMaterialKey key;
+				std::memcpy(key.Color.data(), &color, sizeof(key.Color));
+				key.Texture = component.BaseColorTexture.Id;
+				key.Lit = component.Lit;
+				if (const auto found = state.MaterialOfInline.find(key); found != state.MaterialOfInline.end())
+					slot = found->second;
+				else
+				{
+					slot = NewMaterial();
+					auto& entry = state.MaterialEntries[slot];
+					entry.Inline = key;
+					entry.InlineColor = color;
+					state.MaterialOfInline.emplace(key, slot);
+					BuildMaterial(slot);
+				}
+			}
+			++state.MaterialEntries[slot].Users;
+			return slot;
+		}
+
+		// One object fewer uses the slot; the last one frees it and its leases.
+		void ReleaseMaterial(std::uint32_t slot) noexcept
+		{
+			auto& state = m_State;
+			auto& entry = state.MaterialEntries[slot];
+			if (--entry.Users != 0)
+				return;
+			if (entry.Asset.IsValid())
+				state.MaterialOfAsset.erase(entry.Asset);
+			else
+				state.MaterialOfInline.erase(entry.Inline);
+			entry = {};
+			try
+			{
+				state.FreeMaterials.push_back(slot);
+			}
+			catch (...)
+			{
+				// The slot is not reused.
+			}
+		}
+
+		void ReportNonFinite(Entity entity)
+		{
+			auto& reported = m_State.ReportedValues;
+			if (std::find(reported.begin(), reported.end(), entity) != reported.end())
+				return;
+			reported.push_back(entity);
+			Log(LogLevel::Warning, "An object's Tint or material values are not finite numbers; it is hidden until they are");
 		}
 
 		// Only an added object or a changed mesh component resolves its mesh reference.
@@ -232,7 +377,8 @@ namespace Raven
 			const auto& world = m_Worlds.At<ECS::WorldTransformComponent>(m_Worlds.Find(entity)).World;
 			auto& object = state.Objects[slot];
 			// Resolve everything that can fail before the group counts change.
-			const auto material = added || materialChanged ? FindMaterial(entity) : object.Material;
+			bool nonFinite = !added && !materialChanged && (object.Flags & GpuObjectNonFinite) != 0;
+			const auto material = added || materialChanged ? AcquireMaterial(entity, nonFinite) : object.Material;
 			auto group = object.Group;
 			if (added || materialChanged || meshChanged)
 			{
@@ -255,28 +401,35 @@ namespace Raven
 				++state.Groups[group].Count;
 				ReleaseGroup(object.Group);
 			}
+			if (!added && materialChanged)
+				ReleaseMaterial(object.Material);
 			object.Group = group;
 			object.Material = material;
 			object.Tint = mesh.Tint;
+			nonFinite = nonFinite || !IsFinite(mesh.Tint);
+			if (nonFinite)
+				ReportNonFinite(entity);
 			object.Flags = IsDrawable(world) ? 0u : GpuObjectHidden;
 			for (std::size_t row = 0; row < 3; ++row)
 				object.WorldRows[row] = { world(row, 0), world(row, 1), world(row, 2), world(row, 3) };
 			// Only drawable lit objects pay for the normal matrix. A collapsed or out-of-range
 			// transform rasterizes nothing, so hiding it is exact.
 			Mat4 normal = Mat4::Identity();
-			if (object.Flags == 0 && state.Materials[material].Lit && !TryNormalMatrix(world, normal))
+			if (object.Flags == 0 && (state.Materials[material].Flags & GpuMaterialLit) != 0 && !TryNormalMatrix(world, normal))
 			{
 				object.Flags = GpuObjectHidden;
 				normal = Mat4::Identity();
 			}
 			for (std::size_t column = 0; column < 3; ++column)
 				object.NormalToWorld[column] = { normal(0, column), normal(1, column), normal(2, column), 0.0f };
+			if (nonFinite)
+				object.Flags |= GpuObjectHidden | GpuObjectNonFinite;
 			state.MarkDirty(slot);
 		}
 
 		RenderWorld::State& m_State;
 		ECS::Registry& m_Registry;
-		const RenderWorld::TextureResolver& m_Resolve;
+		const RenderWorld::AssetResolver& m_Resolve;
 		const RenderWorld::MeshResolver& m_ResolveMesh;
 		const Pool m_Meshes;
 		const Pool m_Worlds;
@@ -310,11 +463,11 @@ namespace Raven
 		return m_State->Objects.size();
 	}
 
-	void RenderWorld::Sync(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh)
+	void RenderWorld::Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh)
 	{
 		try
 		{
-			SyncUnchecked(scene, resolveTexture, resolveMesh);
+			SyncUnchecked(scene, resolveAsset, resolveMesh);
 		}
 		catch (...)
 		{
@@ -325,7 +478,7 @@ namespace Raven
 		}
 	}
 
-	void RenderWorld::SyncUnchecked(Scene& scene, const TextureResolver& resolveTexture, const MeshResolver& resolveMesh)
+	void RenderWorld::SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh)
 	{
 		auto& state = *m_State;
 		auto& registry = scene.m_Registry;
@@ -352,7 +505,7 @@ namespace Raven
 		const auto since = state.Since;
 		state.Since = registry.AdvanceChangeTick();
 
-		RenderWorldSync sync(state, registry, resolveTexture, resolveMesh);
+		RenderWorldSync sync(state, registry, resolveAsset, resolveMesh);
 		if (rebuild)
 		{
 			sync.Rebuild();
@@ -362,5 +515,6 @@ namespace Raven
 			for (const auto& entry : batch.Entries)
 				sync.Reconcile(entry.Target);
 		sync.ApplyTicks(since);
+		sync.RefreshMaterials();
 	}
 }
