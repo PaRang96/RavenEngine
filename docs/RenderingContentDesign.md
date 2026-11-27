@@ -91,6 +91,8 @@ This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDeci
 - **Few shaders, rich data:** the survey shows that shader count, not parameter count, drives cost at scale (Nanite bins, Doom Eternal's few uber shaders), so variety comes from parameters and textures.
 - The B0 contracts specify the fragment-side and vertex-hook plumbing before B2 (AA2-RND-01).
 
+**Texture names and wrap (owner, 2026-11-27, after a survey of Unity, Unreal, Godot 4, Bevy and O3DE, all of which take parameter names from the shader or its material type):** the shader declares its texture names and whether each repeats or clamps, and the material file fills them by name, checked against the compiled shader like values. *Delegated shape:* one parameter struct per shader holds the named `float4` values and the named textures, each texture typed `RavenClampTexture` or `RavenRepeatTexture`; SPIR-V keeps the member and type names, so the engine reads both from the compiled shader, and the shader samples with `RavenSample(parameters.Noise, uv)`, the wrap fixed by the type. Fixed slot names and numbered slots were the alternatives; no surveyed engine uses them.
+
 **Original draft recommendation, kept for the record:** pixel shaders only, a fixed record of four `float4` values and four texture indices, names mapped to slots in the material file, compiled at build time and reloaded live in development. Naming in the file gives the readability of typed parameters without breaking the single table. Vertex effects stay possible later as a separate decision; they would not change the parameter record or the files.
 
 ---
