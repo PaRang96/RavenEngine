@@ -2,7 +2,7 @@
 
 Status:
 - **Decided (2026-11-26).** The five decisions that needed the owner (they change what designers or players see, or the scope) are settled; they are listed in [Decisions for the owner](#decisions-for-the-owner). The technical decisions are delegated and recorded in [Delegated decisions](#delegated-decisions), judged by business alignment and expandability.
-- **Accepted (2026-11-28).** The owner accepted M6B as built in the joint review, including the delegated decisions recorded in B4–B8 ([exit check](#b8--exit-check-2026-11-28)). FD-27's every-object-moving budget stays open as its own follow-up.
+- **Accepted (2026-11-28).** The owner accepted M6B as built in the joint review, including the delegated decisions recorded in B4–B8 ([exit check](#b8--exit-check-2026-11-28)). FD-27's every-object-moving budget, the one target left open, was met by its follow-up the same day ([record](#fd-27-follow-up--the-world-pass-and-the-sync-on-the-job-system-2026-11-28)).
 - M6C (the previous stage) was accepted with M6A and the review amendments in the owner's joint review on 2026-11-27 ([GameServicesDesign.md](GameServicesDesign.md#m6c-exit-checklist-results-2026-11-25)).
 
 This note settles FD-18 to FD-28 from [FutureDecisions.md, section 6](FutureDecisions.md#6-m6b--rendering-and-content) for M6B, the assessment's steps M6-9 and M6-10. Every "Today" statement was re-checked against the code at `0f593d6` on 2026-11-26.
@@ -225,7 +225,7 @@ The project rule is that 2D runtime testing needs an explicit owner request. Cou
 | --- | --- |
 | FD-24 GPU memory | *Owner decision, 2026-11-26 ([planning decision 16](../ROADMAP.md#planning-decisions-2026-11-24)), replacing the delegated draft:* textures, staging buffers and attachments are sub-allocated through AMD's Vulkan Memory Allocator (VMA, MIT), vendored unmodified behind a Raven seam when B3 or B6 starts. It removes the per-resource allocation cap and load hitches and provides the memory budget. M6B still records the texture count and the device limits. |
 | FD-25 Offscreen targets | Stay swapchain-only unless FD-26 changes. When `VulkanGpuScene` is touched, per-world state is separated from per-view state so a second view needs no rewrite. |
-| FD-27 Every object moving | Measured in M6B (100% of 50k animated) after the render-world sync rewrite; if it misses, tighten the single-threaded path, then use the job system. |
+| FD-27 Every object moving | Measured in M6B (100% of 50k animated) after the render-world sync rewrite; if it misses, tighten the single-threaded path, then use the job system. *Missed in B2 and B8 (8.7–9.0 ms p95); met by the follow-up on 2026-11-28 (2.74–2.88 ms p95): the world pass and the sync run on the job system ([record](#fd-27-follow-up--the-world-pass-and-the-sync-on-the-job-system-2026-11-28)).* |
 | FD-28 Threading | Settled by M6C's shared job system: host stages may use it; game systems stay single-threaded. |
 
 ---
@@ -338,7 +338,8 @@ One new case only: `SceneFileTests` loads a scene saved before B2 and checks tha
 
 | Work | Where |
 | --- | --- |
-| Render-world sync, material table upkeep, upload batch recording | Main thread, inside Extract and Render (measured; the job system only if FD-27's 100% animated case misses) |
+| Render-world sync, material table upkeep, upload batch recording | Main thread, inside Extract and Render; since the FD-27 follow-up, objects that only moved are placed on the job system and every other write stays on the main thread |
+| World pass (`Scene::UpdateWorldTransforms`) | The job system for depths of more than 1,024 entities since the FD-27 follow-up; structural changes and logging on the main thread |
 | Texture decode and mip CPU work for runtime-only IDs (B6) | Job system, background priority |
 | Shader compiles | The reload service's process lane: one DXC process per compile |
 | Pipeline creation for a changed shader | A worker, published on the main thread between frames |
@@ -547,6 +548,47 @@ No regression: M6B is at or below M6C in every set, and every frame took under 5
 6. *Met.* The CI-equivalent check (fresh clone, vendored check, Debug and Release with warnings as errors, CPU tests) passes on the final commit.
 
 **Joint review (2026-11-28):** the owner accepted M6B as built, with the delegated decisions above and in B4–B7. FD-27 (measurement 2) is the one target M6B leaves missed, as B2 found; the follow-up is in TODO.
+
+### FD-27 follow-up — the world pass and the sync on the job system (2026-11-28)
+
+Scheduled by the owner in the M6B joint review (decision 2: now, as its own step before the next milestone). FD-27's rule was followed: the single-threaded path first, then the job system.
+
+**Where the time went.** An ignored probe (`out/probe-fd27`) loads the generated 50k scene with every pivot turning (`SamplesTool create-benchmark ... all`) and times the Samples rotator loop, `Scene::UpdateWorldTransforms` and `RenderWorld::Sync` outside the app; it reproduced the app's 4.2 ms world pass and 2.4 ms sync. Timing parts of the pass showed no single hot spot. The 100k entities each cost about 40 ns, spread over the lookups and the parent's world (scattered by the random-ID order, measurement 3 of B2 part 4), composing (about 1 ms of it is the pivots' sine and cosine) and the finite checks. Single-threaded attempts:
+- *Cached dense positions per node:* no measurable change; not kept.
+- *Branch-free finite checks:* slower (4.4 against 4.15 ms); not kept.
+- *One depth's loop as its own function* (the shape the job system needs): 3.2–3.4 ms against 4.1 ms, kept.
+
+**Built (delegated: business alignment and expandability, as FD-28 settled the threading):**
+- **World pass.** `Scene::UpdateWorldTransforms(JobSystem* workers = nullptr)` splits each depth of more than 1,024 entities into runs of 1,024 over the host's job system (`ParallelFor`). A run reads the pools and writes only its own slots, worlds and change ticks; what changes structure or logs (dropping a world, adding a new one, recomposing an unrepresentable value in the direct order, reporting a detached root) is handed back and applied on the calling thread in run order before the next depth starts. Parents sit at smaller depths, so the runs of one depth never read each other's results.
+- **Sync.** `RenderWorld::Sync(..., JobSystem* workers = nullptr)` places objects whose world alone changed on the workers in runs of 1,024 mesh-pool entries: their record, normal matrix and visibility (`Place`, shared with the full write). Every other write (mesh or material changes, objects hidden for non-finite values, which report themselves) stays on the calling thread, in pool order, as do the lifecycle journal, sprites and material upkeep.
+- **Object upload.** When at least half the objects changed, `VulkanGpuScene` uploads the whole record array with one copy, instead of gathering the changed records, copying them again into the ring and scattering them on the GPU.
+- An allocation failure inside a run is reported back and thrown on the calling thread: the world pass then recomputes everything next time, and the render world rebuilds (FD-06), as before.
+- The host passes its job system; tools, tests and `GameSession`'s picking update pass none and run single-threaded. Game systems stay single-threaded (FD-28).
+
+**Checked:**
+- *Identical results.* The probe stepped the same scene on one thread and on the workers for 200 frames, both layouts (every pivot and one in five): every world matrix, render record and dirty list matched bit for bit, the first frame's world additions included.
+- The 9 tests pass in Debug and Release, including the determinism check. The six captures are within tolerance of `m6b-b4-reference`. The live check passed in Debug with validation and in Release: without layers, material file 149 ms, material shader 228 ms, a broken material shader rejected in 212 ms, PNG 179 ms and FBX 137 ms, in line with B8.
+
+**Measured** (probe, Release, 19 workers on the test laptop):
+
+| Probe, 50k objects | World pass p50 / p95 | Sync p50 / p95 |
+| --- | --- | --- |
+| Every object, before | 4.05 / 4.53 ms | 2.27 / 2.64 ms |
+| Every object, one thread, restructured | 3.22–3.40 / 3.71–4.11 ms | 1.98–2.13 / 2.37–2.66 ms |
+| Every object, job system | 0.66–0.80 / 0.83–1.22 ms | 0.32–0.43 / 0.43–0.73 ms |
+| One in five, before | 1.34 / 1.62 ms | 0.90 / 1.12 ms |
+| One in five, job system | 0.32–0.46 / 0.48–0.65 ms | 0.14 / 0.24–0.26 ms |
+
+**Measured in the app** (`Benchmark-Windows3D.py scale --meshes 50000 --case auto-fifo`, Release, 165 Hz FIFO, three runs per set). Each set built its snapshot and then waited three minutes before measuring. Sets measured right after the build were noisy: in five runs out of six with every object moving, the world pass took 1.8–2.0 ms instead of 0.7 ms, while the main thread's own sections were unchanged. The workers' runs took several times longer, which points to other load on the machine just after a full build (scanning the new files, presumably). Rerunning the same build later, without rebuilding, gave the fast figures, and settling before measuring made them repeatable. Opting out of Windows power throttling changed nothing and was not kept.
+
+| Set | FPS | CPU preparation p50 / p95 | World pass p50 / p95 | Render-world sync p50 / p95 | GPU p50 |
+| --- | --- | --- | --- | --- | --- |
+| Every object, B8 | 121.2–124.9 | 7.82–8.09 / 8.71–9.00 ms | 4.09–4.21 ms | 2.31–2.41 ms | 2.58 ms |
+| **Every object, follow-up** | **164.8–165.0** | **2.27–2.40 / 2.74–2.88 ms** | **0.67–0.73 / 0.93–1.02 ms** | **0.53–0.54 / 0.66–0.70 ms** | **2.95 ms** |
+| One in five (scattered), B8 | 165.0 | 2.71–2.88 / 3.19–3.36 ms | 1.36–1.42 ms | 0.86–0.90 ms | 2.46–2.47 ms |
+| **One in five, follow-up** | **163.1–165.4** | **1.38–1.48 / 1.67–1.85 ms** | **0.44–0.50 / 0.63–0.72 ms** | **0.28–0.32 / 0.45–0.51 ms** | **2.48–2.50 ms** |
+
+**FD-27 is met:** with every object moving, slow frames cost 2.74–2.88 ms of CPU against the 3.5 ms budget, and every frame took under 5 ms; the usual case gained the headroom it lacked. The GPU rises from 2.58 to 2.95 ms with every object moving because 165 frames a second are now drawn instead of about 122, each with 50k changed records copied. The game's own rotator loop (0.5 ms with every object moving) stays single-threaded, as FD-28 decided for game systems.
 
 ## Measurements
 

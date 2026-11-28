@@ -714,7 +714,8 @@ namespace Raven
 						FrameSection transforms(metrics ? &metrics->WorldTransforms : nullptr);
 						if (session.IsPlaying() && interpolator.GetCount() > 0)
 							blended = interpolator.Apply(scene, static_cast<float>(gameplay.GetAlpha()));
-						scene.UpdateWorldTransforms();
+						// Large depths run on the shared workers (docs/RenderingContentDesign.md, FD-27).
+						scene.UpdateWorldTransforms(&workers);
 					});
 					// Only new material keys and reloaded material files resolve leases (G1, B0
 					// contract 6), and only new objects and changed mesh components their mesh. A bad
@@ -737,7 +738,7 @@ namespace Raven
 							const auto* shader = lease.GetMaterialShader();
 							return shader ? renderer.UseMaterialShader(lease.GetId(), shader->Words, lease.GetRevision(),
 								shader->VertexWords) : 0u;
-						}, renderer.GetSpriteMesh());
+						}, renderer.GetSpriteMesh(), &workers);
 						if (metrics)
 							metrics->Sprites = static_cast<std::uint32_t>(renderWorld.GetSpriteCount());
 					});
@@ -755,7 +756,7 @@ namespace Raven
 					{
 						auto& scene = session.GetScene();
 						interpolator.Restore(scene);
-						scene.UpdateWorldTransforms();
+						scene.UpdateWorldTransforms(&workers);
 					});
 			}
 			else

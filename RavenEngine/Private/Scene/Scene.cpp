@@ -8,12 +8,15 @@
 #include "Raven/Components/StaticMeshComponent.hpp"
 #include "Raven/Components/TransformComponent.hpp"
 #include "Raven/Core/Log.hpp"
+#include "Core/JobSystem.hpp"
 #include "Platform/PlatformRandom.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <new>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <stdexcept>
@@ -520,7 +523,7 @@ namespace Raven
 		return ComposeTransform(entity, false);
 	}
 
-	void Scene::UpdateWorldTransforms()
+	void Scene::UpdateWorldTransforms(JobSystem* workers)
 	{
 		if (m_Registry.IsIterating())
 			throw std::logic_error("World transforms cannot be updated while a view iterates");
@@ -539,69 +542,137 @@ namespace Raven
 			const auto dense = worlds.Find(entity);
 			return dense != NoIndex && worlds.Entities[dense] == entity ? dense : NoIndex;
 		};
-		// Depth buckets put every parent before its children.
-		for (const auto& bucket : m_Depths)
-			for (const auto index : bucket)
-			{
-				auto& slot = m_World[index];
-				const auto entity = slot.Entity;
-				const bool forced = (slot.Flags & WorldForced) != 0;
-				const bool present = (slot.Flags & WorldPresent) != 0;
-				slot.Flags = 0;
-				auto local = transforms.Find(entity);
-				if (local != NoIndex && !(transforms.Entities[local] == entity))
-					local = NoIndex;
-				const auto world = findWorld(entity);
-				if (local == NoIndex)
-				{
-					// No local transform, or an entity destroyed outside the scene: drop a world the
-					// entity no longer drives. Losing a world marks it changed, so every descendant
-					// re-roots in this pass.
-					if (world != NoIndex)
-					{
-						m_Registry.Remove<ECS::WorldTransformComponent>(entity);
-						worlds = m_Registry.GetPool(worldInfo);
-					}
-					if (present)
-						slot.Flags = WorldChanged;
-					continue;
-				}
-				const auto parent = slot.Parent;
-				const bool parentChanged = parent != NoNode && (m_World[parent].Flags & WorldChanged) != 0;
-				slot.Flags = WorldPresent;
-				if (!full && !forced && world != NoIndex && !parentChanged && transforms.Ticks[local] <= since)
-					continue;
 
-				// A parent without a world (destroyed or transform-less) leaves this entity as a
-				// detached root.
-				Mat4 parentWorld = Mat4::Identity();
-				if (parent != NoNode)
+		// What a run of one depth leaves to the calling thread: structural changes and logging. A run
+		// only reads the pools and writes its own slots, worlds and ticks, so the runs of one depth can
+		// go to different workers (docs/RenderingContentDesign.md, FD-27) without changing any result.
+		struct FollowUp
+		{
+			std::vector<std::uint32_t> Dropped;
+			std::vector<std::uint32_t> Detached;
+			std::vector<std::uint32_t> Recomposed;
+			std::vector<std::pair<std::uint32_t, Mat4>> Added;
+			bool Failed = false;
+		};
+		const auto run = [&](std::span<const std::uint32_t> nodes, FollowUp& followUp) noexcept
+		{
+			try
+			{
+				for (const auto index : nodes)
 				{
-					if (const auto parentDense = findWorld(m_World[parent].Entity); parentDense == NoIndex)
-						ReportDetachedRoot(entity);
+					auto& slot = m_World[index];
+					const auto entity = slot.Entity;
+					const bool forced = (slot.Flags & WorldForced) != 0;
+					const bool present = (slot.Flags & WorldPresent) != 0;
+					slot.Flags = 0;
+					auto local = transforms.Find(entity);
+					if (local != NoIndex && !(transforms.Entities[local] == entity))
+						local = NoIndex;
+					const auto world = findWorld(entity);
+					if (local == NoIndex)
+					{
+						// No local transform, or an entity destroyed outside the scene: drop a world the
+						// entity no longer drives. Losing a world marks it changed, so every descendant
+						// re-roots in this pass.
+						if (world != NoIndex)
+							followUp.Dropped.push_back(index);
+						if (present)
+							slot.Flags = WorldChanged;
+						continue;
+					}
+					const auto parent = slot.Parent;
+					const bool parentChanged = parent != NoNode && (m_World[parent].Flags & WorldChanged) != 0;
+					slot.Flags = WorldPresent;
+					if (!full && !forced && world != NoIndex && !parentChanged && transforms.Ticks[local] <= since)
+						continue;
+
+					// A parent without a world (destroyed or transform-less) leaves this entity as a
+					// detached root.
+					Mat4 parentWorld = Mat4::Identity();
+					if (parent != NoNode)
+					{
+						if (const auto parentDense = findWorld(m_World[parent].Entity); parentDense == NoIndex)
+							followUp.Detached.push_back(index);
+						else
+							parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+					}
+					const auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
+					slot.Flags = WorldPresent | WorldChanged;
+					// A parent's intermediate scale can overflow or collapse before the child's scale is
+					// applied; the calling thread recomposes in the direct order.
+					if (!IsFiniteTransform(value) || HasCollapsedAxis(value))
+						followUp.Recomposed.push_back(index);
+					else if (world == NoIndex)
+						followUp.Added.emplace_back(index, value);
 					else
-						parentWorld = worlds.At<ECS::WorldTransformComponent>(parentDense).World;
+					{
+						worlds.At<ECS::WorldTransformComponent>(world).World = value;
+						worlds.Ticks[world] = stamp;
+					}
 				}
-				auto value = AppendLocalTransform(parentWorld, transforms.At<ECS::TransformComponent>(local));
-				// A parent's intermediate scale can overflow or collapse before the child's scale
-				// is applied; recompose in the direct order. Unrepresentable values are kept as-is
-				// so descendants can still recompose; consumers skip non-finite worlds.
-				if (!IsFiniteTransform(value) || HasCollapsedAxis(value))
-					value = ComposeTransformUnchecked(entity, false);
-				if (world == NoIndex)
-				{
-					ECS::WorldTransformComponent component;
-					component.World = value;
-					m_Registry.Add(entity, component);
-					worlds = m_Registry.GetPool(worldInfo);
-				}
-				else
+			}
+			catch (...)
+			{
+				// Only an allocation failure: the pass is abandoned and the next one recomputes everything.
+				followUp.Failed = true;
+			}
+		};
+		// Applies a run's structural changes in order, finding positions again after each change.
+		const auto apply = [&](const FollowUp& followUp)
+		{
+			if (followUp.Failed)
+				throw std::bad_alloc();
+			for (const auto index : followUp.Dropped)
+				m_Registry.Remove<ECS::WorldTransformComponent>(m_World[index].Entity);
+			for (const auto index : followUp.Detached)
+				ReportDetachedRoot(m_World[index].Entity);
+			worlds = m_Registry.GetPool(worldInfo);
+			const auto write = [&](std::uint32_t index, const Mat4& value)
+			{
+				const auto entity = m_World[index].Entity;
+				if (const auto world = findWorld(entity); world != NoIndex)
 				{
 					worlds.At<ECS::WorldTransformComponent>(world).World = value;
 					worlds.Ticks[world] = stamp;
+					return;
 				}
-				slot.Flags = WorldPresent | WorldChanged;
+				ECS::WorldTransformComponent component;
+				component.World = value;
+				m_Registry.Add(entity, component);
+				worlds = m_Registry.GetPool(worldInfo);
+			};
+			// Unrepresentable values are kept as-is so descendants can still recompose; consumers skip
+			// non-finite worlds.
+			for (const auto index : followUp.Recomposed)
+				write(index, ComposeTransformUnchecked(m_World[index].Entity, false));
+			for (const auto& [index, value] : followUp.Added)
+				write(index, value);
+		};
+
+		// Depth buckets put every parent before its children, so the runs of one depth never read
+		// each other's results.
+		constexpr std::size_t RunLength = 1024;
+		std::vector<FollowUp> followUps;
+		for (const auto& bucket : m_Depths)
+		{
+			const auto runs = (bucket.size() + RunLength - 1) / RunLength;
+			if (!workers || runs <= 1)
+			{
+				FollowUp followUp;
+				run(bucket, followUp);
+				apply(followUp);
+				continue;
 			}
+			followUps.clear();
+			followUps.resize(runs);
+			workers->ParallelFor(static_cast<std::uint32_t>(runs), [&](std::uint32_t part) noexcept
+			{
+				const auto first = part * RunLength;
+				run(std::span(bucket).subspan(first, std::min(RunLength, bucket.size() - first)), followUps[part]);
+			});
+			for (const auto& followUp : followUps)
+				apply(followUp);
+		}
 		m_WorldFull = false;
 	}
 

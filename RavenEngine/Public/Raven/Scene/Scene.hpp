@@ -17,6 +17,7 @@
 namespace Raven
 {
 	namespace ECS { struct TransformComponent; }
+	class JobSystem;
 
 	// Host-owned entities, their hierarchy and persistent IDs, and asset leases for one scene.
 	// Registry and store outlive the scene; game modules borrow only values and handles.
@@ -66,8 +67,9 @@ namespace Raven
 		// entities whose Transform changed since the previous call, whose ancestry changed, or
 		// that have no world yet. Parents are processed before children. An entity whose
 		// ancestor was destroyed or has no TransformComponent is placed as a detached root and
-		// logged once. Not callable while a view iterates.
-		RAVEN_API void UpdateWorldTransforms();
+		// logged once. Not callable while a view iterates. With workers (the host's job system), depths
+		// holding many entities are split over them; the results are the same either way.
+		RAVEN_API void UpdateWorldTransforms(JobSystem* workers = nullptr);
 
 		// Full affine position; rotation-only ancestor chain ignores scale/reflection for axes.
 		RAVEN_API CameraView GetCameraView(ECS::Entity entity, float aspect) const;

@@ -379,6 +379,9 @@ namespace Raven
 		}
 		m_Full = m_PendingFull || world != m_UploadedWorld || world->Generation != m_UploadedGeneration ||
 			VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData) > m_Objects.Capacity;
+		// When at least half the objects changed, one copy of the whole array is cheaper than gathering
+		// the changed records and scattering them on the GPU (docs/RenderingContentDesign.md, FD-27).
+		m_AllObjects = m_Full || world->Dirty.size() * 2 >= m_ObjectCount;
 		// The material table uploads whole when the buffer is new or must grow, and otherwise only its
 		// changed slots (B0 contract 6).
 		m_AllMaterials = m_Full || m_PendingMaterials ||
@@ -459,7 +462,7 @@ namespace Raven
 				first += world->Groups[group].Count;
 			}
 		}
-		if (!m_Full)
+		if (!m_AllObjects)
 		{
 			m_DirtySlots.reserve(world->Dirty.size());
 			m_DirtyRecords.reserve(world->Dirty.size());
@@ -479,7 +482,7 @@ namespace Raven
 			bytes += align(m_MeshTable.size() * sizeof(MeshEntry));
 		if (m_UploadTemplates)
 			bytes += align(m_TemplateRecords.size() * sizeof(VkDrawIndexedIndirectCommand));
-		if (m_Full)
+		if (m_AllObjects)
 			bytes += align(VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData));
 		else
 			bytes += align(m_DirtySlots.size() * sizeof(std::uint32_t)) + align(m_DirtyRecords.size() * sizeof(GpuObjectData));
@@ -528,7 +531,7 @@ namespace Raven
 		slot.BlendOffset = m_BlendSlots.empty() ? 0 : ring.Push(Bytes(m_BlendSlots));
 		slot.MaterialOffset = m_AllMaterials ? ring.Push(std::span(reinterpret_cast<const std::byte*>(world->Materials.data()),
 			std::size_t{ m_MaterialCount } * sizeof(GpuMaterialData))) : ring.Push(Bytes(m_MaterialRecords));
-		if (m_Full)
+		if (m_AllObjects)
 		{
 			slot.ObjectOffset = ring.Push(Bytes(world->Objects));
 			slot.SlotOffset = 0;
@@ -617,11 +620,11 @@ namespace Raven
 			vkCmdCopyBuffer(commands, slot.Ring, m_Materials.Buffer->Get(), static_cast<std::uint32_t>(regions.size()),
 				regions.data());
 		}
-		if (m_Full)
+		if (m_AllObjects)
 			copy(slot.ObjectOffset, m_Objects, 0, VkDeviceSize{ m_ObjectCount } * sizeof(GpuObjectData));
 
 		vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, m_PipelineLayout, 0, 1, &slot.Set, 0, nullptr);
-		if (!m_Full && !m_DirtySlots.empty())
+		if (!m_AllObjects && !m_DirtySlots.empty())
 		{
 			const ScatterConstants scatter{ static_cast<std::uint32_t>(slot.SlotOffset),
 				static_cast<std::uint32_t>(slot.ObjectOffset), static_cast<std::uint32_t>(m_DirtySlots.size()), 0 };

@@ -1,5 +1,6 @@
 #include "Renderer/RenderWorldState.hpp"
 
+#include "Core/JobSystem.hpp"
 #include "Renderer/DrawChecks.hpp"
 #include "Renderer/MaterialFile.hpp"
 #include "Raven/Core/Log.hpp"
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <new>
 #include <span>
 
 namespace Raven
@@ -207,25 +209,93 @@ namespace Raven
 			});
 		}
 
-		// Rewrites objects whose mesh, world transform or material changed after since.
-		void ApplyTicks(std::uint32_t since)
+		// Rewrites objects whose mesh, world transform or material changed after since. An object whose
+		// world alone changed only needs its placement, which touches nothing but its own record, so
+		// runs of the mesh pool place objects on the workers (docs/RenderingContentDesign.md, FD-27);
+		// every other write stays on the calling thread, in pool order.
+		void ApplyTicks(std::uint32_t since, JobSystem* workers)
 		{
-			const auto& state = m_State;
-			for (std::size_t dense = 0; dense < m_Meshes.Count; ++dense)
+			auto& state = m_State;
+			struct Rewrite
 			{
-				const auto entity = m_Meshes.Entities[dense];
-				const auto index = IndexOf(entity);
-				if (index >= state.SlotOfIndex.size())
-					continue;
-				const auto slot = state.SlotOfIndex[index];
-				if (slot == RenderWorld::State::NoSlot || !(state.Entities[slot] == entity))
-					continue;
-				const auto world = m_Worlds.Find(entity);
-				const auto material = m_Materials.Find(entity);
-				const bool materialChanged = material != Pool::NoIndex && m_Materials.Ticks[material] > since;
-				const bool meshChanged = m_Meshes.Ticks[dense] > since;
-				if (meshChanged || materialChanged || (world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
-					Write(slot, false, materialChanged, meshChanged);
+				std::uint32_t Slot;
+				bool MaterialChanged;
+				bool MeshChanged;
+			};
+			struct FollowUp
+			{
+				std::vector<std::uint32_t> Placed;
+				std::vector<Rewrite> Rewrites;
+				bool Failed = false;
+			};
+			if (state.DirtyFlags.size() < state.Objects.size())
+				state.DirtyFlags.resize(state.Objects.size(), 0);
+			const auto run = [&](std::size_t first, std::size_t last, FollowUp& followUp) noexcept
+			{
+				try
+				{
+					for (std::size_t dense = first; dense < last; ++dense)
+					{
+						const auto entity = m_Meshes.Entities[dense];
+						const auto index = IndexOf(entity);
+						if (index >= state.SlotOfIndex.size())
+							continue;
+						const auto slot = state.SlotOfIndex[index];
+						if (slot == RenderWorld::State::NoSlot || !(state.Entities[slot] == entity))
+							continue;
+						const auto world = m_Worlds.Find(entity);
+						const auto material = m_Materials.Find(entity);
+						const bool materialChanged = material != Pool::NoIndex && m_Materials.Ticks[material] > since;
+						const bool meshChanged = m_Meshes.Ticks[dense] > since;
+						if (!meshChanged && !materialChanged && !(world != Pool::NoIndex && m_Worlds.Ticks[world] > since))
+							continue;
+						// A hidden non-finite object reports itself when rewritten, so it takes the full write.
+						auto& object = state.Objects[slot];
+						if (meshChanged || materialChanged || (object.Flags & GpuObjectNonFinite) != 0)
+						{
+							followUp.Rewrites.push_back({ slot, materialChanged, meshChanged });
+							continue;
+						}
+						Place(object, m_Worlds.At<ECS::WorldTransformComponent>(world).World);
+						if (!state.DirtyFlags[slot])
+						{
+							state.DirtyFlags[slot] = 1;
+							followUp.Placed.push_back(slot);
+						}
+					}
+				}
+				catch (...)
+				{
+					// Only an allocation failure; Sync clears the world and the next one rebuilds.
+					followUp.Failed = true;
+				}
+			};
+			const auto apply = [&](const FollowUp& followUp)
+			{
+				if (followUp.Failed)
+					throw std::bad_alloc();
+				state.Dirty.insert(state.Dirty.end(), followUp.Placed.begin(), followUp.Placed.end());
+				for (const auto& rewrite : followUp.Rewrites)
+					Write(rewrite.Slot, false, rewrite.MaterialChanged, rewrite.MeshChanged);
+			};
+			constexpr std::size_t RunLength = 1024;
+			const auto runs = (m_Meshes.Count + RunLength - 1) / RunLength;
+			if (!workers || runs <= 1)
+			{
+				FollowUp followUp;
+				run(0, m_Meshes.Count, followUp);
+				apply(followUp);
+			}
+			else
+			{
+				std::vector<FollowUp> followUps(runs);
+				workers->ParallelFor(static_cast<std::uint32_t>(runs), [&](std::uint32_t part) noexcept
+				{
+					const auto first = part * RunLength;
+					run(first, std::min(first + RunLength, m_Meshes.Count), followUps[part]);
+				});
+				for (const auto& followUp : followUps)
+					apply(followUp);
 			}
 			for (std::size_t dense = 0; dense < m_Sprites.Count; ++dense)
 			{
@@ -685,6 +755,26 @@ namespace Raven
 			Log(LogLevel::Warning, "An object's Tint or material values are not finite numbers; it is hidden until they are");
 		}
 
+		// The world-dependent part of a mesh object's record: placement, the normal matrix for lit
+		// materials, and hiding what cannot be drawn. Reads only the object and the material table.
+		void Place(GpuObjectData& object, const Mat4& world) const noexcept
+		{
+			object.Flags = IsDrawable(world) ? 0u : GpuObjectHidden;
+			for (std::size_t row = 0; row < 3; ++row)
+				object.WorldRows[row] = { world(row, 0), world(row, 1), world(row, 2), world(row, 3) };
+			// Only drawable lit objects pay for the normal matrix. A collapsed or out-of-range
+			// transform rasterizes nothing, so hiding it is exact.
+			Mat4 normal = Mat4::Identity();
+			if (object.Flags == 0 && (m_State.Materials[object.Material].Flags & GpuMaterialLit) != 0 &&
+				!TryNormalMatrix(world, normal))
+			{
+				object.Flags = GpuObjectHidden;
+				normal = Mat4::Identity();
+			}
+			for (std::size_t column = 0; column < 3; ++column)
+				object.NormalToWorld[column] = { normal(0, column), normal(1, column), normal(2, column), 0.0f };
+		}
+
 		// Only an added object or a changed mesh component resolves its mesh reference.
 		void Write(std::uint32_t slot, bool added, bool materialChanged, bool meshChanged, bool regroup = false)
 		{
@@ -742,19 +832,7 @@ namespace Raven
 			nonFinite = nonFinite || !IsFinite(mesh.Tint);
 			if (nonFinite)
 				ReportNonFinite(entity);
-			object.Flags = IsDrawable(world) ? 0u : GpuObjectHidden;
-			for (std::size_t row = 0; row < 3; ++row)
-				object.WorldRows[row] = { world(row, 0), world(row, 1), world(row, 2), world(row, 3) };
-			// Only drawable lit objects pay for the normal matrix. A collapsed or out-of-range
-			// transform rasterizes nothing, so hiding it is exact.
-			Mat4 normal = Mat4::Identity();
-			if (object.Flags == 0 && (state.Materials[material].Flags & GpuMaterialLit) != 0 && !TryNormalMatrix(world, normal))
-			{
-				object.Flags = GpuObjectHidden;
-				normal = Mat4::Identity();
-			}
-			for (std::size_t column = 0; column < 3; ++column)
-				object.NormalToWorld[column] = { normal(0, column), normal(1, column), normal(2, column), 0.0f };
+			Place(object, world);
 			if (nonFinite)
 				object.Flags |= GpuObjectHidden | GpuObjectNonFinite;
 			state.MarkDirty(slot);
@@ -870,11 +948,11 @@ namespace Raven
 	}
 
 	void RenderWorld::Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-		const ShaderResolver& resolveShader, MeshHandle spriteMesh)
+		const ShaderResolver& resolveShader, MeshHandle spriteMesh, JobSystem* workers)
 	{
 		try
 		{
-			SyncUnchecked(scene, resolveAsset, resolveMesh, resolveShader, spriteMesh);
+			SyncUnchecked(scene, resolveAsset, resolveMesh, resolveShader, spriteMesh, workers);
 		}
 		catch (...)
 		{
@@ -886,7 +964,7 @@ namespace Raven
 	}
 
 	void RenderWorld::SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-		const ShaderResolver& resolveShader, MeshHandle spriteMesh)
+		const ShaderResolver& resolveShader, MeshHandle spriteMesh, JobSystem* workers)
 	{
 		auto& state = *m_State;
 		auto& registry = scene.m_Registry;
@@ -929,7 +1007,7 @@ namespace Raven
 		for (const auto& batch : batches)
 			for (const auto& entry : batch.Entries)
 				sync.Reconcile(entry.Target);
-		sync.ApplyTicks(since);
+		sync.ApplyTicks(since, workers);
 		if (!state.PendingMeshes.empty())
 			sync.RetryPendingMeshes();
 		sync.RefreshMaterials();

@@ -15,6 +15,7 @@
 namespace Raven
 {
 	class AssetLease;
+	class JobSystem;
 	class Scene;
 
 	// Host-owned mirror of one scene's lit meshes and sprites for GPU-driven rendering
@@ -42,9 +43,11 @@ namespace Raven
 		// After Scene::UpdateWorldTransforms, on the rendering thread, outside view iteration.
 		// A different scene, or a journal resync, rebuilds the world once. If it throws, the
 		// world is cleared and the next Sync rebuilds. Sprites draw on spriteMesh, the drawing context's
-		// quad (VulkanContext::GetSpriteMesh); a different one rebuilds, and a null one draws none.
+		// quad (VulkanContext::GetSpriteMesh); a different one rebuilds, and a null one draws none. With
+		// workers (the host's job system), objects that only moved are written on them; the result is
+		// the same either way.
 		RAVEN_API void Sync(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-			const ShaderResolver& resolveShader = {}, MeshHandle spriteMesh = {});
+			const ShaderResolver& resolveShader = {}, MeshHandle spriteMesh = {}, JobSystem* workers = nullptr);
 		// Drops every object and forgets the scene; the next Sync rebuilds.
 		RAVEN_API void Clear() noexcept;
 		RAVEN_API std::size_t GetObjectCount() const noexcept;
@@ -60,7 +63,7 @@ namespace Raven
 
 	private:
 		void SyncUnchecked(Scene& scene, const AssetResolver& resolveAsset, const MeshResolver& resolveMesh,
-			const ShaderResolver& resolveShader, MeshHandle spriteMesh);
+			const ShaderResolver& resolveShader, MeshHandle spriteMesh, JobSystem* workers);
 
 		std::unique_ptr<State> m_State;
 	};

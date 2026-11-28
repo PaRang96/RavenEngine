@@ -203,6 +203,8 @@ namespace Raven
 		std::uint32_t m_BlendBase = 0;
 		VulkanMeshPool::Ranges m_BlendMesh{};
 		bool m_Full = false;
+		// The object records upload whole: on a full upload, or when most of them changed.
+		bool m_AllObjects = false;
 		VkDeviceSize m_PlannedBytes = 0;
 
 		// What the GPU holds after the last committed frame.
